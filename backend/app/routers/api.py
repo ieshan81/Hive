@@ -10,6 +10,9 @@ from app.services.config_manager import ConfigManager
 from app.services.dashboard_service import build_dashboard
 from app.services.diagnostic_export import bundle_as_zip_bytes, export_diagnostic_bundle
 from app.services.lab_service import LabService
+from app.services.research_lab_service import ResearchLabService
+from app.services.strategy_library import list_strategies
+from app.services.historical_data_service import HistoricalDataService
 from app.services.query_service import (
     blocked_for_cycle,
     resolve_cycle_run_id,
@@ -522,6 +525,69 @@ def memory_bulk_archive(body: dict, session: Session = Depends(get_session)):
     return {"status": "ok", "archived": n}
 
 
+@router.post("/memory/bulk/restore")
+def memory_bulk_restore(body: dict, session: Session = Depends(get_session)):
+    from app.services.config_manager import ConfigManager
+    from app.services.lesson_memory_service import LessonMemoryService
+
+    config = ConfigManager(session).get_current()
+    n = LessonMemoryService(session, config).bulk_restore(body.get("lesson_ids") or [])
+    session.commit()
+    return {"status": "ok", "restored": n}
+
+
+@router.post("/memory/bulk/delete")
+def memory_bulk_delete(body: dict, session: Session = Depends(get_session)):
+    from app.services.config_manager import ConfigManager
+    from app.services.lesson_memory_service import LessonMemoryService
+
+    config = ConfigManager(session).get_current()
+    n = LessonMemoryService(session, config).bulk_soft_delete(
+        body.get("lesson_ids") or [], reason=body.get("reason", "")
+    )
+    session.commit()
+    return {"status": "ok", "deleted": n}
+
+
+@router.post("/memory/bulk/hide-from-ai")
+def memory_bulk_hide_ai(body: dict, session: Session = Depends(get_session)):
+    from app.services.config_manager import ConfigManager
+    from app.services.lesson_memory_service import LessonMemoryService
+
+    config = ConfigManager(session).get_current()
+    n = LessonMemoryService(session, config).bulk_hide_from_ai(body.get("lesson_ids") or [])
+    session.commit()
+    return {"status": "ok", "updated": n}
+
+
+@router.post("/memory/bulk/set-category")
+def memory_bulk_category(body: dict, session: Session = Depends(get_session)):
+    from app.services.config_manager import ConfigManager
+    from app.services.lesson_memory_service import LessonMemoryService
+
+    config = ConfigManager(session).get_current()
+    n = LessonMemoryService(session, config).bulk_set_category(
+        body.get("lesson_ids") or [], body.get("category", "system_issue")
+    )
+    session.commit()
+    return {"status": "ok", "updated": n}
+
+
+@router.post("/memory/lesson/{lesson_id}/category")
+def memory_lesson_category(
+    lesson_id: int, body: dict, session: Session = Depends(get_session)
+):
+    from app.services.config_manager import ConfigManager
+    from app.services.lesson_memory_service import LessonMemoryService
+
+    config = ConfigManager(session).get_current()
+    row = LessonMemoryService(session, config).set_category(
+        lesson_id, body.get("category"), body.get("memory_type")
+    )
+    session.commit()
+    return {"status": "ok" if row else "error", "lesson_id": lesson_id}
+
+
 @router.get("/decisions/latest")
 def decisions_latest(cycle_run_id: str = "latest", session: Session = Depends(get_session)):
     from app.services.decisions_service import latest_summary
@@ -745,17 +811,109 @@ def get_symbol_memory(session: Session = Depends(get_session)):
 
 @router.get("/lab/status")
 def lab_status(session: Session = Depends(get_session)):
-    return LabService(session).status()
+    ResearchLabService(session).ensure_library()
+    return ResearchLabService(session).status()
+
+
+@router.post("/lab/research/run")
+def lab_research_run(body: dict = Body(default={}), session: Session = Depends(get_session)):
+    return ResearchLabService(session).run_research_batch(body)
 
 
 @router.post("/lab/backtest/run")
-def lab_backtest_run(symbol: str = "BTC/USD", session: Session = Depends(get_session)):
-    return LabService(session).run_crypto_backtest(symbol)
+def lab_backtest_run(
+    body: dict = Body(default={}),
+    symbol: str | None = None,
+    session: Session = Depends(get_session),
+):
+    if symbol and not body.get("symbols"):
+        body = {**body, "symbols": [symbol], "strategy_id": body.get("strategy_id", "crypto_push_pull")}
+    if not body:
+        return LabService(session).run_crypto_backtest(symbol or "BTC/USD")
+    return ResearchLabService(session).run_backtest(body)
+
+
+@router.post("/lab/backtest/batch-run")
+def lab_backtest_batch(body: dict = Body(default={}), session: Session = Depends(get_session)):
+    return ResearchLabService(session).batch_backtest(body)
 
 
 @router.get("/lab/backtest/runs")
-def lab_backtest_runs(limit: int = 20, session: Session = Depends(get_session)):
-    return {"status": "ok", "runs": LabService(session).list_backtests(limit)}
+def lab_backtest_runs(limit: int = 50, session: Session = Depends(get_session)):
+    from app.services.research_backtest_engine import ResearchBacktestEngine
+    from app.services.config_manager import ConfigManager
+
+    cfg = ConfigManager(session).get_current()
+    runs = ResearchBacktestEngine(session, cfg).list_runs(limit)
+    legacy = LabService(session).list_backtests(min(limit, 20))
+    return {"status": "ok", "runs": runs, "legacy_runs": legacy}
+
+
+@router.get("/lab/backtest/result/{run_id}")
+def lab_backtest_result(run_id: str, session: Session = Depends(get_session)):
+    result = ResearchLabService(session).get_backtest_result(run_id)
+    if not result:
+        return {"status": "error", "message": "Run not found"}
+    return {"status": "ok", "result": result}
+
+
+@router.get("/lab/experiments")
+def lab_experiments(session: Session = Depends(get_session)):
+    return {"status": "ok", **ResearchLabService(session).list_experiments()}
+
+
+@router.get("/lab/strategy-candidates")
+def lab_strategy_candidates(session: Session = Depends(get_session)):
+    return {"status": "ok", "candidates": ResearchLabService(session).list_candidates()}
+
+
+@router.get("/lab/research-memories")
+def lab_research_memories(limit: int = 50, session: Session = Depends(get_session)):
+    return {"status": "ok", "memories": ResearchLabService(session).research_memories(limit)}
+
+
+@router.get("/lab/rejected-strategies")
+def lab_rejected(session: Session = Depends(get_session)):
+    return {"status": "ok", "rejected": ResearchLabService(session).rejected_strategies()}
+
+
+@router.get("/lab/promising-strategies")
+def lab_promising(session: Session = Depends(get_session)):
+    return {"status": "ok", "promising": ResearchLabService(session).promising_strategies()}
+
+
+@router.get("/lab/leaderboard")
+def lab_leaderboard(session: Session = Depends(get_session)):
+    return {"status": "ok", "leaderboard": ResearchLabService(session).leaderboard()}
+
+
+@router.get("/lab/historical-coverage")
+def lab_historical_coverage(session: Session = Depends(get_session)):
+    from app.services.config_manager import ConfigManager
+
+    cfg = ConfigManager(session).get_current()
+    return {"status": "ok", "coverage": HistoricalDataService(session, cfg).list_coverage()}
+
+
+@router.post("/lab/walk-forward/run")
+def lab_walk_forward(body: dict = Body(default={}), session: Session = Depends(get_session)):
+    return ResearchLabService(session).run_walk_forward(body)
+
+
+@router.post("/lab/strategy/{strategy_id}/promote-to-paper-candidate")
+def lab_promote(strategy_id: str, body: dict = Body(default={}), session: Session = Depends(get_session)):
+    return ResearchLabService(session).promote_to_paper_candidate(strategy_id, body)
+
+
+@router.post("/lab/strategy/{strategy_id}/reject")
+def lab_reject_strategy(strategy_id: str, body: dict = Body(default={}), session: Session = Depends(get_session)):
+    return ResearchLabService(session).reject_strategy(strategy_id, body)
+
+
+@router.get("/lab/strategies")
+def lab_strategies(session: Session = Depends(get_session)):
+    ResearchLabService(session).ensure_library()
+    return {"status": "ok", "strategies": list_strategies(session)}
 
 
 @router.get("/lab/strategy-notes")
@@ -765,7 +923,12 @@ def lab_strategy_notes(limit: int = 50, session: Session = Depends(get_session))
 
 @router.get("/lab/memory")
 def lab_memory(limit: int = 50, session: Session = Depends(get_session)):
-    return {"status": "ok", "memories": LabService(session).list_memory(limit)}
+    return {"status": "ok", "memories": ResearchLabService(session).research_memories(limit)}
+
+
+@router.post("/memory/import/legacy-ai-bundle")
+def memory_import_legacy(body: dict = Body(default={}), session: Session = Depends(get_session)):
+    return ResearchLabService(session).import_legacy_bundle(body)
 
 
 @router.post("/sync/alpaca")

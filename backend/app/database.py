@@ -511,6 +511,160 @@ class MemoryEvidence(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class HistoricalBar(SQLModel, table=True):
+    __tablename__ = "historical_bars"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    symbol: str = Field(index=True)
+    asset_class: str = Field(default="crypto", index=True)
+    timeframe: str = Field(default="1Hour", index=True)
+    timestamp: datetime = Field(index=True)
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float = 0.0
+    source: str = Field(default="alpaca", index=True)
+    adjusted: bool = False
+    synthetic: bool = False
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class HistoricalDataCoverage(SQLModel, table=True):
+    __tablename__ = "historical_data_coverage"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    symbol: str = Field(index=True)
+    timeframe: str = Field(index=True)
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    rows_count: int = 0
+    source: str = "alpaca"
+    gaps_detected: bool = False
+    gap_notes: Optional[str] = None
+    last_updated: datetime = Field(default_factory=datetime.utcnow)
+
+
+class HistoricalDataRequest(SQLModel, table=True):
+    __tablename__ = "historical_data_requests"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    symbol: str = Field(index=True)
+    timeframe: str
+    date_start: Optional[str] = None
+    date_end: Optional[str] = None
+    status: str = Field(default="pending", index=True)
+    rows_fetched: int = 0
+    error_message: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class HistoricalDataError(SQLModel, table=True):
+    __tablename__ = "historical_data_errors"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    symbol: str = Field(index=True)
+    timeframe: str
+    operation: str
+    message: str
+    details: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class StrategyDefinition(SQLModel, table=True):
+    __tablename__ = "strategy_definitions"
+    strategy_id: str = Field(primary_key=True)
+    strategy_name: str
+    strategy_family: str = Field(index=True)
+    parameters_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    asset_class: str = "crypto"
+    universe: list = Field(default_factory=list, sa_column=Column(JSON))
+    timeframe: str = "1Hour"
+    status: str = Field(default="research_only", index=True)
+    description: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ResearchBacktestRun(SQLModel, table=True):
+    __tablename__ = "research_backtest_runs"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    run_id: str = Field(index=True, unique=True)
+    strategy_id: str = Field(index=True)
+    parameter_set_id: Optional[str] = Field(default=None, index=True)
+    symbols: list = Field(default_factory=list, sa_column=Column(JSON))
+    date_start: Optional[str] = None
+    date_end: Optional[str] = None
+    status: str = Field(default="pending", index=True)
+    num_trades: int = 0
+    metrics_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    cost_model_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    sample_size: int = 0
+    confidence_label: str = "low"
+    warnings: Optional[list] = Field(default=None, sa_column=Column(JSON))
+    estimated_spread: bool = True
+    source: str = "research_lab"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ParameterSetResult(SQLModel, table=True):
+    __tablename__ = "parameter_set_results"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    parameter_set_id: str = Field(index=True)
+    run_id: str = Field(index=True)
+    strategy_id: str = Field(index=True)
+    parameters_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    num_trades: int = 0
+    win_rate: Optional[float] = None
+    avg_win: Optional[float] = None
+    avg_loss: Optional[float] = None
+    expectancy: Optional[float] = None
+    profit_factor: Optional[float] = None
+    max_drawdown_pct: Optional[float] = None
+    sharpe: Optional[float] = None
+    sortino: Optional[float] = None
+    exposure_pct: Optional[float] = None
+    turnover: Optional[float] = None
+    estimated_fees_pct: Optional[float] = None
+    estimated_slippage_pct: Optional[float] = None
+    implementation_shortfall_pct: Optional[float] = None
+    rejected_trades: int = 0
+    reject_reason: Optional[str] = None
+    status: str = "completed"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class WalkForwardResult(SQLModel, table=True):
+    __tablename__ = "walk_forward_results"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    run_id: str = Field(index=True)
+    strategy_id: str = Field(index=True)
+    window_index: int
+    train_start: Optional[str] = None
+    train_end: Optional[str] = None
+    test_start: Optional[str] = None
+    test_end: Optional[str] = None
+    train_metrics: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    test_metrics: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    parameters_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    status: str = "completed"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class StrategyCandidate(SQLModel, table=True):
+    __tablename__ = "strategy_candidates"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    strategy_id: str = Field(index=True)
+    parameter_set_id: Optional[str] = None
+    run_id: Optional[str] = Field(default=None, index=True)
+    status: str = Field(default="research_only", index=True)
+    promotion_stage: str = "research_only"
+    metrics_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    rejection_reason: Optional[str] = None
+    evidence_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    human_approved: bool = False
+    human_approved_at: Optional[datetime] = None
+    proposed_by: str = "research_lab"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 engine = create_engine(settings.resolve_database_url(), echo=False)
 
 

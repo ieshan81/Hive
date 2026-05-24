@@ -14,6 +14,7 @@ from app.services.memory_categories import (
     CATEGORY_SYSTEM,
     CATEGORY_TRADING,
     CATEGORY_COLORS,
+    GRAPH_FILTER_CATEGORIES,
     classify_memory_type,
     default_visibility,
     drawer_title,
@@ -262,7 +263,9 @@ class LessonMemoryService:
             if graph_default:
                 if not r.visible_in_graph:
                     continue
-                if r.category == CATEGORY_SYSTEM and r.severity not in ("HIGH", "CRITICAL"):
+                if r.category == CATEGORY_SYSTEM:
+                    continue
+                if r.category not in (CATEGORY_TRADING,):
                     continue
             if category and r.category != category:
                 continue
@@ -657,6 +660,38 @@ class LessonMemoryService:
             if self.archive(lid, reason=reason, hide_from_ai=hide_from_ai, hide_from_graph=hide_from_graph):
                 n += 1
         return n
+
+    def bulk_restore(self, lesson_ids: list[int]) -> int:
+        return sum(1 for lid in lesson_ids if self.restore(lid))
+
+    def bulk_soft_delete(self, lesson_ids: list[int], *, reason: str = "") -> int:
+        return sum(1 for lid in lesson_ids if self.soft_delete(lid, reason=reason))
+
+    def bulk_hide_from_ai(self, lesson_ids: list[int]) -> int:
+        n = 0
+        for lid in lesson_ids:
+            if self.set_visibility(lid, visible_to_ai=False, can_influence_ranking=False):
+                n += 1
+        return n
+
+    def set_category(self, lesson_id: int, category: str, memory_type: Optional[str] = None) -> Optional[LessonNode]:
+        row = self.session.get(LessonNode, lesson_id)
+        if not row:
+            return None
+        row.category = category
+        if memory_type:
+            row.memory_type = normalize_memory_type(memory_type)
+        vis = default_visibility(category, row.memory_type, row.severity)
+        if category == CATEGORY_SYSTEM:
+            row.visible_in_graph = vis["visible_in_graph"]
+            row.visible_to_ai = False
+            row.can_influence_ranking = False
+        row.updated_at = datetime.utcnow()
+        self.session.add(row)
+        return row
+
+    def bulk_set_category(self, lesson_ids: list[int], category: str) -> int:
+        return sum(1 for lid in lesson_ids if self.set_category(lid, category))
 
     def hive_mind_summary(self) -> dict[str, Any]:
         rows = list(self.session.exec(select(LessonNode).order_by(LessonNode.last_seen_at.desc()).limit(200)).all())

@@ -42,6 +42,29 @@ interface Props {
   onUpdated?: () => void;
 }
 
+function ActionBtn({
+  children,
+  onClick,
+  disabled,
+  className = "",
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={`py-2 px-2 text-[10px] rounded min-w-[72px] ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+
 export function MemoryLessonDrawer({ detail, onClose, onUpdated }: Props) {
   const [busy, setBusy] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -52,14 +75,13 @@ export function MemoryLessonDrawer({ detail, onClose, onUpdated }: Props) {
     (detail.node_id.startsWith("lesson-") ? parseInt(detail.node_id.replace("lesson-", ""), 10) : null);
 
   const title = detail.drawer_title || "Lesson Learned";
-
   async function post(path: string, body?: object) {
     if (!lessonId) return;
     setBusy(true);
     try {
       await apiPost(`/api/memory/lesson/${lessonId}/${path}`, body);
       onUpdated?.();
-      onClose();
+      if (path !== "visibility") onClose();
     } finally {
       setBusy(false);
     }
@@ -113,104 +135,92 @@ export function MemoryLessonDrawer({ detail, onClose, onUpdated }: Props) {
               <p className="text-orange-200/80 text-xs">{detail.system_impact}</p>
             </div>
           )}
-          {detail.proposed_prevention && (
-            <div>
-              <p className="text-slate-500 text-xs uppercase tracking-wide">Proposed action</p>
-              <p className="text-amber-200/90">{detail.proposed_prevention}</p>
-            </div>
-          )}
           <div className="grid grid-cols-2 gap-2 text-xs">
             <div>
               <span className="text-slate-500">Visible to AI</span>
               <p>{detail.visible_to_ai ? "yes" : "no"}</p>
             </div>
             <div>
-              <span className="text-slate-500">Influences ranking</span>
+              <span className="text-slate-500">In graph</span>
+              <p>{detail.visible_in_graph ? "yes" : "no"}</p>
+            </div>
+            <div>
+              <span className="text-slate-500">Ranking influence</span>
               <p>{detail.can_influence_ranking ? "yes" : "no"}</p>
             </div>
-            {detail.symbol && (
-              <div>
-                <span className="text-slate-500">Symbol</span>
-                <p>{detail.symbol}</p>
-              </div>
-            )}
-            {detail.cycle_run_id && (
-              <div className="col-span-2">
-                <span className="text-slate-500">Cycle</span>
-                <p className="truncate font-mono text-[10px]">{detail.cycle_run_id}</p>
-              </div>
-            )}
           </div>
-          <div>
-            <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">Evidence</p>
-            <ul className="space-y-1">
-              {(detail.evidence_human || []).map((e) => (
-                <li key={e.label} className="flex justify-between text-xs border-b border-white/5 py-1">
-                  <span className="text-slate-500">{e.label}</span>
-                  <span className="text-slate-300 text-right max-w-[60%]">{e.value}</span>
-                </li>
-              ))}
-            </ul>
-            <button
-              type="button"
-              className="text-[10px] text-hive-cyan mt-2"
-              onClick={() => setShowAdvanced(!showAdvanced)}
-            >
-              {showAdvanced ? "Hide" : "Show"} advanced JSON
-            </button>
-          </div>
+          <button
+            type="button"
+            className="text-[10px] text-hive-cyan"
+            onClick={() => setShowAdvanced(!showAdvanced)}
+          >
+            {showAdvanced ? "Hide" : "Show"} evidence JSON
+          </button>
           <p className="text-xs text-slate-500">
             Confidence {(detail.confidence * 100).toFixed(0)}% · {detail.action_status}
           </p>
         </section>
+
         {lessonId && (
-          <div className="flex flex-wrap gap-2 mt-6 pt-4 border-t border-white/10">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => post("approve")}
-              className="flex-1 min-w-[80px] py-2 text-xs rounded bg-emerald-600/80 text-white"
-            >
-              Approve
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => post("reject")}
-              className="flex-1 min-w-[80px] py-2 text-xs rounded bg-red-900/60 text-white"
-            >
-              Reject
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() =>
-                post("archive", {
-                  reason: "operator archived",
-                  hide_from_ai: true,
-                  hide_from_graph: true,
-                })
-              }
-              className="flex-1 min-w-[80px] py-2 text-xs rounded bg-slate-700 text-white"
-            >
-              Archive
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => post("restore")}
-              className="py-2 px-3 text-xs rounded border border-white/10 text-slate-300"
-            >
-              Restore
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => post("resolve")}
-              className="py-2 px-3 text-xs rounded border border-emerald-500/30 text-emerald-400"
-            >
-              Mark resolved
-            </button>
+          <div className="mt-6 pt-4 border-t border-white/10 space-y-3">
+            <p className="text-[10px] uppercase tracking-wide text-slate-500">Memory actions</p>
+            <div className="flex flex-wrap gap-2">
+              <ActionBtn
+                disabled={busy}
+                onClick={() => post("archive", { reason: "operator archived", hide_from_ai: true, hide_from_graph: true })}
+                className="bg-slate-700 text-white"
+              >
+                Archive memory
+              </ActionBtn>
+              <ActionBtn disabled={busy} onClick={() => post("restore")} className="border border-white/10 text-slate-300">
+                Restore memory
+              </ActionBtn>
+              <ActionBtn
+                disabled={busy}
+                onClick={() => post("delete", { reason: "soft delete by operator" })}
+                className="bg-red-900/60 text-white"
+              >
+                Delete memory
+              </ActionBtn>
+              <ActionBtn
+                disabled={busy}
+                onClick={() => post("visibility", { visible_in_graph: false })}
+                className="border border-white/10 text-slate-400"
+              >
+                Hide from graph
+              </ActionBtn>
+              <ActionBtn
+                disabled={busy}
+                onClick={() => post("visibility", { visible_to_ai: false, can_influence_ranking: false })}
+                className="border border-white/10 text-slate-400"
+              >
+                Hide from AI
+              </ActionBtn>
+              <ActionBtn disabled={busy} onClick={() => post("resolve")} className="border border-emerald-500/30 text-emerald-400">
+                Mark resolved
+              </ActionBtn>
+              <ActionBtn
+                disabled={busy}
+                onClick={() => post("category", { category: "system_issue" })}
+                className="bg-orange-900/40 text-orange-200"
+              >
+                Mark system issue
+              </ActionBtn>
+              <ActionBtn
+                disabled={busy}
+                onClick={() => post("category", { category: "trading_memory" })}
+                className="bg-cyan-900/40 text-cyan-200"
+              >
+                Mark trading memory
+              </ActionBtn>
+              <ActionBtn disabled={busy} onClick={() => post("approve")} className="bg-emerald-600/80 text-white">
+                Approve useful
+              </ActionBtn>
+              <ActionBtn disabled={busy} onClick={() => post("reject")} className="bg-red-900/40 text-red-200">
+                Reject useless
+              </ActionBtn>
+            </div>
+            <p className="text-[9px] text-slate-600">Delete is soft-delete; audit trail remains. Hard delete is admin-only later.</p>
           </div>
         )}
       </div>

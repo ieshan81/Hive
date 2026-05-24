@@ -525,11 +525,49 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         UI_PANEL_DATA_SOURCES,
         build_frontend_endpoint_status,
     )
+    from app.database import (
+        HistoricalDataCoverage,
+        HistoricalDataError,
+        ParameterSetResult,
+        ResearchBacktestRun,
+        StrategyCandidate,
+        StrategyDefinition,
+        WalkForwardResult,
+    )
 
     try:
         frontend_endpoint_status = build_frontend_endpoint_status(session)
     except Exception as exc:
         frontend_endpoint_status = [{"error": f"probe_failed: {exc}"}]
+
+    research_rows = list(session.exec(select(ResearchBacktestRun)).all())
+    research_bundle = {
+        "historical_data_coverage.json": [
+            _serialize_row(r) for r in session.exec(select(HistoricalDataCoverage)).all()
+        ],
+        "backtest_runs.json": [_serialize_row(r) for r in research_rows],
+        "backtest_results.json": [_serialize_row(r) for r in session.exec(select(BacktestResult)).all()],
+        "parameter_sets.json": [_serialize_row(r) for r in session.exec(select(ParameterSetResult)).all()],
+        "strategy_candidates.json": [_serialize_row(r) for r in session.exec(select(StrategyCandidate)).all()],
+        "rejected_strategies.json": [
+            _serialize_row(r) for r in session.exec(select(StrategyCandidate).where(StrategyCandidate.status == "rejected")).all()
+        ],
+        "walk_forward_results.json": [_serialize_row(r) for r in session.exec(select(WalkForwardResult)).all()],
+        "strategy_leaderboard.json": [],
+        "research_memories.json": [
+            _lesson_row(r)
+            for r in lesson_rows
+            if getattr(r, "category", "") in ("backtest_memory", "strategy_research_memory", "walk_forward_memory")
+        ],
+        "research_errors.json": [_serialize_row(r) for r in session.exec(select(HistoricalDataError)).all()],
+        "strategy_definitions.json": [_serialize_row(r) for r in session.exec(select(StrategyDefinition)).all()],
+    }
+    try:
+        from app.services.research_lab_service import ResearchLabService
+
+        research_bundle["strategy_leaderboard.json"] = ResearchLabService(session).leaderboard()
+    except Exception:
+        pass
 
     return {
         "activity.json": activity_data,
@@ -594,6 +632,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         "frontend_endpoint_status.json": frontend_endpoint_status,
         "ui_panel_data_sources.json": UI_PANEL_DATA_SOURCES,
         "ai_bundle": ai_bundle,
+        "research_bundle": research_bundle,
     }
 
 
@@ -603,6 +642,7 @@ def bundle_as_zip_bytes(session: Session) -> bytes:
 
     bundle = export_diagnostic_bundle(session)
     ai_bundle = bundle.pop("ai_bundle", None)
+    research_bundle = bundle.pop("research_bundle", None)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, content in bundle.items():
@@ -613,4 +653,7 @@ def bundle_as_zip_bytes(session: Session) -> bytes:
         if ai_bundle:
             for name, content in ai_bundle.items():
                 zf.writestr(f"ai_bundle/{name}", json.dumps(content, indent=2, default=str))
+        if research_bundle:
+            for name, content in research_bundle.items():
+                zf.writestr(f"research_bundle/{name}", json.dumps(content, indent=2, default=str))
     return buf.getvalue()

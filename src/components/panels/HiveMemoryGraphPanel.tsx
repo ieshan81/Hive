@@ -17,6 +17,9 @@ const CY = 50;
 type CategoryFilter =
   | "all"
   | "trading_memory"
+  | "strategy_research_memory"
+  | "backtest_memory"
+  | "symbol_pattern"
   | "system_issue"
   | "ai_review_memory"
   | "operator_note";
@@ -136,6 +139,9 @@ export function HiveMemoryGraphPanel({
   const filters: { id: CategoryFilter; label: string }[] = [
     { id: "all", label: "All" },
     { id: "trading_memory", label: "Trading" },
+    { id: "strategy_research_memory", label: "Research" },
+    { id: "backtest_memory", label: "Backtests" },
+    { id: "symbol_pattern", label: "Patterns" },
     { id: "system_issue", label: "System" },
     { id: "ai_review_memory", label: "AI" },
     { id: "operator_note", label: "Operator" },

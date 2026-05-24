@@ -1,4 +1,4 @@
-"""Memory category classification — trading vs system vs operator vs AI."""
+"""Memory category classification — trading, research, system, operator, AI."""
 
 from __future__ import annotations
 
@@ -6,9 +6,16 @@ from typing import Optional
 
 # Top-level categories
 CATEGORY_TRADING = "trading_memory"
+CATEGORY_RESEARCH = "strategy_research_memory"
+CATEGORY_BACKTEST = "backtest_memory"
+CATEGORY_WALK_FORWARD = "walk_forward_memory"
+CATEGORY_SYMBOL_PATTERN = "symbol_pattern"
+CATEGORY_EXECUTION = "execution_memory"
+CATEGORY_BROKER = "broker_behavior"
 CATEGORY_SYSTEM = "system_issue"
 CATEGORY_OPERATOR = "operator_note"
 CATEGORY_AI = "ai_review_memory"
+CATEGORY_LEGACY = "legacy_reference"
 
 # Legacy type → new memory_type + category defaults
 LEGACY_TYPE_MAP: dict[str, tuple[str, str]] = {
@@ -28,6 +35,27 @@ TRADING_TYPES = frozenset(
         "position_management_lesson",
         "blocked_trade_pattern",
         "broker_behavior",
+        "paper_trade_filled",
+        "open_position_monitor",
+    }
+)
+
+RESEARCH_MEMORY_TYPES = frozenset(
+    {
+        "backtest_success_pattern",
+        "backtest_failure_pattern",
+        "walk_forward_failure",
+        "walk_forward_success",
+        "strategy_overfit_warning",
+        "parameter_sensitivity_warning",
+        "regime_dependency_pattern",
+        "symbol_backtest_pattern",
+        "cost_drag_pattern",
+        "spread_kills_edge_pattern",
+        "liquidity_filter_required",
+        "exit_rule_performance_pattern",
+        "rejected_strategy_memory",
+        "promoted_strategy_candidate",
     }
 )
 
@@ -41,6 +69,7 @@ SYSTEM_TYPES = frozenset(
         "ui_truth_bug",
         "api_bug",
         "data_pipeline_bug",
+        "duplicate_position_rows",
     }
 )
 
@@ -55,15 +84,49 @@ AI_TYPES = frozenset(
     }
 )
 
+LEGACY_TYPES = frozenset(
+    {
+        "stale_exit_detection",
+        "capital_trap_detection",
+        "price_divergence_guard",
+        "liquidity_recovery_exit",
+        "exit_worker_heartbeat",
+        "repeated_warning_pattern",
+    }
+)
+
 CATEGORY_COLORS = {
     CATEGORY_TRADING: "#06b6d4",
+    CATEGORY_RESEARCH: "#8b5cf6",
+    CATEGORY_BACKTEST: "#a855f7",
+    CATEGORY_WALK_FORWARD: "#6366f1",
+    CATEGORY_SYMBOL_PATTERN: "#14b8a6",
+    CATEGORY_EXECUTION: "#0ea5e9",
+    CATEGORY_BROKER: "#64748b",
     CATEGORY_SYSTEM: "#f97316",
-    CATEGORY_AI: "#a855f7",
+    CATEGORY_AI: "#c084fc",
     CATEGORY_OPERATOR: "#94a3b8",
+    CATEGORY_LEGACY: "#475569",
+}
+
+GRAPH_FILTER_CATEGORIES = {
+    "trading": CATEGORY_TRADING,
+    "research": CATEGORY_RESEARCH,
+    "backtests": CATEGORY_BACKTEST,
+    "patterns": CATEGORY_SYMBOL_PATTERN,
+    "system": CATEGORY_SYSTEM,
+    "ai": CATEGORY_AI,
+    "operator": CATEGORY_OPERATOR,
 }
 
 
 def classify_memory_type(memory_type: str) -> str:
+    if memory_type in RESEARCH_MEMORY_TYPES:
+        if "walk_forward" in memory_type:
+            return CATEGORY_WALK_FORWARD
+        if "backtest" in memory_type or "overfit" in memory_type or "parameter" in memory_type:
+            return CATEGORY_BACKTEST
+        return CATEGORY_RESEARCH
     if memory_type in TRADING_TYPES:
         return CATEGORY_TRADING
     if memory_type in SYSTEM_TYPES:
@@ -72,15 +135,18 @@ def classify_memory_type(memory_type: str) -> str:
         return CATEGORY_OPERATOR
     if memory_type in AI_TYPES:
         return CATEGORY_AI
+    if memory_type in LEGACY_TYPES:
+        return CATEGORY_LEGACY
     if memory_type in LEGACY_TYPE_MAP:
         return LEGACY_TYPE_MAP[memory_type][1]
-    # Heuristic fallback
     if any(x in memory_type for x in ("bug", "export", "serializer", "stale", "dashboard", "reconciliation")):
         return CATEGORY_SYSTEM
     if "ai" in memory_type or memory_type.startswith("ai_"):
         return CATEGORY_AI
     if memory_type == "operator_note":
         return CATEGORY_OPERATOR
+    if "backtest" in memory_type or "walk_forward" in memory_type or "strategy" in memory_type:
+        return CATEGORY_RESEARCH
     return CATEGORY_TRADING
 
 
@@ -94,8 +160,20 @@ def default_visibility(category: str, memory_type: str, severity: str) -> dict[s
     """Defaults for new memories."""
     if category == CATEGORY_SYSTEM:
         return {
-            "visible_in_graph": True,
+            "visible_in_graph": False,
             "visible_to_ai": False,
+            "can_influence_ranking": False,
+        }
+    if category == CATEGORY_LEGACY:
+        return {
+            "visible_in_graph": False,
+            "visible_to_ai": False,
+            "can_influence_ranking": False,
+        }
+    if category in (CATEGORY_RESEARCH, CATEGORY_BACKTEST, CATEGORY_WALK_FORWARD):
+        return {
+            "visible_in_graph": True,
+            "visible_to_ai": True,
             "can_influence_ranking": False,
         }
     if category == CATEGORY_AI:
@@ -120,10 +198,14 @@ def default_visibility(category: str, memory_type: str, severity: str) -> dict[s
 def drawer_title(category: str) -> str:
     if category == CATEGORY_SYSTEM:
         return "System Issue"
+    if category in (CATEGORY_RESEARCH, CATEGORY_BACKTEST, CATEGORY_WALK_FORWARD):
+        return "Research Memory"
     if category == CATEGORY_AI:
         return "AI Review Memory"
     if category == CATEGORY_OPERATOR:
         return "Operator Note"
+    if category == CATEGORY_LEGACY:
+        return "Legacy Reference"
     return "Lesson Learned"
 
 
@@ -147,6 +229,8 @@ def node_badge(row) -> str:
         return st
     if cat == CATEGORY_SYSTEM:
         return "bug"
+    if cat in (CATEGORY_RESEARCH, CATEGORY_BACKTEST):
+        return "research"
     if "pattern" in mt:
         return "pattern"
     hrs = getattr(row, "human_review_status", "pending") or "pending"
