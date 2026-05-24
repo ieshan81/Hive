@@ -143,10 +143,17 @@ class SymbolDiscoveryService:
         volume = item.get("volume")
         if volume is None and bars:
             volume = bars[-1].get("volume")
+        if volume is not None and volume <= 0:
+            volume = None
 
-        liquidity = liquidity_from_volume(volume) if asset_class == "stock" else liquidity_from_volume(
-            sum(b.get("volume", 0) for b in bars[-5:]) / max(len(bars[-5:]), 1) if bars else None
-        )
+        liquidity = None
+        if volume is not None and volume > 0:
+            if asset_class == "stock":
+                liquidity = liquidity_from_volume(volume)
+            elif bars:
+                avg_vol = sum(b.get("volume", 0) for b in bars[-5:]) / min(len(bars), 5)
+                liquidity = liquidity_from_volume(avg_vol if avg_vol > 0 else None)
+
         volatility = volatility_score_from_bars(bars)
         spread_qual = spread_score(spread_pct, self.max_spread)
         eligibility = eligibility_from_spread(
@@ -155,6 +162,17 @@ class SymbolDiscoveryService:
         rejection = _rejection_reason(
             item.get("tradable", True), spread_display, spread_pct, self.max_spread, price is not None
         )
+        caution = None
+        if eligibility == "caution":
+            if spread_pct is not None and spread_pct > self.max_spread * 0.6:
+                caution = f"Spread elevated ({spread_display})"
+            elif liquidity is not None and liquidity < self.config.get("min_liquidity_score", 40):
+                caution = f"Liquidity below preferred minimum ({liquidity:.0f})"
+            else:
+                caution = "Borderline eligibility"
+
+        def _disp(val):
+            return val if val is not None else "No data"
 
         return {
             "symbol": symbol,
@@ -171,10 +189,15 @@ class SymbolDiscoveryService:
             "spread_display": spread_display,
             "volume": volume,
             "liquidity_score": liquidity,
+            "liquidity_display": _disp(liquidity),
             "volatility_score": volatility,
+            "volatility_display": _disp(volatility),
             "sentiment_score": None,
+            "sentiment_display": "No data",
             "spread_score": spread_qual,
+            "spread_score_display": _disp(spread_qual),
             "eligibility": eligibility.upper(),
             "rejection_reason": rejection,
+            "caution_reason": caution,
             "last_updated": datetime.utcnow().isoformat() + "Z",
         }

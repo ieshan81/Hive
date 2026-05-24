@@ -20,6 +20,7 @@ class StrategyEngine:
         self.session = session
         self.config = config
         self.alpaca = AlpacaAdapter(session)
+        self.cycle_run_id: Optional[str] = None
         self._ensure_states()
 
     def _ensure_states(self) -> None:
@@ -79,8 +80,10 @@ class StrategyEngine:
             stop_loss=stop_loss,
             take_profit=take_profit,
             signal_metadata=metadata or {},
+            cycle_run_id=self.cycle_run_id,
         )
         self.session.add(row)
+        self.session.flush()
         self.session.commit()
         self.session.refresh(row)
         return row

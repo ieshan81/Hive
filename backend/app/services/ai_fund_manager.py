@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import json
 import logging
+import traceback
+from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlmodel import Session
 
 from app.config import settings
 from app.database import AIReview
 
 logger = logging.getLogger(__name__)
+GEMINI_MODEL = "gemini-2.0-flash"
 
 
 class AIReviewOutput(BaseModel):
@@ -39,14 +42,33 @@ class AIFundManager:
     def configured(self) -> bool:
         return settings.gemini_configured
 
-    def review(self, subject_type: str, context: dict, subject_id: Optional[str] = None) -> Optional[AIReview]:
+    def review(
+        self,
+        subject_type: str,
+        context: dict,
+        subject_id: Optional[str] = None,
+        cycle_run_id: Optional[str] = None,
+    ) -> tuple[Optional[AIReview], dict[str, Any]]:
+        meta: dict[str, Any] = {
+            "ai_review_status": "skipped",
+            "ai_review_error_type": None,
+            "ai_review_error_message": None,
+            "model": GEMINI_MODEL,
+            "schema_validation_error": None,
+            "retry_count": 0,
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "cycle_run_id": cycle_run_id,
+        }
         if not self.configured:
-            return None
+            meta["ai_review_status"] = "skipped"
+            meta["ai_review_error_message"] = "Gemini not configured"
+            return None, meta
+
         try:
             import google.generativeai as genai
 
             genai.configure(api_key=settings.gemini_api_key)
-            model = genai.GenerativeModel("gemini-2.0-flash")
+            model = genai.GenerativeModel(GEMINI_MODEL)
             prompt = (
                 "You are the AI Fund Manager for Caged Hive Quant. "
                 "You review trading activity but CANNOT execute trades or bypass risk controls. "
@@ -64,19 +86,69 @@ class AIFundManager:
             parsed = AIReviewOutput.model_validate_json(response.text)
             row = AIReview(
                 subject_type=subject_type,
-                subject_id=subject_id,
+                subject_id=subject_id or cycle_run_id,
                 decision=parsed.decision,
+                review_status="success",
                 confidence=parsed.confidence,
                 summary=parsed.summary,
-                payload=parsed.model_dump(),
+                payload={
+                    **parsed.model_dump(),
+                    "ai_review_status": "success",
+                    "model": GEMINI_MODEL,
+                    "cycle_run_id": cycle_run_id,
+                },
             )
             self.session.add(row)
             self.session.commit()
             self.session.refresh(row)
-            return row
+            meta["ai_review_status"] = "success"
+            return row, meta
+        except ValidationError as exc:
+            meta.update(
+                {
+                    "ai_review_status": "failed",
+                    "ai_review_error_type": "schema_validation_error",
+                    "ai_review_error_message": str(exc)[:500],
+                    "schema_validation_error": str(exc)[:500],
+                }
+            )
+            row = self._record_failure(subject_type, meta, subject_id or cycle_run_id)
+            return row, meta
         except Exception as exc:
-            logger.error("Gemini review failed: %s", exc)
-            return None
+            err_type = type(exc).__name__
+            meta.update(
+                {
+                    "ai_review_status": "failed",
+                    "ai_review_error_type": err_type,
+                    "ai_review_error_message": str(exc)[:500],
+                }
+            )
+            logger.error("Gemini review failed (%s): %s", err_type, exc)
+            row = self._record_failure(subject_type, meta, subject_id or cycle_run_id)
+            return row, meta
+
+    def _record_failure(
+        self,
+        subject_type: str,
+        meta: dict[str, Any],
+        subject_id: Optional[str],
+    ) -> AIReview:
+        row = AIReview(
+            subject_type=subject_type,
+            subject_id=subject_id,
+            decision="failed",
+            review_status="failed",
+            confidence=0.0,
+            summary=meta.get("ai_review_error_message") or "AI review failed",
+            payload={
+                **meta,
+                "traceback": traceback.format_exc()[-1500:],
+            },
+        )
+        self.session.add(row)
+        self.session.commit()
+        self.session.refresh(row)
+        return row
 
     def get_latest_review(self) -> Optional[AIReview]:
         from sqlmodel import select

@@ -87,8 +87,15 @@ class BlockedTrade(SQLModel, table=True):
     strategy: Optional[str] = None
     side: str
     reason: str
+    block_reason_code: Optional[str] = Field(default=None, index=True)
+    human_reason: Optional[str] = None
+    risk_rule: Optional[str] = None
+    evidence_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    risk_engine_result: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     risk_checks_failed: Optional[list] = Field(default=None, sa_column=Column(JSON))
     proposed_qty: Optional[float] = None
+    signal_id: Optional[int] = Field(default=None, index=True)
+    cycle_run_id: Optional[str] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -116,6 +123,7 @@ class StrategySignal(SQLModel, table=True):
     stop_loss: Optional[float] = None
     take_profit: Optional[float] = None
     signal_metadata: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    cycle_run_id: Optional[str] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -154,6 +162,7 @@ class AIReview(SQLModel, table=True):
     subject_type: str
     subject_id: Optional[str] = None
     decision: str
+    review_status: str = Field(default="success", index=True)
     confidence: float = 0.0
     summary: str
     payload: dict = Field(sa_column=Column(JSON))
@@ -261,7 +270,7 @@ class BrokerError(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
-engine = create_engine(settings.database_url, echo=False)
+engine = create_engine(settings.resolve_database_url(), echo=False)
 
 
 def _migrate_columns() -> None:
@@ -269,15 +278,14 @@ def _migrate_columns() -> None:
     from sqlalchemy import inspect, text
 
     insp = inspect(engine)
-    if not insp.has_table("symbol_candidates"):
-        return
 
-    sym_cols = {c["name"] for c in insp.get_columns("symbol_candidates")}
-    with engine.begin() as conn:
-        if "asset_class" not in sym_cols:
-            conn.execute(text("ALTER TABLE symbol_candidates ADD COLUMN asset_class VARCHAR DEFAULT 'stock'"))
-        if "spread_display" not in sym_cols:
-            conn.execute(text("ALTER TABLE symbol_candidates ADD COLUMN spread_display VARCHAR"))
+    if insp.has_table("symbol_candidates"):
+        sym_cols = {c["name"] for c in insp.get_columns("symbol_candidates")}
+        with engine.begin() as conn:
+            if "asset_class" not in sym_cols:
+                conn.execute(text("ALTER TABLE symbol_candidates ADD COLUMN asset_class VARCHAR DEFAULT 'stock'"))
+            if "spread_display" not in sym_cols:
+                conn.execute(text("ALTER TABLE symbol_candidates ADD COLUMN spread_display VARCHAR"))
 
     if insp.has_table("strategy_states"):
         state_cols = {c["name"] for c in insp.get_columns("strategy_states")}
@@ -300,6 +308,29 @@ def _migrate_columns() -> None:
                 conn.execute(text("ALTER TABLE strategy_signals ADD COLUMN stop_loss FLOAT"))
             if "take_profit" not in sig_cols:
                 conn.execute(text("ALTER TABLE strategy_signals ADD COLUMN take_profit FLOAT"))
+            if "cycle_run_id" not in sig_cols:
+                conn.execute(text("ALTER TABLE strategy_signals ADD COLUMN cycle_run_id VARCHAR"))
+
+    if insp.has_table("blocked_trades"):
+        bt_cols = {c["name"] for c in insp.get_columns("blocked_trades")}
+        with engine.begin() as conn:
+            for col, typ in [
+                ("block_reason_code", "VARCHAR"),
+                ("human_reason", "VARCHAR"),
+                ("risk_rule", "VARCHAR"),
+                ("evidence_json", "TEXT"),
+                ("risk_engine_result", "TEXT"),
+                ("signal_id", "INTEGER"),
+                ("cycle_run_id", "VARCHAR"),
+            ]:
+                if col not in bt_cols:
+                    conn.execute(text(f"ALTER TABLE blocked_trades ADD COLUMN {col} {typ}"))
+
+    if insp.has_table("ai_reviews"):
+        ai_cols = {c["name"] for c in insp.get_columns("ai_reviews")}
+        with engine.begin() as conn:
+            if "review_status" not in ai_cols:
+                conn.execute(text("ALTER TABLE ai_reviews ADD COLUMN review_status VARCHAR DEFAULT 'success'"))
 
 
 def init_db() -> None:
@@ -309,4 +340,9 @@ def init_db() -> None:
 
 def get_session():
     with Session(engine) as session:
-        yield session
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise

@@ -1,4 +1,4 @@
-"""Diagnostic bundle export."""
+"""Diagnostic bundle export — DB truth first, dashboard last."""
 
 from __future__ import annotations
 
@@ -25,7 +25,12 @@ from app.database import (
     TradeRecord,
 )
 from app.services.config_manager import ConfigManager
-from app.services.dashboard_service import build_dashboard
+from app.services.cycle_persistence import (
+    count_cycle_rows,
+    database_fingerprint,
+    latest_cycle_end,
+    _risk_event_cycle_id,
+)
 
 
 def _serialize(rows: list) -> list[dict]:
@@ -39,50 +44,97 @@ def _serialize(rows: list) -> list[dict]:
     return result
 
 
-def _latest_cycle_from_activity(session: Session) -> Optional[dict]:
-    row = session.exec(
-        select(ActivityLog)
-        .where(ActivityLog.event_type == "cycle_end")
-        .order_by(ActivityLog.created_at.desc())
-    ).first()
-    if row and row.details:
-        return row.details
-    return None
+def _row_created_at(row) -> str:
+    created = getattr(row, "created_at", None)
+    if created is None:
+        return ""
+    return created.isoformat() + "Z"
+
+
+def _filter_cycle_rows(
+    rows: list,
+    cycle_run_id: Optional[str],
+    started_at: Optional[str],
+    *,
+    cycle_id_getter,
+) -> list:
+    if not cycle_run_id:
+        return rows
+    by_id = [r for r in rows if cycle_id_getter(r) == cycle_run_id]
+    if by_id:
+        return by_id
+    if started_at:
+        return [r for r in rows if _row_created_at(r) >= started_at]
+    return rows
 
 
 def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
+    session.commit()
+    session.expire_all()
+
     config_mgr = ConfigManager(session)
-    dashboard = build_dashboard(session)
     health = session.get(SystemHealth, 1)
 
     activity_rows = list(session.exec(select(ActivityLog).order_by(ActivityLog.created_at.desc())).all())
     strategy_rows = list(session.exec(select(StrategyState)).all())
     signal_rows = list(session.exec(select(StrategySignal).order_by(StrategySignal.created_at.desc())).all())
     candidate_rows = list(session.exec(select(SymbolCandidate)).all())
-    blocked_rows = list(session.exec(select(BlockedTrade)).all())
-    risk_rows = list(session.exec(select(RiskEvent)).all())
+    blocked_rows = list(session.exec(select(BlockedTrade).order_by(BlockedTrade.created_at.desc())).all())
+    risk_rows = list(
+        session.exec(
+            select(RiskEvent)
+            .where(RiskEvent.event_type == "trade_blocked")
+            .order_by(RiskEvent.created_at.desc())
+        ).all()
+    )
 
-    last_cycle = _latest_cycle_from_activity(session)
+    db_counts = count_cycle_rows(session)
+    cycle_log = latest_cycle_end(session)
+    last_cycle = cycle_log.details if cycle_log and cycle_log.details else None
     if last_cycle is None and health and health.details:
         last_cycle = health.details.get("last_cycle")
+
+    latest_cycle_id = last_cycle.get("cycle_run_id") if last_cycle else None
+    cycle_started = last_cycle.get("started_at") if last_cycle else None
+    if latest_cycle_id:
+        signal_rows = _filter_cycle_rows(
+            signal_rows,
+            latest_cycle_id,
+            cycle_started,
+            cycle_id_getter=lambda r: r.cycle_run_id,
+        )
+        blocked_rows = _filter_cycle_rows(
+            blocked_rows,
+            latest_cycle_id,
+            cycle_started,
+            cycle_id_getter=lambda r: r.cycle_run_id,
+        )
+        risk_rows = _filter_cycle_rows(
+            risk_rows,
+            latest_cycle_id,
+            cycle_started,
+            cycle_id_getter=_risk_event_cycle_id,
+        )
+        db_counts = count_cycle_rows(session, latest_cycle_id)
 
     summary_lines = [
         "# Caged Hive Quant — System Summary",
         f"Generated: {datetime.utcnow().isoformat()}Z",
+        f"Database fingerprint: {database_fingerprint()}",
         "",
         "## Connection Status",
-        f"- Alpaca: {'connected' if dashboard['systemStatus']['alpacaConnected'] else 'not connected'}",
-        f"- Gemini: {'configured' if dashboard['systemStatus']['geminiConfigured'] else 'not configured'}",
-        f"- Database: {'connected' if dashboard['systemStatus']['databaseConnected'] else 'unavailable'}",
-        f"- Kill Switch: {'ACTIVE' if dashboard['systemStatus']['killSwitchActive'] else 'off'}",
+        f"- Alpaca: {'connected' if health and health.alpaca_connected else 'not connected'}",
+        f"- Gemini: {'configured' if health and health.gemini_configured else 'not configured'}",
+        f"- Database: {'connected' if health and health.database_connected else 'unavailable'}",
+        f"- Kill Switch: {'ACTIVE' if health and health.kill_switch_active else 'off'}",
         "",
-        "## Backend Data Counts",
+        "## Backend Data Counts (from DB)",
         f"- activity_logs: {len(activity_rows)}",
         f"- strategy_states: {len(strategy_rows)}",
         f"- strategy_signals: {len(signal_rows)}",
         f"- symbol_candidates: {len(candidate_rows)}",
         f"- blocked_trades: {len(blocked_rows)}",
-        f"- risk_events: {len(risk_rows)}",
+        f"- risk_events (trade_blocked): {len(risk_rows)}",
         "",
         "## Last Cycle",
     ]
@@ -90,6 +142,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
     if last_cycle:
         summary_lines.extend(
             [
+                f"- Cycle run id: {last_cycle.get('cycle_run_id', 'unknown')}",
                 f"- Timestamp: {last_cycle.get('ended_at') or last_cycle.get('started_at', 'unknown')}",
                 f"- Status: {last_cycle.get('status', 'unknown')}",
                 f"- Session mode: {(last_cycle.get('session') or {}).get('mode', 'unknown')}",
@@ -102,6 +155,14 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
                 f"- Orders submitted: {last_cycle.get('orders_submitted', 0)}",
                 f"- Errors: {', '.join(last_cycle.get('errors') or []) or 'none'}",
                 "",
+                "## Persistence Check",
+                f"- DB strategy_signals: {db_counts['strategy_signals']}",
+                f"- DB blocked_trades: {db_counts['blocked_trades']}",
+                f"- DB risk_events: {db_counts['risk_events']}",
+                f"- Match signals: {db_counts['strategy_signals'] == last_cycle.get('signals_created', 0)}",
+                f"- Match blocked: {db_counts['blocked_trades'] == last_cycle.get('blocked', 0)}",
+                f"- Match risk events: {db_counts['risk_events'] == last_cycle.get('blocked', 0)}",
+                "",
                 "## Strategy States (last cycle)",
             ]
         )
@@ -111,6 +172,11 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         summary_lines.append("- Status: never run")
         summary_lines.append("- Run POST /api/cycle/run to populate backend data")
 
+    if strategy_rows:
+        summary_lines.extend(["", "## Strategy States (DB)"])
+        for st in strategy_rows:
+            summary_lines.append(f"- {st.strategy}: {st.status} — {st.status_reason or ''}")
+
     summary_lines.extend(
         [
             "",
@@ -119,6 +185,10 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             "Paper trading only. No live trading. No fake data.",
         ]
     )
+
+    from app.services.dashboard_service import build_dashboard
+
+    dashboard = build_dashboard(session)
 
     return {
         "activity.json": _serialize(activity_rows),
@@ -139,6 +209,12 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         "system_health.json": _serialize([health] if health else []),
         "system_summary.md": "\n".join(summary_lines),
         "dashboard_snapshot.json": dashboard,
+        "bundle_meta.json": {
+            "database_fingerprint": database_fingerprint(),
+            "exported_at": datetime.utcnow().isoformat() + "Z",
+            "db_counts": db_counts,
+            "last_cycle_run_id": last_cycle.get("cycle_run_id") if last_cycle else None,
+        },
     }
 
 

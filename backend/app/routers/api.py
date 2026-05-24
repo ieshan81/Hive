@@ -49,6 +49,8 @@ def run_cycle(session: Session = Depends(get_session)):
     from app.services.cycle_engine import CycleEngine
 
     result = CycleEngine(session).run()
+    session.commit()
+    session.expire_all()
     return result
 
 
@@ -144,10 +146,10 @@ def trigger_ai_review(session: Session = Depends(get_session)):
     ai = AIFundManager(session)
     if not ai.configured:
         return {"status": "error", "message": "Gemini not configured"}
-    review = ai.review("dashboard_snapshot", dashboard)
-    if review is None:
-        return {"status": "error", "message": "AI review failed"}
-    return {"status": "ok", "review": review.model_dump()}
+    review, meta = ai.review("dashboard_snapshot", dashboard)
+    if review is None or meta.get("ai_review_status") == "failed":
+        return {"status": "error", "message": meta.get("ai_review_error_message") or "AI review failed", "meta": meta}
+    return {"status": "ok", "review": review.model_dump(), "meta": meta}
 
 
 @router.get("/diagnostic-bundle")

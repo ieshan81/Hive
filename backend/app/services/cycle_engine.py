@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from typing import Any
 
@@ -13,6 +14,7 @@ from app.services.ai_fund_manager import AIFundManager
 from app.services.alpaca_adapter import AlpacaAdapter, normalize_crypto_symbol
 from app.services.capital_buckets import bucket_for_asset_class, compute_buckets, compute_position_size
 from app.services.config_manager import ConfigManager
+from app.services.cycle_persistence import verify_cycle_persistence
 from app.services.market_radar_service import MarketRadarService
 from app.services.memory_engine import MemoryEngine
 from app.services.risk_engine import RiskEngine, TradeProposal
@@ -51,7 +53,10 @@ class CycleEngine:
         self.ai = AIFundManager(session)
 
     def run(self) -> dict[str, Any]:
+        cycle_run_id = str(uuid.uuid4())
+        self.strategies.cycle_run_id = cycle_run_id
         summary: dict[str, Any] = {
+            "cycle_run_id": cycle_run_id,
             "started_at": datetime.utcnow().isoformat() + "Z",
             "steps": [],
             "signals_generated": 0,
@@ -65,7 +70,12 @@ class CycleEngine:
             "alpaca_configured": self.alpaca.configured,
         }
 
-        log_activity(self.session, "cycle_start", "Strategy cycle started")
+        log_activity(
+            self.session,
+            "cycle_start",
+            "Strategy cycle started",
+            {"cycle_run_id": cycle_run_id},
+        )
         summary["steps"].append("cycle_start")
 
         account = None
@@ -79,13 +89,18 @@ class CycleEngine:
             self.session,
             "alpaca_sync",
             f"Synced account equity={account.equity if account else 'N/A'}, positions={len(positions)}",
-            {"configured": self.alpaca.configured},
+            {"configured": self.alpaca.configured, "cycle_run_id": cycle_run_id},
         )
         summary["steps"].append("alpaca_sync")
 
         session_state = self.session_engine.detect()
         summary["session"] = session_state.to_dict()
-        log_activity(self.session, "session", f"Session mode: {session_state.mode}", session_state.to_dict())
+        log_activity(
+            self.session,
+            "session",
+            f"Session mode: {session_state.mode}",
+            {**session_state.to_dict(), "cycle_run_id": cycle_run_id},
+        )
         summary["steps"].append("session")
 
         equity = account.equity if account else 0.0
@@ -158,6 +173,7 @@ class CycleEngine:
         summary["signals_generated"] = len(signals)
         summary["signals_created"] = len(all_created)
         summary["steps"].append("strategy_signals")
+        self.session.commit()
 
         max_risk_pct = self.config.get("max_risk_per_trade", 0.01)
         max_strategy_pct = self.config.get("capital_allocation_rules", {}).get("max_per_strategy_pct", 0.5)
@@ -165,7 +181,15 @@ class CycleEngine:
         for sig in signals:
             summary["signals_evaluated"] += 1
             approved = self._evaluate_signal(
-                sig, session_state, account, equity, buckets, candidates, max_risk_pct, max_strategy_pct, summary
+                sig,
+                cycle_run_id,
+                session_state,
+                account,
+                equity,
+                buckets,
+                candidates,
+                max_risk_pct,
+                max_strategy_pct,
             )
             if approved:
                 summary["approved"] += 1
@@ -182,8 +206,14 @@ class CycleEngine:
             from app.services.dashboard_service import build_dashboard
 
             dashboard = build_dashboard(self.session)
-            review = self.ai.review("cycle", {"cycle_summary": summary, "dashboard": dashboard})
-            if review:
+            review, ai_meta = self.ai.review(
+                "cycle",
+                {"cycle_summary": summary, "dashboard": dashboard},
+                subject_id=cycle_run_id,
+                cycle_run_id=cycle_run_id,
+            )
+            summary["ai_review_meta"] = ai_meta
+            if review and ai_meta.get("ai_review_status") == "success":
                 payload = review.payload or {}
                 mem = payload.get("memory_to_create")
                 if mem:
@@ -195,9 +225,28 @@ class CycleEngine:
                         strategy=mem.get("strategy"),
                     )
                 summary["ai_review"] = review.decision
-            else:
-                summary["errors"].append("AI review failed")
+            elif ai_meta.get("ai_review_status") == "failed":
+                summary["errors"].append(
+                    f"AI review failed: {ai_meta.get('ai_review_error_type')}: {ai_meta.get('ai_review_error_message')}"
+                )
+                log_activity(
+                    self.session,
+                    "ai_review_failed",
+                    summary["errors"][-1],
+                    ai_meta,
+                )
             summary["steps"].append("ai_review")
+        elif meaningful_ai:
+            summary["ai_review_meta"] = {
+                "ai_review_status": "skipped",
+                "ai_review_error_message": "Gemini not configured",
+            }
+
+        summary["strategy_states"] = [
+            {"strategy": s.strategy, "status": s.status, "reason": s.status_reason}
+            for s in self.strategies.get_all_states()
+        ]
+        summary["ended_at"] = datetime.utcnow().isoformat() + "Z"
 
         health = self.session.get(SystemHealth, 1)
         if health is None:
@@ -206,15 +255,9 @@ class CycleEngine:
         health.database_connected = True
         health.gemini_configured = self.ai.configured
         health.last_account_sync = datetime.utcnow() if account else health.last_account_sync
-        health.details = {
-            "last_cycle": summary,
-            "activity_logged": True,
-            "strategy_states_count": len(self.strategies.get_all_states()),
-            "radar_count": len(candidates),
-        }
+        health.details = {"last_cycle": summary, "cycle_run_id": cycle_run_id}
         health.updated_at = datetime.utcnow()
         self.session.add(health)
-        self.session.commit()
 
         log_activity(
             self.session,
@@ -222,6 +265,9 @@ class CycleEngine:
             f"Cycle complete: {summary['signals_generated']} signals, {summary['blocked']} blocked, {summary['approved']} approved",
             summary,
         )
+        self.session.commit()
+
+        verify_cycle_persistence(self.session, summary)
         summary["status"] = "ok" if account or not self.alpaca.configured else "partial"
         summary["message"] = (
             "Cycle completed — Alpaca not configured"
@@ -230,16 +276,13 @@ class CycleEngine:
             if account
             else "Cycle completed without account sync — check Alpaca credentials"
         )
-        summary["strategy_states"] = [
-            {"strategy": s.strategy, "status": s.status, "reason": s.status_reason}
-            for s in self.strategies.get_all_states()
-        ]
-        summary["ended_at"] = datetime.utcnow().isoformat() + "Z"
+        self.session.commit()
         return summary
 
     def _evaluate_signal(
         self,
         sig: StrategySignal,
+        cycle_run_id: str,
         session_state,
         account,
         equity: float,
@@ -247,7 +290,6 @@ class CycleEngine:
         candidates,
         max_risk_pct: float,
         max_strategy_pct: float,
-        summary: dict,
     ) -> bool:
         asset_class = _asset_class_for_signal(sig)
         if not self.session_engine.asset_class_allowed(asset_class, session_state):
@@ -257,9 +299,24 @@ class CycleEngine:
                 side=sig.side,
                 reason="Market closed for asset class",
                 check_name="market_session",
+                signal_id=sig.id,
+                cycle_run_id=cycle_run_id,
             )
-            self.strategies.update_signal_status(sig.id, "blocked", {"invalidation_reason": "Market closed"})
-            log_activity(self.session, "signal_blocked", f"Blocked {sig.symbol}: market closed", {"signal_id": sig.id})
+            self.strategies.update_signal_status(
+                sig.id,
+                "blocked",
+                {
+                    "invalidation_reason": "Market closed",
+                    "block_reason_code": "MARKET_CLOSED",
+                },
+            )
+            log_activity(
+                self.session,
+                "signal_blocked",
+                f"Blocked {sig.symbol}: market closed",
+                {"signal_id": sig.id, "cycle_run_id": cycle_run_id},
+            )
+            self.session.commit()
             return False
 
         quote_sym = _quote_symbol(sig)
@@ -278,9 +335,17 @@ class CycleEngine:
                 side=sig.side,
                 reason="No quote available",
                 check_name="no_quote",
+                signal_id=sig.id,
+                cycle_run_id=cycle_run_id,
             )
             self.strategies.update_signal_status(sig.id, "blocked", {"invalidation_reason": "No quote"})
-            log_activity(self.session, "signal_blocked", f"Blocked {sig.symbol}: no quote", {"signal_id": sig.id})
+            log_activity(
+                self.session,
+                "signal_blocked",
+                f"Blocked {sig.symbol}: no quote",
+                {"signal_id": sig.id, "cycle_run_id": cycle_run_id},
+            )
+            self.session.commit()
             return False
 
         stop = sig.stop_loss or (entry * 0.985 if "buy" in sig.side else entry * 1.015)
@@ -309,6 +374,9 @@ class CycleEngine:
             spread_pct=spread_pct,
             liquidity_score=candidate_row.liquidity_score if candidate_row else None,
             asset_class=asset_class,
+            signal_id=sig.id,
+            signal_confidence=sig.confidence,
+            cycle_run_id=cycle_run_id,
         )
         decision = self.risk.evaluate(proposal, session_state=session_state)
         if decision.approved:
@@ -317,21 +385,32 @@ class CycleEngine:
                 self.session,
                 "signal_approved",
                 f"Approved {sig.signal} {sig.symbol} (paper only — no order submitted)",
-                {"strategy": sig.strategy, "qty": qty, "signal_id": sig.id},
+                {"strategy": sig.strategy, "qty": qty, "signal_id": sig.id, "cycle_run_id": cycle_run_id},
             )
+            self.session.commit()
             return True
 
         self.strategies.update_signal_status(
             sig.id,
             "blocked",
-            {"invalidation_reason": "; ".join(decision.reasons)},
+            {
+                "invalidation_reason": decision.human_reason or "; ".join(decision.reasons),
+                "block_reason_code": decision.block_reason_code,
+                "risk_rule": decision.risk_rule,
+            },
         )
         log_activity(
             self.session,
             "signal_blocked",
-            f"Blocked {sig.symbol}: {'; '.join(decision.reasons)}",
-            {"signal_id": sig.id, "reasons": decision.reasons},
+            f"Blocked {sig.symbol}: {decision.human_reason or '; '.join(decision.reasons)}",
+            {
+                "signal_id": sig.id,
+                "cycle_run_id": cycle_run_id,
+                "block_reason_code": decision.block_reason_code,
+                "reasons": decision.reasons,
+            },
         )
+        self.session.commit()
         return False
 
     def _set_all_strategies_inactive(self, reason: str) -> None:
