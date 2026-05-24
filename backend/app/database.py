@@ -193,7 +193,7 @@ class AIUsageLog(SQLModel, table=True):
     __tablename__ = "ai_usage_logs"
     id: Optional[int] = Field(default=None, primary_key=True)
     cycle_run_id: Optional[str] = Field(default=None, index=True)
-    model: str = "gemini-2.5-flash"
+    model: str = "gemini-3.5-flash"
     purpose: str
     mode: str = "quick"
     prompt_tokens: Optional[int] = None
@@ -330,6 +330,119 @@ class BrokerError(SQLModel, table=True):
     details: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     cycle_run_id: Optional[str] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class PortfolioDecision(SQLModel, table=True):
+    __tablename__ = "portfolio_decisions"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    cycle_run_id: str = Field(index=True)
+    signal_id: int = Field(index=True)
+    symbol: str = Field(index=True)
+    side: str
+    signal_type: str = "entry"
+    portfolio_status: str = Field(index=True)
+    portfolio_reason_code: Optional[str] = None
+    human_reason: Optional[str] = None
+    ranking_score: Optional[float] = None
+    portfolio_rank: Optional[int] = None
+    selected_for_execution: bool = False
+    evidence_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ExecutionLog(SQLModel, table=True):
+    __tablename__ = "execution_logs"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    event_id: str = Field(index=True)
+    cycle_run_id: str = Field(index=True)
+    signal_id: Optional[int] = Field(default=None, index=True)
+    portfolio_decision_id: Optional[int] = None
+    symbol: str = Field(index=True)
+    side: str
+    signal_type: str = "entry"
+    requested_qty: Optional[float] = None
+    requested_notional: Optional[float] = None
+    limit_price: Optional[float] = None
+    tif: Optional[str] = None
+    bid_at_decision: Optional[float] = None
+    ask_at_decision: Optional[float] = None
+    mid_at_decision: Optional[float] = None
+    reference_price: Optional[float] = None
+    spread_pct_at_decision: Optional[float] = None
+    atr14_at_decision: Optional[float] = None
+    expected_move_pct: Optional[float] = None
+    edge_over_cost: Optional[float] = None
+    risk_pct: Optional[float] = None
+    gates_passed_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    gates_failed_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    ai_review_id: Optional[int] = None
+    broker_order_id: Optional[str] = Field(default=None, index=True)
+    broker_client_order_id: Optional[str] = None
+    submitted_at: Optional[datetime] = None
+    accepted_at: Optional[datetime] = None
+    filled_qty: Optional[float] = None
+    filled_avg_price: Optional[float] = None
+    commission: Optional[float] = None
+    status: str = Field(default="pending", index=True)
+    reject_reason: Optional[str] = None
+    parent_signal_payload_hash: Optional[str] = None
+    code_version_sha: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class SymbolCooldown(SQLModel, table=True):
+    __tablename__ = "symbol_cooldowns"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    symbol: str = Field(index=True)
+    reason: str = Field(index=True)
+    active: bool = True
+    expires_at: datetime
+    details: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class StrategyCooldown(SQLModel, table=True):
+    __tablename__ = "strategy_cooldowns"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    strategy: str = Field(index=True)
+    reason: str
+    active: bool = True
+    expires_at: datetime
+    details: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AccountCooldown(SQLModel, table=True):
+    __tablename__ = "account_cooldowns"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    reason: str = Field(index=True)
+    active: bool = True
+    expires_at: datetime
+    details: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class KillSwitchEvent(SQLModel, table=True):
+    __tablename__ = "kill_switch_events"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    switch_name: str = Field(index=True)
+    active: bool = True
+    severity: str = "critical"
+    message: str
+    details: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    cycle_run_id: Optional[str] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    deactivated_at: Optional[datetime] = None
+
+
+class PromotionStatus(SQLModel, table=True):
+    __tablename__ = "promotion_status"
+    id: Optional[int] = Field(default=1, primary_key=True)
+    current_stage: str = "PAPER"
+    paper_started_at: Optional[datetime] = None
+    metrics_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    last_human_review_at: Optional[datetime] = None
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 engine = create_engine(settings.resolve_database_url(), echo=False)

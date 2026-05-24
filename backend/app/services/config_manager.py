@@ -48,7 +48,13 @@ class ConfigManager:
         if row is None:
             self._activate(DEFAULT_CONFIG, changed_by="system", reason="Initial default config")
             row = self.session.get(ConfigCurrent, 1)
-        return row.config_json if row else DEFAULT_CONFIG
+        if row is None:
+            return DEFAULT_CONFIG
+        merged = _deep_merge(DEFAULT_CONFIG, row.config_json)
+        if merged.get("config_version", 0) < DEFAULT_CONFIG.get("config_version", 1):
+            merged["config_version"] = DEFAULT_CONFIG["config_version"]
+            self._activate(merged, changed_by="system", reason="Merged default config v2")
+        return _apply_locked_caps(merged)
 
     def _activate(self, config: dict, changed_by: str, reason: str) -> ConfigCurrent:
         safe = _apply_locked_caps(config)

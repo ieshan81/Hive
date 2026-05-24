@@ -362,6 +362,49 @@ class AlpacaAdapter:
             self._log_error("get_latest_quote", str(exc), {"symbol": symbol})
             return None
 
+    def submit_marketable_limit_ioc(
+        self,
+        symbol: str,
+        qty: float,
+        side: str,
+        *,
+        limit_price: float,
+        client_order_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Marketable limit IOC — default crypto execution policy."""
+        client = self._get_trading_client()
+        if client is None:
+            return {"success": False, "error": "Alpaca not configured"}
+        try:
+            from alpaca.trading.requests import LimitOrderRequest
+            from alpaca.trading.enums import OrderSide, TimeInForce
+
+            side_enum = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
+            req = LimitOrderRequest(
+                symbol=normalize_crypto_symbol(symbol),
+                qty=qty,
+                side=side_enum,
+                time_in_force=TimeInForce.IOC,
+                limit_price=round(limit_price, 8),
+                client_order_id=client_order_id,
+            )
+            order = client.submit_order(req)
+            return {
+                "success": True,
+                "order_id": str(order.id),
+                "status": str(order.status),
+                "symbol": symbol,
+                "limit_price": limit_price,
+                "tif": "ioc",
+            }
+        except Exception as exc:
+            self._log_error(
+                "submit_marketable_limit_ioc",
+                str(exc),
+                {"symbol": symbol, "side": side, "limit_price": limit_price},
+            )
+            return {"success": False, "error": str(exc)}
+
     def submit_paper_order(
         self,
         symbol: str,

@@ -46,9 +46,7 @@ class AIFundManager:
         return settings.gemini_configured and bool(self.config.get("ai_enabled", True))
 
     def _model_for_mode(self, mode: str) -> str:
-        if mode == "deep":
-            return self.config.get("ai_model_deep", "gemini-2.5-pro")
-        return self.config.get("ai_model_quick", "gemini-2.5-flash")
+        return settings.gemini_model_for(mode)
 
     def review(
         self,

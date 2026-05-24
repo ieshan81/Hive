@@ -17,8 +17,11 @@ from app.database import (
     BacktestResult,
     BlockedTrade,
     BrokerError,
+    ExecutionLog,
+    KillSwitchEvent,
     MonteCarloResult,
     OrderRecord,
+    PortfolioDecision,
     PositionSnapshot,
     RiskEvent,
     StrategySignal,
@@ -115,6 +118,56 @@ def serialize_risk_event(row: RiskEvent) -> dict[str, Any]:
         "block_reason_code": details.get("block_reason_code"),
         "human_reason": details.get("human_reason"),
         "evidence_json": evidence or None,
+        "created_at": _iso(row.created_at),
+    }
+
+
+def serialize_portfolio_decision(row: PortfolioDecision) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "cycle_run_id": row.cycle_run_id,
+        "signal_id": row.signal_id,
+        "symbol": row.symbol,
+        "side": row.side,
+        "signal_type": row.signal_type,
+        "portfolio_status": row.portfolio_status,
+        "portfolio_reason_code": row.portfolio_reason_code,
+        "human_reason": row.human_reason,
+        "ranking_score": row.ranking_score,
+        "portfolio_rank": row.portfolio_rank,
+        "selected_for_execution": row.selected_for_execution,
+        "evidence_json": row.evidence_json,
+        "created_at": _iso(row.created_at),
+    }
+
+
+def serialize_execution_log(row: ExecutionLog) -> dict[str, Any]:
+    return {
+        "event_id": row.event_id,
+        "cycle_run_id": row.cycle_run_id,
+        "signal_id": row.signal_id,
+        "portfolio_decision_id": row.portfolio_decision_id,
+        "symbol": row.symbol,
+        "side": row.side,
+        "signal_type": row.signal_type,
+        "requested_qty": row.requested_qty,
+        "requested_notional": row.requested_notional,
+        "limit_price": row.limit_price,
+        "tif": row.tif,
+        "bid_at_decision": row.bid_at_decision,
+        "ask_at_decision": row.ask_at_decision,
+        "mid_at_decision": row.mid_at_decision,
+        "spread_pct_at_decision": row.spread_pct_at_decision,
+        "atr14_at_decision": row.atr14_at_decision,
+        "expected_move_pct": row.expected_move_pct,
+        "edge_over_cost": row.edge_over_cost,
+        "risk_pct": row.risk_pct,
+        "gates_passed_json": row.gates_passed_json,
+        "gates_failed_json": row.gates_failed_json,
+        "broker_order_id": row.broker_order_id,
+        "broker_client_order_id": row.broker_client_order_id,
+        "status": row.status,
+        "reject_reason": row.reject_reason,
         "created_at": _iso(row.created_at),
     }
 
@@ -231,6 +284,9 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         ).all()
     )
     broker_error_rows = list(session.exec(select(BrokerError).order_by(BrokerError.created_at.desc())).all())
+    portfolio_rows = list(session.exec(select(PortfolioDecision).order_by(PortfolioDecision.created_at.desc())).all())
+    execution_rows = list(session.exec(select(ExecutionLog).order_by(ExecutionLog.created_at.desc())).all())
+    kill_rows = list(session.exec(select(KillSwitchEvent).order_by(KillSwitchEvent.created_at.desc())).all())
 
     db_counts = count_cycle_rows(session)
     cycle_log = latest_cycle_end(session)
@@ -259,6 +315,18 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             cycle_started,
             cycle_id_getter=_risk_event_cycle_id,
         )
+        portfolio_rows = _filter_cycle_rows(
+            portfolio_rows,
+            latest_cycle_id,
+            cycle_started,
+            cycle_id_getter=lambda r: r.cycle_run_id,
+        )
+        execution_rows = _filter_cycle_rows(
+            execution_rows,
+            latest_cycle_id,
+            cycle_started,
+            cycle_id_getter=lambda r: r.cycle_run_id,
+        )
         db_counts = count_cycle_rows(session, latest_cycle_id)
 
     # Materialize rows before build_dashboard() — its commit expires ORM instances.
@@ -266,6 +334,8 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
     signal_data = _materialize(signal_rows, serialize_strategy_signal)
     blocked_data = _materialize(blocked_rows, serialize_blocked_trade)
     risk_data = _materialize(risk_rows, serialize_risk_event)
+    portfolio_data = _materialize(portfolio_rows, serialize_portfolio_decision)
+    execution_data = _materialize(execution_rows, serialize_execution_log)
     broker_errors_all = [
         serialize_broker_error(
             row,
@@ -313,7 +383,10 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
                 f"- Signals created: {last_cycle.get('signals_created', 0)}",
                 f"- Signals evaluated: {last_cycle.get('signals_evaluated', 0)}",
                 f"- Blocked: {last_cycle.get('blocked', 0)}",
-                f"- Approved: {last_cycle.get('approved', 0)}",
+                f"- Risk approved: {last_cycle.get('risk_approved', 0)}",
+                f"- Portfolio deferred: {last_cycle.get('portfolio_deferred', 0)}",
+                f"- Selected for execution: {last_cycle.get('selected_for_execution', 0)}",
+                f"- Approved (incl. no-order): {last_cycle.get('approved', 0)}",
                 f"- Orders submitted: {last_cycle.get('orders_submitted', 0)}",
                 f"- Errors: {', '.join(last_cycle.get('errors') or []) or 'none'}",
                 "",
@@ -350,9 +423,16 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
 
     from app.services.dashboard_service import build_dashboard
     from app.services.attention_radar_service import AttentionRadarService
+    from app.services.cooldown_service import CooldownService
+    from app.services.kill_switch_service import KillSwitchService
+    from app.services.promotion_service import PromotionService
 
     dashboard = build_dashboard(session)
     attention = AttentionRadarService(session).scan(limit=25)
+    config = config_mgr.get_current()
+    cooldowns = CooldownService(session, config).list_all()
+    kill_status = KillSwitchService(session, config).status()
+    promotion = PromotionService(session, config).status()
 
     return {
         "activity.json": activity_data,
@@ -372,6 +452,12 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         "monte_carlo_results.json": [_serialize_row(r) for r in session.exec(select(MonteCarloResult)).all()],
         "strategy_states.json": [_serialize_row(r) for r in strategy_rows],
         "strategy_signals.json": signal_data,
+        "portfolio_decisions.json": portfolio_data,
+        "execution_logs.json": execution_data,
+        "cooldowns.json": cooldowns,
+        "promotion_status.json": promotion,
+        "kill_switch_status.json": kill_status,
+        "kill_switch_events.json": [_serialize_row(r) for r in kill_rows],
         "symbol_candidates.json": [_serialize_row(r) for r in candidate_rows],
         "alpaca_errors.json": broker_errors_all,
         "latest_cycle_errors.json": latest_cycle_errors,

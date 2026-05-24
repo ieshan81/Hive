@@ -51,6 +51,8 @@ def health_check(session: Session = Depends(get_session)):
         "live_trading_enabled": False,
         "alpaca_connected": health.alpaca_connected if health else False,
         "ai_budget": budget,
+        "gemini_model_quick": settings.gemini_model_for("quick"),
+        "gemini_model_deep": settings.gemini_model_for("deep"),
         "warnings": warnings,
     }
 
@@ -132,6 +134,176 @@ def get_blocked_trades(cycle_run_id: str = "latest", session: Session = Depends(
     cid = resolve_cycle_run_id(session, cycle_run_id)
     rows = blocked_for_cycle(session, cycle_run_id)
     return {"status": "ok", "cycle_run_id": cid, "count": len(rows), "blocked_trades": rows}
+
+
+@router.get("/portfolio/decisions")
+def get_portfolio_decisions(cycle_run_id: str = "latest", session: Session = Depends(get_session)):
+    from app.services.query_service import portfolio_decisions_for_cycle
+
+    cid = resolve_cycle_run_id(session, cycle_run_id)
+    rows = portfolio_decisions_for_cycle(session, cycle_run_id)
+    return {"status": "ok", "cycle_run_id": cid, "count": len(rows), "decisions": rows}
+
+
+@router.get("/execution/logs")
+def get_execution_logs(cycle_run_id: str = "latest", session: Session = Depends(get_session)):
+    from app.services.query_service import execution_logs_for_cycle
+
+    cid = resolve_cycle_run_id(session, cycle_run_id)
+    rows = execution_logs_for_cycle(session, cycle_run_id)
+    return {"status": "ok", "cycle_run_id": cid, "count": len(rows), "execution_logs": rows}
+
+
+@router.post("/execution/paper/enable")
+def enable_paper_execution(session: Session = Depends(get_session)):
+    mgr = ConfigManager(session)
+    cfg = mgr.get_current()
+    cfg.setdefault("execution", {})["paper_orders_enabled"] = True
+    mgr._activate(cfg, changed_by="operator", reason="Paper execution enabled")
+    return {"status": "ok", "paper_orders_enabled": True}
+
+
+@router.post("/execution/paper/disable")
+def disable_paper_execution(session: Session = Depends(get_session)):
+    mgr = ConfigManager(session)
+    cfg = mgr.get_current()
+    cfg.setdefault("execution", {})["paper_orders_enabled"] = False
+    mgr._activate(cfg, changed_by="operator", reason="Paper execution disabled")
+    return {"status": "ok", "paper_orders_enabled": False}
+
+
+@router.post("/execution/paper/run-selected")
+def run_selected_paper_orders(cycle_run_id: str = "latest", session: Session = Depends(get_session)):
+    from app.services.execution_policy import ExecutionPolicy
+    from app.services.portfolio_gate import ApprovedCandidate
+    from app.services.symbol_tier_service import SymbolTierService
+    from app.database import PortfolioDecision, StrategySignal
+    from sqlmodel import select
+
+    cid = resolve_cycle_run_id(session, cycle_run_id)
+    if not cid:
+        return {"status": "error", "message": "No cycle run id"}
+    config = ConfigManager(session).get_current()
+    if not config.get("execution", {}).get("paper_orders_enabled"):
+        return {"status": "error", "message": "paper_orders_enabled is false"}
+    decs = session.exec(
+        select(PortfolioDecision).where(
+            PortfolioDecision.cycle_run_id == cid,
+            PortfolioDecision.selected_for_execution == True,  # noqa: E712
+        )
+    ).all()
+    alpaca = AlpacaAdapter(session)
+    selected = []
+    for d in decs:
+        sig = session.get(StrategySignal, d.signal_id)
+        if not sig:
+            continue
+        meta = sig.signal_metadata or {}
+        selected.append(
+            ApprovedCandidate(
+                signal_id=sig.id,
+                symbol=sig.symbol,
+                side=sig.side if sig.side != "hold" else "buy",
+                signal_type=sig.signal_type or "entry",
+                meta=meta,
+                strength=sig.strength,
+                confidence=sig.confidence,
+                spread_pct=meta.get("spread_pct"),
+                liquidity_score=None,
+                edge_over_cost=meta.get("edge_over_cost"),
+                expected_move_pct=meta.get("expected_move_pct"),
+                position_qty=meta.get("position_qty") or 0.01,
+                entry_price=meta.get("current_price") or 1,
+                stop_loss=sig.stop_loss or 0,
+                atr14=meta.get("atr14"),
+                tier=meta.get("tier", "TIER_ALT"),
+                cost_evidence=meta.get("cost_edge", {}),
+                sizing_evidence=meta.get("sizing", {}),
+            )
+        )
+    policy = ExecutionPolicy(session, config, alpaca, SymbolTierService(config))
+    logs = policy.process_selected(cid, selected, quote_by_symbol={})
+    return {"status": "ok", "submitted": len([l for l in logs if l.status == "paper_order_submitted"]), "logs": len(logs)}
+
+
+@router.get("/cooldowns")
+def get_cooldowns(session: Session = Depends(get_session)):
+    from app.services.cooldown_service import CooldownService
+
+    config = ConfigManager(session).get_current()
+    return {"status": "ok", **CooldownService(session, config).list_all()}
+
+
+@router.get("/kill-switch/status")
+def kill_switch_status(session: Session = Depends(get_session)):
+    from app.services.kill_switch_service import KillSwitchService
+
+    config = ConfigManager(session).get_current()
+    return {"status": "ok", **KillSwitchService(session, config).status()}
+
+
+@router.post("/kill-switch/manual/activate")
+def kill_switch_activate(session: Session = Depends(get_session)):
+    from app.services.kill_switch_service import KillSwitchService
+
+    config = ConfigManager(session).get_current()
+    ks = KillSwitchService(session, config)
+    ev = ks.activate("manual_master", "Manual master kill activated by operator")
+    config.setdefault("kill", {})["manual_master_active"] = True
+    ConfigManager(session)._activate(config, changed_by="operator", reason="Manual kill on")
+    return {"status": "ok", "event_id": ev.id}
+
+
+@router.post("/kill-switch/manual/deactivate")
+def kill_switch_deactivate(session: Session = Depends(get_session)):
+    from app.services.kill_switch_service import KillSwitchService
+
+    config = ConfigManager(session).get_current()
+    KillSwitchService(session, config).deactivate_manual()
+    config.setdefault("kill", {})["manual_master_active"] = False
+    config["kill_switch_active"] = False
+    ConfigManager(session)._activate(config, changed_by="operator", reason="Manual kill off")
+    return {"status": "ok", "entries_allowed": True}
+
+
+@router.get("/promotion/status")
+def promotion_status(session: Session = Depends(get_session)):
+    from app.services.promotion_service import PromotionService
+
+    config = ConfigManager(session).get_current()
+    return {"status": "ok", **PromotionService(session, config).status()}
+
+
+@router.post("/promotion/request")
+def promotion_request(target_stage: str = "PRE_LIVE", session: Session = Depends(get_session)):
+    from app.services.promotion_service import PromotionService
+
+    config = ConfigManager(session).get_current()
+    return PromotionService(session, config).request_promotion(target_stage)
+
+
+@router.get("/ai/config-proposals")
+def ai_config_proposals(session: Session = Depends(get_session)):
+    from sqlmodel import select
+    from app.database import AIConfigProposal
+
+    rows = session.exec(select(AIConfigProposal).order_by(AIConfigProposal.created_at.desc()).limit(50)).all()
+    return {
+        "status": "ok",
+        "count": len(rows),
+        "proposals": [
+            {
+                "id": r.id,
+                "cycle_run_id": r.cycle_run_id,
+                "proposed_by": r.proposed_by,
+                "config_patch": r.config_patch,
+                "reason": r.reason,
+                "status": r.status,
+                "created_at": r.created_at.isoformat() + "Z" if r.created_at else None,
+            }
+            for r in rows
+        ],
+    }
 
 
 @router.get("/ai/reviews")

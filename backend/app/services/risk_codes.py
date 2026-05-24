@@ -32,6 +32,10 @@ CHECK_TO_CODE: dict[str, str] = {
     "sell_no_position": "SELL_BLOCKED_NO_BROKER_POSITION",
     "broker_qty": "BROKER_POSITION_QTY_TOO_LOW",
     "paper_only": "PAPER_ONLY_APPROVED_NO_ORDER",
+    "edge_cost": "EDGE_BELOW_COST",
+    "atr_missing": "ATR_DATA_MISSING",
+    "symbol_tier": "ENGINE_BOUNDARY_BLOCKED",
+    "account_cooldown": "ACCOUNT_COOLDOWN_ACTIVE",
 }
 
 CHECK_TO_RULE: dict[str, str] = {

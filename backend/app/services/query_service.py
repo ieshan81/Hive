@@ -10,6 +10,8 @@ from app.database import (
     AIReview,
     ActivityLog,
     BlockedTrade,
+    ExecutionLog,
+    PortfolioDecision,
     RiskEvent,
     StrategySignal,
     SystemHealth,
@@ -18,6 +20,8 @@ from app.services.cycle_persistence import latest_cycle_end, _risk_event_cycle_i
 from app.services.diagnostic_export import (
     serialize_activity,
     serialize_blocked_trade,
+    serialize_execution_log,
+    serialize_portfolio_decision,
     serialize_risk_event,
     serialize_strategy_signal,
 )
@@ -67,6 +71,28 @@ def risk_events_for_cycle(session: Session, cycle_run_id: str) -> list[dict[str,
         select(RiskEvent).where(RiskEvent.event_type == "trade_blocked").order_by(RiskEvent.created_at.desc())
     ).all()
     return [serialize_risk_event(r) for r in rows if _risk_event_cycle_id(r) == cid]
+
+
+def portfolio_decisions_for_cycle(session: Session, cycle_run_id: str) -> list[dict[str, Any]]:
+    cid = resolve_cycle_run_id(session, cycle_run_id)
+    if not cid:
+        return []
+    rows = session.exec(
+        select(PortfolioDecision)
+        .where(PortfolioDecision.cycle_run_id == cid)
+        .order_by(PortfolioDecision.portfolio_rank.asc())
+    ).all()
+    return [serialize_portfolio_decision(r) for r in rows]
+
+
+def execution_logs_for_cycle(session: Session, cycle_run_id: str) -> list[dict[str, Any]]:
+    cid = resolve_cycle_run_id(session, cycle_run_id)
+    if not cid:
+        return []
+    rows = session.exec(
+        select(ExecutionLog).where(ExecutionLog.cycle_run_id == cid).order_by(ExecutionLog.created_at.desc())
+    ).all()
+    return [serialize_execution_log(r) for r in rows]
 
 
 def reviews_for_cycle(session: Session, cycle_run_id: str) -> list[dict[str, Any]]:

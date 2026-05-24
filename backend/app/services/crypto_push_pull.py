@@ -124,6 +124,7 @@ class CryptoPushPullStrategy:
             "momentum_6h": m6,
             "momentum_12h": m12,
             "weighted_momentum": weighted_momentum,
+            "expected_move_pct": abs(weighted_momentum) * 100.0,
             "edge_score": edge_score,
             "estimated_cost": est_cost,
             "volatility": vol,

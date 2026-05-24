@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     alpaca_secret_key: str = ""
     alpaca_base_url: str = "https://paper-api.alpaca.markets"
     gemini_api_key: str = ""
+    # Model IDs from Google AI — set in Railway/local .env when Google deprecates a version
+    gemini_model: str = "gemini-3.5-flash"
+    gemini_model_deep: str = ""
     database_url: str = "sqlite:///./hive.db"
     railway_api_key: str = ""
 
@@ -45,6 +48,12 @@ class Settings(BaseSettings):
     @property
     def gemini_configured(self) -> bool:
         return bool(self.gemini_api_key)
+
+    def gemini_model_for(self, mode: str = "quick") -> str:
+        """Resolve model: env GEMINI_MODEL / GEMINI_MODEL_DEEP, then defaults."""
+        if mode == "deep" and self.gemini_model_deep.strip():
+            return self.gemini_model_deep.strip()
+        return self.gemini_model.strip() or "gemini-3.5-flash"
 
     @property
     def database_configured(self) -> bool:

@@ -15,17 +15,21 @@ from app.services.ai_lab_service import build_compact_cycle_context, determinist
 from app.services.alpaca_adapter import AlpacaAdapter, normalize_crypto_symbol
 from app.services.capital_buckets import compute_buckets
 from app.services.config_manager import ConfigManager
-from app.services.crypto_push_pull import CryptoPushPullStrategy, broker_position_qty
+from app.services.crypto_push_pull import CryptoPushPullStrategy
 from app.services.cycle_context import current_cycle_run_id
 from app.services.cycle_persistence import verify_cycle_persistence
 from app.services.market_radar_service import MarketRadarService
 from app.services.memory_engine import MemoryEngine
-from app.services.position_sizing import compute_safe_position_size
-from app.services.risk_engine import RiskEngine, TradeProposal
+from app.services.risk_engine import RiskEngine
 from app.services.session_engine import SessionEngine
 from app.services.signal_utils import is_tradeable_signal
 from app.services.strategy_engine import StrategyEngine
 from app.services.ai_budget_guard import AIBudgetGuard
+from app.services.signal_pipeline import SignalPipeline
+from app.services.portfolio_gate import PortfolioGate
+from app.services.execution_policy import ExecutionPolicy
+from app.services.symbol_tier_service import SymbolTierService
+from app.services.engine_config import current_promotion_stage
 
 
 def _asset_class_for_signal(sig: StrategySignal) -> str:
@@ -81,6 +85,10 @@ class CycleEngine:
             "exits": 0,
             "blocked": 0,
             "approved": 0,
+            "risk_approved": 0,
+            "portfolio_deferred": 0,
+            "portfolio_blocked": 0,
+            "selected_for_execution": 0,
             "orders_submitted": 0,
             "errors": [],
             "paper_trading_only": True,
@@ -208,22 +216,147 @@ class CycleEngine:
         summary["steps"].append("strategy_signals")
         self.session.commit()
 
+        pipeline = SignalPipeline(self.session, self.config, self.alpaca, self.risk)
+        risk_approved_entries: list = []
+        risk_approved_exits: list = []
+        daily_pl = account.daily_pl_pct if account else 0
+        dd = account.drawdown_pct if account else 0
+
         for sig in tradeable:
             summary["signals_evaluated"] += 1
-            approved = self._evaluate_signal(
+            cand, status, meta = pipeline.evaluate_tradeable(
                 sig,
-                cycle_run_id,
-                session_state,
-                account,
-                equity,
-                cash,
-                buckets,
-                candidates,
+                cycle_run_id=cycle_run_id,
+                session_state=session_state,
+                account=account,
+                equity=equity,
+                cash=cash,
+                buckets=buckets,
+                candidates=candidates,
+                positions=self.positions,
+                daily_pl_pct=daily_pl or 0,
+                drawdown_pct=dd or 0,
             )
-            if approved:
-                summary["approved"] += 1
-            else:
+            if cand is None:
                 summary["blocked"] += 1
+                code = (meta or {}).get("block_reason_code", "RISK_BLOCKED")
+                self.risk.log_block(
+                    symbol=sig.symbol,
+                    strategy=sig.strategy,
+                    side=sig.side,
+                    reason=(meta or {}).get("invalidation_reason", code),
+                    check_name=code.lower(),
+                    signal_id=sig.id,
+                    cycle_run_id=cycle_run_id,
+                    evidence=meta,
+                )
+                self.strategies.update_signal_status(sig.id, status, meta or {})
+            else:
+                summary["risk_approved"] += 1
+                self.strategies.update_signal_status(
+                    sig.id,
+                    "risk_approved",
+                    {
+                        "gates": meta,
+                        "tier": cand.tier,
+                        "position_qty": cand.position_qty,
+                        "atr14": cand.atr14,
+                        "edge_over_cost": cand.edge_over_cost,
+                    },
+                )
+                if cand.signal_type == "entry":
+                    risk_approved_entries.append(cand)
+                else:
+                    risk_approved_exits.append(cand)
+
+        self.session.commit()
+
+        gate = PortfolioGate(self.session, self.config, self.alpaca)
+        pg_result = gate.run(
+            cycle_run_id,
+            risk_approved_entries + risk_approved_exits,
+            equity=equity,
+            cash=cash,
+            buying_power=account.buying_power if account else 0,
+            positions=self.positions,
+            open_order_symbols=set(),
+            promotion_stage=current_promotion_stage(self.config),
+        )
+        summary["portfolio_deferred"] = pg_result.deferred_count
+        summary["portfolio_blocked"] = pg_result.blocked_count
+        summary["selected_for_execution"] = len(pg_result.selected)
+
+        quote_map: dict = {}
+        for cand in pg_result.selected:
+            qs = normalize_crypto_symbol(cand.symbol)
+            quote_map[cand.symbol] = self.alpaca.get_quote(qs, "crypto") or {}
+
+        exec_policy = ExecutionPolicy(
+            self.session,
+            self.config,
+            self.alpaca,
+            SymbolTierService(self.config),
+        )
+        exec_logs = exec_policy.process_selected(
+            cycle_run_id,
+            pg_result.selected,
+            quote_by_symbol=quote_map,
+        )
+        dec_by_signal = {d.signal_id: d for d in pg_result.decisions}
+
+        for cand in risk_approved_entries + risk_approved_exits:
+            dec = dec_by_signal.get(cand.signal_id)
+            if dec and dec.selected_for_execution:
+                log = next((l for l in exec_logs if l.signal_id == cand.signal_id), None)
+                if log and log.status == "paper_order_submitted":
+                    summary["orders_submitted"] += 1
+                    self.strategies.update_signal_status(
+                        cand.signal_id,
+                        "paper_order_submitted",
+                        {"execution_log_id": log.event_id, "broker_order_id": log.broker_order_id},
+                    )
+                    summary["approved"] += 1
+                elif log and log.reject_reason == "PAPER_EXECUTION_DISABLED":
+                    self.strategies.update_signal_status(
+                        cand.signal_id,
+                        "approved_no_order",
+                        {
+                            "block_reason_code": "PAPER_EXECUTION_DISABLED",
+                            "invalidation_reason": "Portfolio selected; paper execution disabled",
+                            "portfolio_rank": dec.portfolio_rank,
+                        },
+                    )
+                    summary["approved"] += 1
+                else:
+                    self.strategies.update_signal_status(
+                        cand.signal_id,
+                        "selected_for_execution",
+                        {"portfolio_rank": dec.portfolio_rank},
+                    )
+                    summary["approved"] += 1
+            elif dec and dec.portfolio_status == "portfolio_deferred":
+                self.strategies.update_signal_status(
+                    cand.signal_id,
+                    "portfolio_deferred",
+                    {
+                        "block_reason_code": dec.portfolio_reason_code,
+                        "invalidation_reason": dec.human_reason,
+                        "portfolio_rank": dec.portfolio_rank,
+                    },
+                )
+            elif dec and dec.portfolio_status == "portfolio_blocked":
+                self.strategies.update_signal_status(
+                    cand.signal_id,
+                    "portfolio_blocked",
+                    {
+                        "block_reason_code": dec.portfolio_reason_code,
+                        "invalidation_reason": dec.human_reason,
+                    },
+                )
+            elif dec and dec.portfolio_status == "portfolio_approved" and not dec.selected_for_execution:
+                self.strategies.update_signal_status(cand.signal_id, "portfolio_approved", {"portfolio_rank": dec.portfolio_rank})
+
+        self.session.commit()
 
         meaningful_ai = summary["signals_evaluated"] > 0 or summary["blocked"] > 0 or summary["observations"] > 0
         allow, reason = self.ai_budget.allow_review()
@@ -304,157 +437,6 @@ class CycleEngine:
         verify_cycle_persistence(self.session, summary)
         self.session.commit()
         return summary
-
-    def _evaluate_signal(
-        self,
-        sig: StrategySignal,
-        cycle_run_id: str,
-        session_state,
-        account,
-        equity: float,
-        cash: float,
-        buckets,
-        candidates,
-    ) -> bool:
-        asset_class = _asset_class_for_signal(sig)
-        signal_type = (sig.signal_type or "entry").lower()
-        is_exit = signal_type == "exit"
-        meta = sig.signal_metadata or {}
-        pos_qty = broker_position_qty(self.positions, sig.symbol)
-
-        if not self.session_engine.asset_class_allowed(asset_class, session_state):
-            self._block_signal(sig, cycle_run_id, "MARKET_CLOSED", "Market closed for asset class", "market_session")
-            return False
-
-        quote_sym = _quote_symbol(sig)
-        quote = self.alpaca.get_quote(quote_sym, asset_class)
-        if is_exit or sig.side == "sell":
-            entry = quote["bid"] if quote else None
-        elif sig.side in ("buy", "buy_spread"):
-            entry = quote["ask"] if quote else None
-        else:
-            entry = quote.get("mid") if quote else None
-
-        if entry is None:
-            self._block_signal(sig, cycle_run_id, "DATA_MISSING", "No quote available", "no_quote")
-            return False
-
-        stop = sig.stop_loss or (entry * 0.985 if sig.side == "buy" else entry * 1.015)
-        size = compute_safe_position_size(
-            account_equity=equity,
-            cash=cash,
-            buying_power=account.buying_power if account else 0,
-            entry_price=entry,
-            stop_loss=stop,
-            asset_class=asset_class,
-            buckets=buckets,
-            config=self.config,
-            broker_position_qty=pos_qty,
-            is_exit=is_exit,
-        )
-        if size.block_code:
-            self.risk.log_block(
-                symbol=sig.symbol,
-                strategy=sig.strategy,
-                side=sig.side,
-                reason=size.block_reason or size.block_code,
-                check_name=size.block_code.lower().replace("_", "_") if size.block_code else "notional",
-                signal_id=sig.id,
-                cycle_run_id=cycle_run_id,
-                evidence={"sizing": size.__dict__},
-            )
-            self.strategies.update_signal_status(
-                sig.id,
-                "blocked",
-                {"block_reason_code": size.block_code, "invalidation_reason": size.block_reason},
-            )
-            self.session.commit()
-            return False
-
-        qty = size.quantity if not is_exit else min(size.quantity, pos_qty)
-        candidate_row = next(
-            (c for c in candidates if c.symbol == sig.symbol or c.symbol == quote_sym),
-            None,
-        )
-        spread_pct = candidate_row.spread_pct if candidate_row else quote.get("spread_pct")
-
-        proposal = TradeProposal(
-            symbol=sig.symbol,
-            side="buy" if "buy" in sig.side else "sell",
-            quantity=qty,
-            entry_price=entry,
-            stop_loss=stop,
-            take_profit=sig.take_profit,
-            strategy=sig.strategy,
-            spread_pct=spread_pct,
-            liquidity_score=candidate_row.liquidity_score if candidate_row else None,
-            asset_class=asset_class,
-            signal_id=sig.id,
-            signal_confidence=sig.confidence,
-            cycle_run_id=cycle_run_id,
-            signal_type=signal_type,
-            broker_position_qty=pos_qty,
-            expected_edge=meta.get("expected_edge") or meta.get("edge_score"),
-            volatility=meta.get("volatility"),
-        )
-        decision = self.risk.evaluate(proposal, session_state=session_state)
-        if decision.approved:
-            self.strategies.update_signal_status(
-                sig.id,
-                "approved_no_order",
-                {"execution": "disabled_in_mvp", "block_reason_code": decision.block_reason_code},
-            )
-            log_activity(
-                self.session,
-                "signal_approved",
-                f"Approved {signal_type} {sig.symbol} qty={qty:.6f} (paper only)",
-                {"signal_id": sig.id, "cycle_run_id": cycle_run_id, "qty": qty},
-            )
-            self.session.commit()
-            return True
-
-        self.strategies.update_signal_status(
-            sig.id,
-            "blocked",
-            {
-                "invalidation_reason": decision.human_reason,
-                "block_reason_code": decision.block_reason_code,
-                "risk_rule": decision.risk_rule,
-            },
-        )
-        log_activity(
-            self.session,
-            "signal_blocked",
-            f"Blocked {sig.symbol}: {decision.human_reason}",
-            {
-                "signal_id": sig.id,
-                "cycle_run_id": cycle_run_id,
-                "block_reason_code": decision.block_reason_code,
-            },
-        )
-        self.session.commit()
-        return False
-
-    def _block_signal(self, sig, cycle_run_id, code, reason, check) -> None:
-        self.risk.log_block(
-            symbol=sig.symbol,
-            strategy=sig.strategy,
-            side=sig.side,
-            reason=reason,
-            check_name=check,
-            signal_id=sig.id,
-            cycle_run_id=cycle_run_id,
-        )
-        self.strategies.update_signal_status(
-            sig.id, "blocked", {"block_reason_code": code, "invalidation_reason": reason}
-        )
-        log_activity(
-            self.session,
-            "signal_blocked",
-            f"Blocked {sig.symbol}: {reason}",
-            {"signal_id": sig.id, "cycle_run_id": cycle_run_id},
-        )
-        self.session.commit()
 
     def _set_all_strategies_inactive(self, reason: str) -> None:
         for name in StrategyEngine.ALL_STRATEGIES:

@@ -279,14 +279,13 @@ class RiskEngine:
         approved = len(reasons) == 0
         if not approved:
             return self._finalize(proposal, reasons, checks)
-        # MVP paper-only: approved but no order
         return RiskDecision(
             approved=True,
-            reasons=["Paper trading only — no order submitted"],
-            checks={**checks, "paper_only": True},
-            block_reason_code="PAPER_ONLY_APPROVED_NO_ORDER",
-            human_reason="Approved in paper mode — execution disabled",
-            risk_rule=CHECK_TO_RULE.get("paper_only", "Paper only"),
+            reasons=[],
+            checks={**checks, "risk_cage": True},
+            block_reason_code=None,
+            human_reason="Risk approved",
+            risk_rule="risk_cage_passed",
         )
 
     def _finalize(

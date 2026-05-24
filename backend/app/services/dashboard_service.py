@@ -12,12 +12,19 @@ from app.database import (
     AccountSnapshot,
     AIReview,
     BlockedTrade,
+    ExecutionLog,
     MonteCarloResult,
+    PortfolioDecision,
+    StrategySignal,
     StrategyState,
     SymbolCandidate,
     SystemHealth,
     TradeRecord,
 )
+from app.services.engine_config import cfg_get, current_promotion_stage
+from app.services.kill_switch_service import KillSwitchService
+from app.services.promotion_service import PromotionService
+from app.services.cooldown_service import CooldownService
 from app.services.ai_budget_guard import AIBudgetGuard
 from app.services.ai_fund_manager import AIFundManager
 from app.services.capital_buckets import compute_buckets
@@ -132,6 +139,35 @@ def build_dashboard(session: Session) -> dict[str, Any]:
             "sparklines": {"capital": [], "pl": [], "drawdown": []},
         }
 
+    last_cycle = (health.details or {}).get("last_cycle", {}) if health and health.details else {}
+    cycle_id = last_cycle.get("cycle_run_id")
+    truth_message = "No tradeable signals this cycle"
+    if cycle_id:
+        portfolio_decs_early = list(
+            session.exec(
+                select(PortfolioDecision).where(PortfolioDecision.cycle_run_id == cycle_id)
+            ).all()
+        )
+        signals_early = list(
+            session.exec(
+                select(StrategySignal).where(StrategySignal.cycle_run_id == cycle_id)
+            ).all()
+        )
+        deferred_early = [d for d in portfolio_decs_early if d.portfolio_status == "portfolio_deferred"]
+        approved_no_order_early = [s for s in signals_early if s.status == "approved_no_order"]
+        if approved_no_order_early:
+            meta0 = approved_no_order_early[0].signal_metadata or {}
+            code = meta0.get("block_reason_code", "")
+            if code == "PAPER_EXECUTION_DISABLED":
+                truth_message = "Approved by risk + portfolio Top-1; paper execution disabled"
+            else:
+                truth_message = f"Approved no order: {code or 'execution policy'}"
+        elif deferred_early:
+            truth_message = (
+                f"Portfolio deferred {len(deferred_early)} signal(s) — "
+                f"e.g. {deferred_early[0].portfolio_reason_code}"
+            )
+
     # AI Fund Manager
     latest_review: AIReview | None = ai.get_latest_review()
     blocked_count = len(session.exec(select(BlockedTrade)).all())
@@ -192,8 +228,12 @@ def build_dashboard(session: Session) -> dict[str, Any]:
             else "Low",
             "reasonSummary": latest_review.summary,
             "memoryUsedPct": int(len(memory.list_memories(100)) / 100 * 100),
-            "approvalStatus": "APPROVED" if latest_review.decision in ("approve", "hold") else "BLOCKED",
-            "approvalMessage": payload.get("risk_assessment", "Review complete"),
+            "approvalStatus": "AI_REVIEW"
+            if last_cycle.get("blocked", 0) == 0
+            else "MIXED",
+            "approvalMessage": truth_message
+            if cycle_id
+            else payload.get("risk_assessment", "Review complete — AI does not approve trades"),
             "stats": {
                 "decisionsToday": 1,
                 "approved": approved_count,
@@ -357,6 +397,38 @@ def build_dashboard(session: Session) -> dict[str, Any]:
     latest_scan = candidates[0].scanned_at if candidates else health.updated_at
     sync_at = health.last_account_sync or (account.synced_at if account else None)
 
+    portfolio_decs = []
+    exec_logs = []
+    latest_signals = []
+    if cycle_id:
+        portfolio_decs = list(
+            session.exec(
+                select(PortfolioDecision).where(PortfolioDecision.cycle_run_id == cycle_id)
+            ).all()
+        )
+        exec_logs = list(
+            session.exec(select(ExecutionLog).where(ExecutionLog.cycle_run_id == cycle_id)).all()
+        )
+    latest_signals = list(
+        session.exec(
+            select(StrategySignal)
+            .where(StrategySignal.cycle_run_id == cycle_id)
+            .order_by(StrategySignal.created_at.desc())
+        ).all()
+        if cycle_id
+        else []
+    )
+
+    deferred = [d for d in portfolio_decs if d.portfolio_status == "portfolio_deferred"]
+    selected = [d for d in portfolio_decs if d.selected_for_execution]
+    blocked_signals = [s for s in latest_signals if s.status in ("blocked", "portfolio_blocked", "risk_blocked")]
+    approved_no_order = [s for s in latest_signals if s.status == "approved_no_order"]
+
+    exec_cfg = config.get("execution", {})
+    promotion = PromotionService(session, config).status()
+    kill = KillSwitchService(session, config).status()
+    cooldowns = CooldownService(session, config).list_all()
+
     return {
         "lastSyncAt": (sync_at.isoformat() + "Z") if sync_at else None,
         "lastSync": (sync_at.isoformat() + "Z") if sync_at else "Not synced",
@@ -428,4 +500,50 @@ def build_dashboard(session: Session) -> dict[str, Any]:
             "memoryCount": len(memory.list_memories(100)),
             "aiBudgetGuardActive": ai_budget.get("budget_guard_active", False),
         },
+        "promotionStage": current_promotion_stage(config),
+        "promotion": promotion,
+        "portfolioGate": {
+            "cycleRunId": cycle_id,
+            "rankedCount": len(portfolio_decs),
+            "selectedCount": len(selected),
+            "deferredCount": len(deferred),
+            "topN": int(cfg_get(config, "portfolio.execute_top_n_signals", 1)),
+            "decisions": [
+                {
+                    "symbol": d.symbol,
+                    "rank": d.portfolio_rank,
+                    "score": d.ranking_score,
+                    "status": d.portfolio_status,
+                    "reason": d.portfolio_reason_code,
+                    "selected": d.selected_for_execution,
+                }
+                for d in sorted(portfolio_decs, key=lambda x: x.portfolio_rank or 99)
+            ],
+            "truthMessage": truth_message,
+        },
+        "executionPolicy": {
+            "paperOrdersEnabled": bool(exec_cfg.get("paper_orders_enabled", False)),
+            "liveOrdersEnabled": bool(exec_cfg.get("live_orders_enabled", False)),
+            "orderTypeDefault": exec_cfg.get("order_type_default", "marketable_limit_ioc"),
+            "maxOrdersPerCycle": exec_cfg.get("max_orders_per_cycle", 1),
+            "latestLog": serialize_exec(exec_logs[0]) if exec_logs else None,
+            "whyNoOrder": truth_message if not exec_logs or all(e.status == "approved_no_order" for e in exec_logs) else None,
+        },
+        "riskCageExtras": {
+            "killSwitch": kill,
+            "cooldowns": cooldowns,
+            "blockedSignalCount": len(blocked_signals),
+            "lastCycleBlocked": last_cycle.get("blocked", 0),
+        },
+    }
+
+
+def serialize_exec(row: ExecutionLog) -> dict:
+    return {
+        "eventId": row.event_id,
+        "symbol": row.symbol,
+        "status": row.status,
+        "rejectReason": row.reject_reason,
+        "limitPrice": row.limit_price,
+        "tif": row.tif,
     }
