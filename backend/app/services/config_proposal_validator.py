@@ -24,10 +24,14 @@ def validate_proposal(config: dict, patch: dict) -> dict[str, Any]:
             if isinstance(v, dict):
                 walk(path, v)
             else:
-                if path in LOCKED_CONFIG_KEYS or any(path.endswith(lk.split(".")[-1]) and "promotion" in path for lk in LOCKED_CONFIG_KEYS):
-                    if path in LOCKED_CONFIG_KEYS or path.startswith("promotion.") or path.startswith("execution.live"):
-                        rejected.append({"key": path, "reason": "locked_key"})
-                        continue
+                if (
+                    path in LOCKED_CONFIG_KEYS
+                    or path.startswith("promotion.")
+                    or path.startswith("execution.live")
+                    or path == "execution.paper_orders_enabled"
+                ):
+                    rejected.append({"key": path, "reason": "locked_key"})
+                    continue
                 rng = ALLOWED_RANGES.get(path)
                 if rng and isinstance(v, (int, float)):
                     lo, hi = rng

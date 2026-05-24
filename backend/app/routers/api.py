@@ -154,76 +154,117 @@ def get_execution_logs(cycle_run_id: str = "latest", session: Session = Depends(
     return {"status": "ok", "cycle_run_id": cid, "count": len(rows), "execution_logs": rows}
 
 
+@router.get("/execution/paper/status")
+def paper_execution_status(session: Session = Depends(get_session)):
+    from app.services.paper_execution_service import PaperExecutionService
+
+    return PaperExecutionService(session).status()
+
+
 @router.post("/execution/paper/enable")
 def enable_paper_execution(session: Session = Depends(get_session)):
-    mgr = ConfigManager(session)
-    cfg = mgr.get_current()
-    cfg.setdefault("execution", {})["paper_orders_enabled"] = True
-    mgr._activate(cfg, changed_by="operator", reason="Paper execution enabled")
-    return {"status": "ok", "paper_orders_enabled": True}
+    from app.services.paper_execution_service import PaperExecutionService
+
+    return PaperExecutionService(session).enable()
 
 
 @router.post("/execution/paper/disable")
 def disable_paper_execution(session: Session = Depends(get_session)):
-    mgr = ConfigManager(session)
-    cfg = mgr.get_current()
-    cfg.setdefault("execution", {})["paper_orders_enabled"] = False
-    mgr._activate(cfg, changed_by="operator", reason="Paper execution disabled")
-    return {"status": "ok", "paper_orders_enabled": False}
+    from app.services.paper_execution_service import PaperExecutionService
+
+    return PaperExecutionService(session).disable()
 
 
 @router.post("/execution/paper/run-selected")
 def run_selected_paper_orders(cycle_run_id: str = "latest", session: Session = Depends(get_session)):
-    from app.services.execution_policy import ExecutionPolicy
-    from app.services.portfolio_gate import ApprovedCandidate
-    from app.services.symbol_tier_service import SymbolTierService
-    from app.database import PortfolioDecision, StrategySignal
-    from sqlmodel import select
+    from app.services.paper_execution_service import PaperExecutionService
 
     cid = resolve_cycle_run_id(session, cycle_run_id)
     if not cid:
         return {"status": "error", "message": "No cycle run id"}
-    config = ConfigManager(session).get_current()
-    if not config.get("execution", {}).get("paper_orders_enabled"):
-        return {"status": "error", "message": "paper_orders_enabled is false"}
-    decs = session.exec(
-        select(PortfolioDecision).where(
-            PortfolioDecision.cycle_run_id == cid,
-            PortfolioDecision.selected_for_execution == True,  # noqa: E712
-        )
-    ).all()
-    alpaca = AlpacaAdapter(session)
-    selected = []
-    for d in decs:
-        sig = session.get(StrategySignal, d.signal_id)
-        if not sig:
+    return PaperExecutionService(session).run_selected_for_cycle(cid)
+
+
+@router.get("/orders")
+def get_orders(cycle_run_id: str = "latest", limit: int = 50, session: Session = Depends(get_session)):
+    from sqlmodel import select
+    from app.database import OrderRecord
+
+    cid = resolve_cycle_run_id(session, cycle_run_id)
+    q = select(OrderRecord).order_by(OrderRecord.submitted_at.desc()).limit(min(limit, 100))
+    rows = session.exec(q).all()
+    if cid:
+        rows = [r for r in rows if r.cycle_run_id == cid or r.cycle_run_id is None]
+    return {
+        "status": "ok",
+        "cycle_run_id": cid,
+        "count": len(rows),
+        "orders": [
+            {
+                "id": r.id,
+                "alpaca_order_id": r.alpaca_order_id,
+                "client_order_id": r.broker_client_order_id,
+                "symbol": r.symbol,
+                "side": r.side,
+                "qty": r.qty,
+                "order_type": r.order_type,
+                "status": r.status,
+                "limit_price": (r.raw_payload or {}).get("limit_price"),
+                "filled_avg_price": r.filled_avg_price,
+                "submitted_at": r.submitted_at.isoformat() + "Z" if r.submitted_at else None,
+                "cycle_run_id": r.cycle_run_id,
+                "signal_id": r.signal_id,
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/positions")
+def get_positions(session: Session = Depends(get_session)):
+    from sqlmodel import select
+    from app.database import PositionSnapshot
+
+    rows = session.exec(select(PositionSnapshot).order_by(PositionSnapshot.synced_at.desc())).all()
+    seen = set()
+    out = []
+    for p in rows:
+        if p.symbol in seen:
             continue
-        meta = sig.signal_metadata or {}
-        selected.append(
-            ApprovedCandidate(
-                signal_id=sig.id,
-                symbol=sig.symbol,
-                side=sig.side if sig.side != "hold" else "buy",
-                signal_type=sig.signal_type or "entry",
-                meta=meta,
-                strength=sig.strength,
-                confidence=sig.confidence,
-                spread_pct=meta.get("spread_pct"),
-                liquidity_score=None,
-                edge_over_cost=meta.get("edge_over_cost"),
-                expected_move_pct=meta.get("expected_move_pct"),
-                position_qty=meta.get("position_qty") or 0.01,
-                entry_price=meta.get("current_price") or 1,
-                stop_loss=sig.stop_loss or 0,
-                atr14=meta.get("atr14"),
-                tier=meta.get("tier", "TIER_ALT"),
-                cost_evidence=meta.get("cost_edge", {}),
-                sizing_evidence=meta.get("sizing", {}),
-            )
+        seen.add(p.symbol)
+        if (p.qty or 0) <= 0:
+            continue
+        out.append(
+            {
+                "symbol": p.symbol,
+                "qty": p.qty,
+                "side": p.side,
+                "avg_entry_price": p.avg_entry_price,
+                "current_price": p.current_price,
+                "market_value": p.market_value,
+                "unrealized_pl": p.unrealized_pl,
+                "unrealized_pl_pct": p.unrealized_pl_pct,
+                "synced_at": p.synced_at.isoformat() + "Z" if p.synced_at else None,
+            }
         )
-    policy = ExecutionPolicy(session, config, alpaca, SymbolTierService(config))
-    logs = policy.process_selected(cid, selected, quote_by_symbol={})
-    return {"status": "ok", "submitted": len([l for l in logs if l.status == "paper_order_submitted"]), "logs": len(logs)}
+    return {"status": "ok", "count": len(out), "positions": out}
+
+
+@router.get("/reconciliation/status")
+def get_reconciliation_status(session: Session = Depends(get_session)):
+    from app.services.order_reconciliation import reconciliation_status
+
+    return {"status": "ok", **reconciliation_status(session, AlpacaAdapter(session))}
+
+
+@router.post("/reconciliation/run")
+def run_reconciliation(session: Session = Depends(get_session)):
+    from app.services.order_reconciliation import reconciliation_status
+
+    alpaca = AlpacaAdapter(session)
+    result = reconciliation_status(session, alpaca)
+    session.commit()
+    return {"status": "ok", **result}
 
 
 @router.get("/cooldowns")

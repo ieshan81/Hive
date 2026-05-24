@@ -291,6 +291,9 @@ class CycleEngine:
             qs = normalize_crypto_symbol(cand.symbol)
             quote_map[cand.symbol] = self.alpaca.get_quote(qs, "crypto") or {}
 
+        open_order_syms = {o.get("symbol") for o in self.alpaca.get_open_orders()}
+        dec_by_signal = {d.signal_id: d for d in pg_result.decisions}
+
         exec_policy = ExecutionPolicy(
             self.session,
             self.config,
@@ -301,21 +304,42 @@ class CycleEngine:
             cycle_run_id,
             pg_result.selected,
             quote_by_symbol=quote_map,
+            portfolio_decision_by_signal=dec_by_signal,
+            account=account,
+            positions=self.positions,
+            open_order_symbols=open_order_syms,
         )
-        dec_by_signal = {d.signal_id: d for d in pg_result.decisions}
 
         for cand in risk_approved_entries + risk_approved_exits:
             dec = dec_by_signal.get(cand.signal_id)
             if dec and dec.selected_for_execution:
                 log = next((l for l in exec_logs if l.signal_id == cand.signal_id), None)
-                if log and log.status == "paper_order_submitted":
+                if log and log.status in (
+                    "paper_order_submitted",
+                    "paper_order_filled",
+                    "paper_order_partially_filled",
+                ):
                     summary["orders_submitted"] += 1
                     self.strategies.update_signal_status(
                         cand.signal_id,
-                        "paper_order_submitted",
-                        {"execution_log_id": log.event_id, "broker_order_id": log.broker_order_id},
+                        log.status,
+                        {
+                            "execution_log_id": log.event_id,
+                            "broker_order_id": log.broker_order_id,
+                            "client_order_id": log.broker_client_order_id,
+                        },
                     )
                     summary["approved"] += 1
+                elif log and log.status == "preflight_blocked":
+                    self.strategies.update_signal_status(
+                        cand.signal_id,
+                        "preflight_blocked",
+                        {
+                            "block_reason_code": log.reject_reason,
+                            "invalidation_reason": (log.gates_failed_json or {}).get("reason"),
+                            "portfolio_rank": dec.portfolio_rank,
+                        },
+                    )
                 elif log and log.reject_reason == "PAPER_EXECUTION_DISABLED":
                     self.strategies.update_signal_status(
                         cand.signal_id,
@@ -327,13 +351,20 @@ class CycleEngine:
                         },
                     )
                     summary["approved"] += 1
+                elif log and log.status in ("paper_order_rejected", "paper_order_cancelled", "paper_order_unfilled"):
+                    self.strategies.update_signal_status(
+                        cand.signal_id,
+                        log.status,
+                        {"block_reason_code": log.reject_reason, "broker_order_id": log.broker_order_id},
+                    )
                 else:
                     self.strategies.update_signal_status(
                         cand.signal_id,
-                        "selected_for_execution",
+                        log.status if log else "selected_for_execution",
                         {"portfolio_rank": dec.portfolio_rank},
                     )
-                    summary["approved"] += 1
+                    if log and log.status not in ("preflight_blocked",):
+                        summary["approved"] += 1
             elif dec and dec.portfolio_status == "portfolio_deferred":
                 self.strategies.update_signal_status(
                     cand.signal_id,

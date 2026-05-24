@@ -15,6 +15,7 @@ from app.database import (
     ExecutionLog,
     MonteCarloResult,
     PortfolioDecision,
+    PositionSnapshot,
     StrategySignal,
     StrategyState,
     SymbolCandidate,
@@ -429,6 +430,42 @@ def build_dashboard(session: Session) -> dict[str, Any]:
     kill = KillSwitchService(session, config).status()
     cooldowns = CooldownService(session, config).list_all()
 
+    from app.services.paper_execution_service import PaperExecutionService
+    from app.database import OrderRecord
+
+    paper_status = PaperExecutionService(session).status()
+    order_rows = []
+    if cycle_id:
+        order_rows = list(
+            session.exec(select(OrderRecord).where(OrderRecord.cycle_run_id == cycle_id)).all()
+        )
+    position_rows = list(session.exec(select(PositionSnapshot)).all())
+    pos_out = []
+    seen_pos = set()
+    for p in position_rows:
+        if p.symbol in seen_pos or (p.qty or 0) <= 0:
+            continue
+        seen_pos.add(p.symbol)
+        pos_out.append(
+            {
+                "symbol": p.symbol,
+                "qty": p.qty,
+                "avgEntryPrice": p.avg_entry_price,
+                "currentPrice": p.current_price,
+                "unrealizedPl": p.unrealized_pl,
+                "unrealizedPlPct": p.unrealized_pl_pct,
+            }
+        )
+
+    ai_meta = last_cycle.get("ai_review_meta") or {}
+    if ai_meta.get("ai_review_status") != "success" and ai_fund_manager.get("status") == "active":
+        ai_fund_manager = {
+            **ai_fund_manager,
+            "approvalStatus": "SKIPPED",
+            "approvalMessage": ai_meta.get("ai_review_error_message") or "AI review skipped this cycle",
+            "decisionMessage": "Deterministic engine only — AI did not run this cycle",
+        }
+
     return {
         "lastSyncAt": (sync_at.isoformat() + "Z") if sync_at else None,
         "lastSync": (sync_at.isoformat() + "Z") if sync_at else "Not synced",
@@ -522,18 +559,50 @@ def build_dashboard(session: Session) -> dict[str, Any]:
             "truthMessage": truth_message,
         },
         "executionPolicy": {
-            "paperOrdersEnabled": bool(exec_cfg.get("paper_orders_enabled", False)),
-            "liveOrdersEnabled": bool(exec_cfg.get("live_orders_enabled", False)),
+            **paper_status,
+            "paperOrdersEnabled": paper_status.get("paper_orders_enabled", False),
+            "liveOrdersEnabled": paper_status.get("live_orders_enabled", False),
+            "brokerMode": paper_status.get("broker_mode_detected"),
             "orderTypeDefault": exec_cfg.get("order_type_default", "marketable_limit_ioc"),
             "maxOrdersPerCycle": exec_cfg.get("max_orders_per_cycle", 1),
             "latestLog": serialize_exec(exec_logs[0]) if exec_logs else None,
-            "whyNoOrder": truth_message if not exec_logs or all(e.status == "approved_no_order" for e in exec_logs) else None,
+            "whyNoOrder": truth_message,
+            "selectedSymbol": selected[0].symbol if selected else None,
         },
+        "latestCycle": {
+            "cycleRunId": cycle_id,
+            "riskBlocked": last_cycle.get("blocked", 0),
+            "riskApproved": last_cycle.get("risk_approved", 0),
+            "portfolioSelected": last_cycle.get("selected_for_execution", 0),
+            "portfolioDeferred": last_cycle.get("portfolio_deferred", 0),
+            "ordersSubmitted": last_cycle.get("orders_submitted", 0),
+            "observations": last_cycle.get("observations", 0),
+        },
+        "orders": {
+            "cycleRunId": cycle_id,
+            "count": len(order_rows),
+            "items": [
+                {
+                    "symbol": o.symbol,
+                    "side": o.side,
+                    "qty": o.qty,
+                    "status": o.status,
+                    "brokerOrderId": o.alpaca_order_id,
+                    "clientOrderId": o.broker_client_order_id,
+                    "filledAvgPrice": o.filled_avg_price,
+                    "orderType": o.order_type,
+                }
+                for o in order_rows
+            ],
+        },
+        "positionsPanel": {"count": len(pos_out), "items": pos_out},
         "riskCageExtras": {
             "killSwitch": kill,
             "cooldowns": cooldowns,
             "blockedSignalCount": len(blocked_signals),
             "lastCycleBlocked": last_cycle.get("blocked", 0),
+            "preflightBlockers": paper_status.get("paper_execution_blockers", []),
+            "noAiOrderAuthority": True,
         },
     }
 

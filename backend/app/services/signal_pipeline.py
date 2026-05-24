@@ -180,6 +180,14 @@ class SignalPipeline:
                 "invalidation_reason": decision.human_reason,
             }
 
+        meta["exit_strategy"] = meta.get("exit_strategy") or "crypto_push_pull_rules"
+        meta["expected_hold_time"] = meta.get("expected_hold_time") or meta.get("max_hold_hours")
+        meta["position_qty"] = qty
+        meta["stop_distance"] = sizing.stop_distance
+        meta["risk_dollars"] = sizing.risk_dollars
+        meta["position_notional"] = sizing.position_notional
+        meta["edge_over_cost"] = cost.edge_over_cost
+
         cand = ApprovedCandidate(
             signal_id=sig.id,
             symbol=sig.symbol,

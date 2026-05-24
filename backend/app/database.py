@@ -40,6 +40,9 @@ class OrderRecord(SQLModel, table=True):
     __tablename__ = "orders"
     id: Optional[int] = Field(default=None, primary_key=True)
     alpaca_order_id: Optional[str] = Field(default=None, index=True)
+    broker_client_order_id: Optional[str] = Field(default=None, index=True)
+    cycle_run_id: Optional[str] = Field(default=None, index=True)
+    signal_id: Optional[int] = Field(default=None, index=True)
     symbol: str = Field(index=True)
     side: str
     qty: float
@@ -514,6 +517,17 @@ def _migrate_columns() -> None:
         with engine.begin() as conn:
             if "cycle_run_id" not in be_cols:
                 conn.execute(text("ALTER TABLE broker_errors ADD COLUMN cycle_run_id VARCHAR"))
+
+    if insp.has_table("orders"):
+        ord_cols = {c["name"] for c in insp.get_columns("orders")}
+        with engine.begin() as conn:
+            for col, typ in [
+                ("broker_client_order_id", "VARCHAR"),
+                ("cycle_run_id", "VARCHAR"),
+                ("signal_id", "INTEGER"),
+            ]:
+                if col not in ord_cols:
+                    conn.execute(text(f"ALTER TABLE orders ADD COLUMN {col} {typ}"))
 
 
 def init_db() -> None:

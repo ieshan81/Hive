@@ -12,6 +12,9 @@ from app.services.symbol_tier_service import SymbolTierService
 
 
 class FakeSession:
+    def get(self, *a, **k):
+        return None
+
     def add(self, _):
         pass
 
@@ -44,7 +47,8 @@ def test_disabled():
         cost_evidence={},
         sizing_evidence={},
     )
-    logs = ExecutionPolicy(FakeSession(), config, FakeAlpaca(), SymbolTierService(config)).process_selected(
+    policy = ExecutionPolicy(FakeSession(), config, FakeAlpaca(), SymbolTierService(config))
+    logs = policy.process_selected(
         "c1", [cand], quote_by_symbol={"BTC/USD": {"bid": 49900, "ask": 50000, "mid": 49950}}
     )
     assert logs[0].status == "approved_no_order"

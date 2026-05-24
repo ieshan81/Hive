@@ -9,6 +9,7 @@ from typing import Any, Optional
 from sqlmodel import Session, select
 
 from app.config import settings
+from app.services.broker_safety import is_paper_broker_url
 from app.database import AccountSnapshot, BrokerError, PositionSnapshot
 
 from app.services.cycle_context import current_cycle_run_id
@@ -362,6 +363,53 @@ class AlpacaAdapter:
             self._log_error("get_latest_quote", str(exc), {"symbol": symbol})
             return None
 
+    def get_order_by_id(self, order_id: str) -> Optional[dict[str, Any]]:
+        client = self._get_trading_client()
+        if client is None or not order_id:
+            return None
+        try:
+            order = client.get_order_by_id(order_id)
+            filled_qty = float(order.filled_qty) if order.filled_qty else 0
+            return {
+                "id": str(order.id),
+                "symbol": str(order.symbol),
+                "side": str(order.side),
+                "status": str(order.status),
+                "qty": float(order.qty) if order.qty else 0,
+                "filled_qty": filled_qty,
+                "filled_avg_price": float(order.filled_avg_price) if order.filled_avg_price else None,
+                "limit_price": float(order.limit_price) if order.limit_price else None,
+                "client_order_id": str(order.client_order_id) if order.client_order_id else None,
+            }
+        except Exception as exc:
+            self._log_error("get_order_by_id", str(exc), {"order_id": order_id})
+            return None
+
+    def get_open_orders(self, limit: int = 50) -> list[dict]:
+        client = self._get_trading_client()
+        if client is None:
+            return []
+        try:
+            from alpaca.trading.requests import GetOrdersRequest
+            from alpaca.trading.enums import QueryOrderStatus
+
+            req = GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=limit)
+            orders = client.get_orders(req)
+            return [
+                {
+                    "id": str(o.id),
+                    "symbol": o.symbol,
+                    "side": str(o.side),
+                    "qty": float(o.qty),
+                    "status": str(o.status),
+                    "client_order_id": str(o.client_order_id) if o.client_order_id else None,
+                }
+                for o in orders
+            ]
+        except Exception as exc:
+            self._log_error("get_open_orders", str(exc))
+            return []
+
     def submit_marketable_limit_ioc(
         self,
         symbol: str,
@@ -372,6 +420,8 @@ class AlpacaAdapter:
         client_order_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """Marketable limit IOC — default crypto execution policy."""
+        if not is_paper_broker_url():
+            return {"success": False, "error": "BROKER_NOT_PAPER"}
         client = self._get_trading_client()
         if client is None:
             return {"success": False, "error": "Alpaca not configured"}

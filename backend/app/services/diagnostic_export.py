@@ -426,6 +426,8 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
     from app.services.cooldown_service import CooldownService
     from app.services.kill_switch_service import KillSwitchService
     from app.services.promotion_service import PromotionService
+    from app.services.paper_execution_service import PaperExecutionService
+    from app.services.order_reconciliation import reconciliation_status
 
     dashboard = build_dashboard(session)
     attention = AttentionRadarService(session).scan(limit=25)
@@ -433,6 +435,10 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
     cooldowns = CooldownService(session, config).list_all()
     kill_status = KillSwitchService(session, config).status()
     promotion = PromotionService(session, config).status()
+    execution_policy = PaperExecutionService(session).status()
+    from app.services.alpaca_adapter import AlpacaAdapter
+
+    recon = reconciliation_status(session, AlpacaAdapter(session))
 
     return {
         "activity.json": activity_data,
@@ -454,6 +460,8 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         "strategy_signals.json": signal_data,
         "portfolio_decisions.json": portfolio_data,
         "execution_logs.json": execution_data,
+        "execution_policy.json": execution_policy,
+        "reconciliation_status.json": recon,
         "cooldowns.json": cooldowns,
         "promotion_status.json": promotion,
         "kill_switch_status.json": kill_status,

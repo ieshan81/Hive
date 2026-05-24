@@ -140,6 +140,44 @@ export interface SystemStatus {
   liveTradingEnabled: boolean;
 }
 
+export interface PortfolioDecisionRow {
+  symbol: string;
+  rank: number | null;
+  score: number | null;
+  status: string;
+  reason: string | null;
+  selected: boolean;
+}
+
+export interface ExecutionLogSummary {
+  eventId?: string;
+  symbol?: string;
+  status?: string;
+  rejectReason?: string | null;
+  limitPrice?: number | null;
+  tif?: string | null;
+}
+
+export interface OrderRow {
+  symbol: string;
+  side: string;
+  qty: number;
+  status: string;
+  brokerOrderId?: string | null;
+  clientOrderId?: string | null;
+  filledAvgPrice?: number | null;
+  orderType?: string;
+}
+
+export interface PositionRow {
+  symbol: string;
+  qty: number;
+  avgEntryPrice?: number;
+  currentPrice?: number;
+  unrealizedPl?: number;
+  unrealizedPlPct?: number;
+}
+
 export interface DashboardData {
   lastSync: string;
   lastSyncAt?: string | null;
@@ -163,4 +201,45 @@ export interface DashboardData {
     message: string;
   };
   session?: Record<string, unknown>;
+  promotionStage?: string;
+  portfolioGate?: {
+    cycleRunId?: string | null;
+    rankedCount: number;
+    selectedCount: number;
+    deferredCount: number;
+    topN: number;
+    decisions: PortfolioDecisionRow[];
+    truthMessage: string;
+  };
+  executionPolicy?: {
+    paperOrdersEnabled: boolean;
+    liveOrdersEnabled: boolean;
+    brokerMode?: string;
+    orderTypeDefault?: string;
+    maxOrdersPerCycle?: number;
+    latestLog?: ExecutionLogSummary | null;
+    whyNoOrder?: string | null;
+    selectedSymbol?: string | null;
+    paper_execution_blockers?: string[];
+    paper_execution_ready?: boolean;
+  };
+  latestCycle?: {
+    cycleRunId?: string | null;
+    riskBlocked: number;
+    riskApproved: number;
+    portfolioSelected: number;
+    portfolioDeferred: number;
+    ordersSubmitted: number;
+    observations: number;
+  };
+  orders?: {
+    cycleRunId?: string | null;
+    count: number;
+    items: OrderRow[];
+  };
+  positionsPanel?: {
+    count: number;
+    items: PositionRow[];
+  };
+  riskCageExtras?: Record<string, unknown>;
 }
