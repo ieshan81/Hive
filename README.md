@@ -1,0 +1,112 @@
+# Caged Hive Quant
+
+AI-managed quant trading platform under strict survival rules. **Paper trading only.** No fake data.
+
+Architecture follows the research blueprint:
+- **Layer 1:** Research & interpretation (Gemini structured JSON, signals)
+- **Layer 2:** Deterministic policy & risk engine (non-negotiable)
+- **Layer 3:** Execution & observability (Alpaca paper, dashboard, journals)
+
+## Stack
+
+| Layer | Tech |
+|-------|------|
+| Backend | Python, FastAPI, SQLModel, PostgreSQL |
+| Broker | alpaca-py (paper only) |
+| AI | Gemini structured JSON output |
+| Dashboard | Next.js + Tailwind (reads from API) |
+| Deploy | GitHub → Railway |
+
+## Local development
+
+### 1. Backend API
+
+```bash
+cd backend
+python -m venv .venv
+.venv\Scripts\activate   # Windows
+pip install -r requirements.txt
+copy .env.example .env   # add secrets
+uvicorn app.main:app --reload --port 8000
+```
+
+### 2. Frontend dashboard
+
+```bash
+npm install
+set NEXT_PUBLIC_API_URL=http://localhost:8000
+npm run dev
+```
+
+Open http://localhost:3000
+
+## Environment variables (secrets only)
+
+```env
+ALPACA_API_KEY=
+ALPACA_SECRET_KEY=
+ALPACA_BASE_URL=https://paper-api.alpaca.markets
+GEMINI_API_KEY=
+DATABASE_URL=postgresql://...   # or sqlite:///./hive.db for local
+```
+
+Normal config (risk limits, strategy settings, etc.) lives in **database** `config_current` table — not env vars.
+
+## API endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health` | Health check |
+| `GET /api/dashboard` | Real dashboard data |
+| `POST /api/sync/alpaca` | Sync Alpaca account |
+| `GET /api/diagnostic-bundle/download` | Export diagnostic ZIP |
+| `POST /api/backtest/run` | Run backtest |
+| `POST /api/monte-carlo/run` | Run Monte Carlo (real trades only) |
+
+## Railway deployment (GitHub → Railway)
+
+1. Push to GitHub: `https://github.com/ieshan81/Hive.git`
+2. Create Railway project → **Deploy from GitHub repo**
+3. Add services:
+   - **API/Web:** root directory, start `cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+   - **Worker:** start `cd backend && python worker.py`
+   - **Postgres:** add PostgreSQL plugin, set `DATABASE_URL`
+4. Set env vars in Railway dashboard
+5. Health check: `/health`
+
+### Frontend on Railway (optional second service)
+
+- Build: `npm run build`
+- Start: `npm start`
+- Set `NEXT_PUBLIC_API_URL` to your API service URL
+
+## Core modules
+
+- `backend/app/services/alpaca_adapter.py` — real Alpaca paper data
+- `backend/app/services/risk_engine.py` — final trade authority
+- `backend/app/services/strategy_engine.py` — momentum ORB + pairs mean reversion
+- `backend/app/services/quant_math.py` — deterministic formulas
+- `backend/app/services/ai_fund_manager.py` — Gemini structured reviews
+- `backend/app/services/memory_engine.py` — database-backed memory
+- `backend/app/services/backtest_engine.py` — real backtests only
+- `backend/app/services/monte_carlo_engine.py` — real trade outcomes only
+- `backend/app/services/diagnostic_export.py` — full diagnostic bundle
+
+## Empty states (no fake data)
+
+When data is missing, the dashboard shows honest states:
+- Not connected
+- Waiting for Alpaca sync
+- Memory empty
+- Backtest not run yet
+- Monte Carlo unavailable
+- Strategy inactive
+
+## Principles
+
+> Rules trade fast. AI learns slowly. Risk engine blocks danger.
+
+- AI does **not** execute trades
+- AI does **not** bypass risk controls
+- Live trading is **disabled** in MVP
+- No mock trading success

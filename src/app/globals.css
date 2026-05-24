@@ -1,0 +1,96 @@
+@import "tailwindcss";
+
+@theme {
+  --color-hive-bg: #05070a;
+  --color-hive-surface: rgba(12, 18, 28, 0.72);
+  --color-hive-border: rgba(0, 209, 255, 0.12);
+  --color-hive-cyan: #00d1ff;
+  --color-hive-violet: #8a2be2;
+  --color-hive-emerald: #10b981;
+  --color-hive-amber: #f59e0b;
+  --color-hive-crimson: #ef4444;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body {
+    height: 100%;
+    margin: 0;
+    background: var(--color-hive-bg);
+    color: #e2e8f0;
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0, 209, 255, 0.08), transparent),
+      radial-gradient(ellipse 60% 40% at 100% 50%, rgba(138, 43, 226, 0.06), transparent),
+      radial-gradient(ellipse 50% 30% at 0% 80%, rgba(0, 209, 255, 0.04), transparent);
+    background-attachment: fixed;
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    background: linear-gradient(
+      135deg,
+      rgba(14, 22, 36, 0.85) 0%,
+      rgba(8, 12, 20, 0.75) 100%
+    );
+    border: 1px solid rgba(0, 209, 255, 0.1);
+    box-shadow:
+      0 4px 24px rgba(0, 0, 0, 0.4),
+      inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(16px);
+  }
+
+  .glass-panel-hover:hover {
+    border-color: rgba(0, 209, 255, 0.2);
+    box-shadow:
+      0 8px 32px rgba(0, 0, 0, 0.5),
+      0 0 20px rgba(0, 209, 255, 0.06),
+      inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  }
+
+  .neon-text-cyan {
+    color: var(--color-hive-cyan);
+    text-shadow: 0 0 20px rgba(0, 209, 255, 0.4);
+  }
+
+  .pulse-dot {
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-glow {
+    0%,
+    100% {
+      opacity: 1;
+      box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5);
+    }
+    50% {
+      opacity: 0.85;
+      box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+    }
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: rgba(0, 209, 255, 0.2);
+    border-radius: 4px;
+  }
+}
