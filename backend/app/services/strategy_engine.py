@@ -14,6 +14,7 @@ from app.services import quant_math
 
 class StrategyEngine:
     STRATEGIES = ["momentum_orb", "mean_reversion_pairs"]
+    ALL_STRATEGIES = ["momentum_orb", "mean_reversion_pairs", "crypto_night_momentum"]
 
     def __init__(self, session: Session, config: dict):
         self.session = session
@@ -22,20 +23,41 @@ class StrategyEngine:
         self._ensure_states()
 
     def _ensure_states(self) -> None:
-        for name in self.STRATEGIES:
+        for name in self.ALL_STRATEGIES:
             existing = self.session.exec(
                 select(StrategyState).where(StrategyState.strategy == name)
             ).first()
             if existing is None:
+                reason = "Placeholder — not implemented" if name == "crypto_night_momentum" else "Waiting for first cycle"
                 self.session.add(
-                    StrategyState(strategy=name, status="inactive", confidence=0, exposure_pct=0)
+                    StrategyState(
+                        strategy=name,
+                        status="inactive",
+                        status_reason=reason,
+                        confidence=0,
+                        exposure_pct=0,
+                    )
                 )
+        self.session.commit()
+
+    def set_state(self, strategy: str, status: str, reason: str, strength: float = 0.0) -> None:
+        state = self.session.exec(
+            select(StrategyState).where(StrategyState.strategy == strategy)
+        ).first()
+        if state is None:
+            state = StrategyState(strategy=strategy)
+        state.status = status
+        state.status_reason = reason
+        state.confidence = round(strength * 100, 2) if strength else state.confidence
+        state.updated_at = datetime.utcnow()
+        self.session.add(state)
         self.session.commit()
 
     def run_momentum_orb(self, symbol: str, opening_minutes: Optional[int] = None) -> Optional[StrategySignal]:
         minutes = opening_minutes or self.config.get("opening_range_minutes", 30)
         bars = self.alpaca.get_bars(symbol, timeframe="5Min", limit=80)
         if len(bars) < 10:
+            self.set_state("momentum_orb", "inactive", f"No bar data for {symbol}")
             return None
 
         opening_bars = bars[: max(1, minutes // 5)]
@@ -64,7 +86,8 @@ class StrategyEngine:
             },
         )
         self.session.add(row)
-        self._update_state("momentum_orb", "active" if signal != "hold" else "inactive", strength)
+        if signal != "hold":
+            self.set_state("momentum_orb", "active", f"Signal {signal} on {symbol}", strength)
         self.session.commit()
         self.session.refresh(row)
         return row
@@ -75,6 +98,7 @@ class StrategyEngine:
         bars_a = self.alpaca.get_bars(symbol_a, limit=60)
         bars_b = self.alpaca.get_bars(symbol_b, limit=60)
         if len(bars_a) < 20 or len(bars_b) < 20:
+            self.set_state("mean_reversion_pairs", "inactive", "Insufficient pair history")
             return None
 
         n = min(len(bars_a), len(bars_b))
@@ -108,20 +132,11 @@ class StrategyEngine:
             signal_metadata={"z_score": z, "hedge_ratio": hedge_ratio, "spread": spreads[-1]},
         )
         self.session.add(row)
-        self._update_state("mean_reversion_pairs", "active" if signal != "hold" else "inactive", strength)
+        if signal != "hold":
+            self.set_state("mean_reversion_pairs", "active", f"Pairs signal {signal}", strength)
         self.session.commit()
         self.session.refresh(row)
         return row
-
-    def _update_state(self, strategy: str, status: str, strength: float) -> None:
-        state = self.session.exec(
-            select(StrategyState).where(StrategyState.strategy == strategy)
-        ).first()
-        if state:
-            state.status = status.replace("_", " ")
-            state.confidence = round(strength * 100, 2)
-            state.updated_at = datetime.utcnow()
-            self.session.add(state)
 
     def get_all_states(self) -> list[StrategyState]:
         return list(self.session.exec(select(StrategyState)).all())

@@ -58,6 +58,8 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         "## Core Principle",
         "Rules trade fast. AI learns slowly. Risk engine blocks danger.",
         "Paper trading only. No live trading. No fake data.",
+        "",
+        "Run POST /api/cycle/run to populate activity logs, radar, and strategy states.",
     ]
 
     return {

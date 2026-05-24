@@ -44,6 +44,33 @@ def health_check(session: Session = Depends(get_session)):
     }
 
 
+@router.post("/cycle/run")
+def run_cycle(session: Session = Depends(get_session)):
+    from app.services.cycle_engine import CycleEngine
+
+    result = CycleEngine(session).run()
+    return result
+
+
+@router.get("/session")
+def get_session_state(session: Session = Depends(get_session)):
+    from app.services.session_engine import SessionEngine
+    from app.services.activity_logger import log_activity
+
+    state = SessionEngine().detect()
+    log_activity(session, "session_check", f"Session: {state.mode}", state.to_dict())
+    return state.to_dict()
+
+
+@router.post("/radar/refresh")
+def refresh_radar(session: Session = Depends(get_session)):
+    config = ConfigManager(session).get_current()
+    from app.services.market_radar_service import MarketRadarService
+
+    candidates = MarketRadarService(session, config).refresh()
+    return {"status": "ok", "count": len(candidates)}
+
+
 @router.post("/sync/alpaca")
 def sync_alpaca(session: Session = Depends(get_session)):
     adapter = AlpacaAdapter(session)

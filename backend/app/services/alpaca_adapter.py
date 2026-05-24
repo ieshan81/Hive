@@ -131,15 +131,16 @@ class AlpacaAdapter:
             self._log_error("sync_positions", str(exc))
             return []
 
-    def get_tradable_assets(self, status: str = "active") -> list[dict]:
+    def get_tradable_assets(self, asset_class: str = "stock", limit: int = 500) -> list[dict]:
         client = self._get_trading_client()
         if client is None:
             return []
         try:
             from alpaca.trading.requests import GetAssetsRequest
-            from alpaca.trading.enums import AssetStatus
+            from alpaca.trading.enums import AssetStatus, AssetClass
 
-            req = GetAssetsRequest(status=AssetStatus.ACTIVE)
+            ac = AssetClass.CRYPTO if asset_class == "crypto" else AssetClass.US_EQUITY
+            req = GetAssetsRequest(status=AssetStatus.ACTIVE, asset_class=ac)
             assets = client.get_all_assets(req)
             return [
                 {
@@ -148,12 +149,84 @@ class AlpacaAdapter:
                     "tradable": a.tradable,
                     "fractionable": a.fractionable,
                     "shortable": a.shortable,
+                    "asset_class": asset_class,
                 }
-                for a in assets[:500]
+                for a in assets[:limit]
+                if a.tradable
             ]
         except Exception as exc:
-            self._log_error("get_tradable_assets", str(exc))
+            self._log_error("get_tradable_assets", str(exc), {"asset_class": asset_class})
             return []
+
+    def get_crypto_assets(self, limit: int = 20) -> list[dict]:
+        return self.get_tradable_assets(asset_class="crypto", limit=limit)
+
+    def get_most_actives(self, limit: int = 15) -> list[dict]:
+        if not self.configured:
+            return []
+        try:
+            from alpaca.data.historical.screener import ScreenerClient
+
+            screener = ScreenerClient(settings.alpaca_api_key, settings.alpaca_secret_key)
+            actives = screener.get_most_actives()
+            results = []
+            for item in (actives.most_actives or [])[:limit]:
+                results.append(
+                    {
+                        "symbol": item.symbol,
+                        "name": item.symbol,
+                        "tradable": True,
+                        "fractionable": True,
+                        "volume": float(item.volume) if hasattr(item, "volume") and item.volume else None,
+                    }
+                )
+            return results
+        except Exception as exc:
+            self._log_error("get_most_actives", str(exc))
+            # Fallback: top tradable equities
+            return self.get_tradable_assets(asset_class="stock", limit=limit)
+
+    @staticmethod
+    def compute_spread(bid: float, ask: float) -> tuple[float | None, float | None]:
+        """Returns (spread_pct as decimal, spread_display_pct)."""
+        if bid <= 0 or ask <= 0:
+            return None, None
+        mid = (bid + ask) / 2
+        if mid <= 0:
+            return None, None
+        spread_pct = (ask - bid) / mid
+        return spread_pct, spread_pct * 100
+
+    def get_quote(self, symbol: str, asset_class: str = "stock") -> Optional[dict]:
+        if asset_class == "crypto":
+            return self.get_latest_crypto_quote(symbol)
+        return self.get_latest_quote(symbol)
+
+    def get_latest_crypto_quote(self, symbol: str) -> Optional[dict]:
+        if not self.configured:
+            return None
+        try:
+            from alpaca.data.historical import CryptoHistoricalDataClient
+            from alpaca.data.requests import CryptoLatestQuoteRequest
+
+            client = CryptoHistoricalDataClient(settings.alpaca_api_key, settings.alpaca_secret_key)
+            req = CryptoLatestQuoteRequest(symbol_or_symbols=symbol)
+            quotes = client.get_crypto_latest_quote(req)
+            if symbol not in quotes:
+                return None
+            q = quotes[symbol]
+            bid = float(q.bid_price)
+            ask = float(q.ask_price)
+            spread_pct, spread_display = self.compute_spread(bid, ask)
+            return {
+                "bid": bid,
+                "ask": ask,
+                "spread_pct": spread_pct,
+                "spread_display_pct": spread_display,
+            }
+        except Exception as exc:
+            self._log_error("get_latest_crypto_quote", str(exc), {"symbol": symbol})
+            return None
 
     def get_bars(self, symbol: str, timeframe: str = "1Day", limit: int = 100) -> list[dict]:
         data_client = self._get_data_client()
@@ -203,12 +276,14 @@ class AlpacaAdapter:
             if symbol not in quotes:
                 return None
             q = quotes[symbol]
+            bid = float(q.bid_price)
+            ask = float(q.ask_price)
+            spread_pct, spread_display = self.compute_spread(bid, ask)
             return {
-                "bid": float(q.bid_price),
-                "ask": float(q.ask_price),
-                "spread_pct": (float(q.ask_price) - float(q.bid_price)) / float(q.ask_price)
-                if q.ask_price
-                else None,
+                "bid": bid,
+                "ask": ask,
+                "spread_pct": spread_pct,
+                "spread_display_pct": spread_display,
             }
         except Exception as exc:
             self._log_error("get_latest_quote", str(exc), {"symbol": symbol})

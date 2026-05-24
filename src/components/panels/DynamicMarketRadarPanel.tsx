@@ -44,28 +44,26 @@ export function DynamicMarketRadarPanel({
     <GlassPanel
       title="Dynamic Market Radar"
       icon={<Radar className="h-4 w-4" />}
-      action={
-        <select className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-slate-300 outline-none focus:border-hive-cyan/40 cursor-pointer">
-          <option>All Markets</option>
-        </select>
-      }
+      className="h-full"
     >
       {assets.length === 0 ? (
-        <EmptyState message={statusMessage ?? "No market data yet — waiting for Alpaca sync"} />
+        <EmptyState message={statusMessage ?? "No market data — run POST /api/cycle/run"} />
       ) : (
-        <div className="overflow-x-auto scrollbar-thin">
-          <table className="w-full min-w-[520px] text-left">
+        <div className="w-full overflow-x-auto scrollbar-thin">
+          <table className="w-full min-w-[680px] text-left">
             <thead>
               <tr className="border-b border-white/5">
-                {["Asset", "Liquidity", "Sentiment", "Volatility", "Spread", "Eligibility"].map((col) => (
-                  <th key={col} className="pb-2 pr-3 text-[9px] font-semibold uppercase tracking-wider text-slate-500 last:pr-0">{col}</th>
+                {["Asset", "Class", "Liquidity", "Sentiment", "Volatility", "Spread", "Eligibility"].map((col) => (
+                  <th key={col} className="pb-2 pr-3 text-[9px] font-semibold uppercase tracking-wider text-slate-500 whitespace-nowrap">
+                    {col}
+                  </th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {assets.map((asset) => (
-                <tr key={asset.symbol} className="border-b border-white/3 last:border-0">
-                  <td className="py-2.5 pr-3">
+                <tr key={`${asset.symbol}-${asset.assetClass}`} className="border-b border-white/3 last:border-0">
+                  <td className="py-2.5 pr-3 whitespace-nowrap">
                     <div className="flex items-center gap-2">
                       <AssetIcon symbol={asset.symbol} />
                       <div>
@@ -74,10 +72,11 @@ export function DynamicMarketRadarPanel({
                       </div>
                     </div>
                   </td>
+                  <td className="py-2.5 pr-3 text-[10px] uppercase text-slate-400">{asset.assetClass ?? "—"}</td>
                   <td className="py-2.5 pr-3"><ScoreCell value={asset.liquidity} /></td>
                   <td className="py-2.5 pr-3"><ScoreCell value={asset.sentiment} /></td>
                   <td className="py-2.5 pr-3"><ScoreCell value={asset.volatility} /></td>
-                  <td className="py-2.5 pr-3 text-xs text-slate-400">{asset.spread}</td>
+                  <td className="py-2.5 pr-3 text-xs text-slate-400 whitespace-nowrap">{asset.spread}</td>
                   <td className="py-2.5">
                     <span className={cn("inline-block rounded px-2 py-0.5 text-[8px] font-bold tracking-wider border", eligibilityStyles(asset.eligibility))}>
                       {asset.eligibility}

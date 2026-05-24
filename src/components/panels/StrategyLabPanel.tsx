@@ -37,13 +37,13 @@ export function StrategyLabPanel({ strategies }: StrategyLabPanelProps) {
       }
     >
       {strategies.length === 0 ? (
-        <EmptyState message="No strategy states yet — waiting for first signal" />
+        <EmptyState message="No strategy states yet — run POST /api/cycle/run" />
       ) : (
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-4 gap-3 auto-rows-fr">
         {strategies.map((strategy) => (
           <div
             key={strategy.id}
-            className="rounded-lg border border-white/5 bg-white/2 p-3 hover:border-hive-cyan/20 transition"
+            className="flex flex-col rounded-lg border border-white/5 bg-white/2 p-3 hover:border-hive-cyan/20 transition h-full min-h-[140px]"
           >
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-semibold text-white">{strategy.name}</span>
@@ -113,7 +113,7 @@ export function StrategyLabPanel({ strategies }: StrategyLabPanelProps) {
             </div>
           </div>
         ))}
-      </div>
+        </div>
       )}
     </GlassPanel>
   );

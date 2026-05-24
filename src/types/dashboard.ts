@@ -103,6 +103,7 @@ export interface RiskRule {
 export interface MarketAsset {
   symbol: string;
   name: string;
+  assetClass?: string;
   liquidity: number | null;
   sentiment: number | null;
   volatility: number | null;
@@ -160,4 +161,5 @@ export interface DashboardData {
     status: DataStatus;
     message: string;
   };
+  session?: Record<string, unknown>;
 }

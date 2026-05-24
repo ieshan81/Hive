@@ -36,6 +36,12 @@ DEFAULT_CONFIG = {
     "capital_allocation_rules": {
         "max_per_strategy_pct": 0.5,
     },
+    "capital_buckets": {
+        "stock_day_bucket_fraction": 0.50,
+        "crypto_night_bucket_fraction": 0.30,
+        "reserve_cash_bucket_fraction": 0.15,
+        "emergency_cash_bucket_fraction": 0.05,
+    },
     "locked_safety_caps": {
         "max_risk_per_trade": 0.02,
         "daily_loss_limit_pct": 0.05,

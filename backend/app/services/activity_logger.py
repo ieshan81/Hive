@@ -1,0 +1,22 @@
+"""Activity logging helper."""
+
+from __future__ import annotations
+
+from typing import Any, Optional
+
+from sqlmodel import Session
+
+from app.database import ActivityLog
+
+
+def log_activity(
+    session: Session,
+    event_type: str,
+    message: str,
+    details: Optional[dict[str, Any]] = None,
+) -> ActivityLog:
+    row = ActivityLog(event_type=event_type, message=message, details=details)
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    return row

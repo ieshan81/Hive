@@ -118,6 +118,7 @@ class StrategyState(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     strategy: str = Field(index=True, unique=True)
     status: str = "inactive"
+    status_reason: Optional[str] = None
     performance_7d: Optional[float] = None
     confidence: float = 0.0
     exposure_pct: float = 0.0
@@ -130,10 +131,12 @@ class SymbolCandidate(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     symbol: str = Field(index=True)
     name: Optional[str] = None
+    asset_class: str = Field(default="stock", index=True)
     liquidity_score: Optional[float] = None
     sentiment_score: Optional[float] = None
     volatility_score: Optional[float] = None
     spread_pct: Optional[float] = None
+    spread_display: Optional[str] = None
     eligibility: str = "unknown"
     source: str = "alpaca"
     scanned_at: datetime = Field(default_factory=datetime.utcnow)
@@ -255,8 +258,31 @@ class BrokerError(SQLModel, table=True):
 engine = create_engine(settings.database_url, echo=False)
 
 
+def _migrate_columns() -> None:
+    """Add columns introduced after initial deploy (idempotent)."""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if not insp.has_table("symbol_candidates"):
+        return
+
+    sym_cols = {c["name"] for c in insp.get_columns("symbol_candidates")}
+    with engine.begin() as conn:
+        if "asset_class" not in sym_cols:
+            conn.execute(text("ALTER TABLE symbol_candidates ADD COLUMN asset_class VARCHAR DEFAULT 'stock'"))
+        if "spread_display" not in sym_cols:
+            conn.execute(text("ALTER TABLE symbol_candidates ADD COLUMN spread_display VARCHAR"))
+
+    if insp.has_table("strategy_states"):
+        state_cols = {c["name"] for c in insp.get_columns("strategy_states")}
+        with engine.begin() as conn:
+            if "status_reason" not in state_cols:
+                conn.execute(text("ALTER TABLE strategy_states ADD COLUMN status_reason VARCHAR"))
+
+
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
+    _migrate_columns()
 
 
 def get_session():

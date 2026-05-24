@@ -25,6 +25,7 @@ from app.services.default_config import RISK_CAGE_RULES
 from app.services.memory_engine import MemoryEngine
 from app.services.monte_carlo_engine import MonteCarloEngine
 from app.services.backtest_engine import BacktestEngine
+from app.services.session_engine import SessionEngine
 
 
 def _empty_state(message: str) -> dict[str, Any]:
@@ -199,11 +200,14 @@ def build_dashboard(session: Session) -> dict[str, Any]:
         "nodes": nodes,
     }
 
+    session_state = SessionEngine().detect()
+
     # Strategy lab
     states = list(session.exec(select(StrategyState)).all())
     display_names = {
         "momentum_orb": "Momentum / ORB",
         "mean_reversion_pairs": "Mean Reversion / Pairs",
+        "crypto_night_momentum": "Crypto Night Momentum",
     }
     strategies = []
     for s in states:
@@ -222,7 +226,7 @@ def build_dashboard(session: Session) -> dict[str, Any]:
                 "confidence": s.confidence,
                 "exposure": s.exposure_pct,
                 "sparkline": [],
-                "message": "No trades yet" if perf is None else None,
+                "message": s.status_reason or ("No trades yet" if perf is None else None),
             }
         )
     if not strategies:
@@ -235,7 +239,7 @@ def build_dashboard(session: Session) -> dict[str, Any]:
                 "confidence": 0,
                 "exposure": 0,
                 "sparkline": [],
-                "message": "Strategy inactive — waiting for first signal",
+                "message": "Run POST /api/cycle/run to activate",
             },
             {
                 "id": "mean_reversion_pairs",
@@ -245,59 +249,48 @@ def build_dashboard(session: Session) -> dict[str, Any]:
                 "confidence": 0,
                 "exposure": 0,
                 "sparkline": [],
-                "message": "Strategy inactive — waiting for first signal",
+                "message": "Run POST /api/cycle/run to activate",
+            },
+            {
+                "id": "crypto_night_momentum",
+                "name": "Crypto Night Momentum",
+                "status": "Inactive",
+                "performance7d": None,
+                "confidence": 0,
+                "exposure": 0,
+                "sparkline": [],
+                "message": "Placeholder — inactive until crypto data works",
             },
         ]
 
     # Risk cage
     risk_rules = [{"id": str(i + 1), "text": rule, "enforced": True} for i, rule in enumerate(RISK_CAGE_RULES)]
 
-    # Market radar
+    # Market radar — from DB only (populated by cycle/radar refresh)
     candidates = list(
-        session.exec(select(SymbolCandidate).order_by(SymbolCandidate.scanned_at.desc()).limit(10)).all()
+        session.exec(select(SymbolCandidate).order_by(SymbolCandidate.scanned_at.desc()).limit(25)).all()
     )
-    if not candidates and alpaca.configured:
-        movers = []
-        for sym in ["NVDA", "AAPL", "MSFT", "BTC/USD", "ETH/USD"]:
-            quote = alpaca.get_latest_quote(sym.replace("/", ""))
-            if quote:
-                spread = quote.get("spread_pct") or 0
-                eligibility = "ELIGIBLE" if spread < config.get("max_spread_pct", 0.005) else "CAUTION"
-                candidates.append(
-                    SymbolCandidate(
-                        symbol=sym,
-                        liquidity_score=None,
-                        sentiment_score=None,
-                        volatility_score=None,
-                        spread_pct=spread * 100 if spread else None,
-                        eligibility=eligibility.lower(),
-                    )
-                )
-        for c in candidates:
-            session.add(c)
-        session.commit()
-        candidates = list(
-            session.exec(select(SymbolCandidate).order_by(SymbolCandidate.scanned_at.desc()).limit(10)).all()
-        )
 
     market_assets = []
     for c in candidates:
+        spread_str = c.spread_display if c.spread_display else ("No quote" if c.spread_pct is None else f"{c.spread_pct:.3f}%")
         market_assets.append(
             {
                 "symbol": c.symbol,
                 "name": c.name or c.symbol,
+                "assetClass": c.asset_class,
                 "liquidity": c.liquidity_score,
                 "sentiment": c.sentiment_score,
                 "volatility": c.volatility_score,
-                "spread": f"{c.spread_pct:.2f}%" if c.spread_pct is not None else "—",
+                "spread": spread_str,
                 "eligibility": c.eligibility.upper() if c.eligibility else "UNKNOWN",
-                "message": "No score yet" if c.liquidity_score is None else None,
+                "message": "No quote" if c.spread_pct is None and c.spread_display == "No quote" else None,
             }
         )
 
     if not market_assets:
         market_radar_status = "empty"
-        market_radar_message = "No market data yet — waiting for Alpaca sync"
+        market_radar_message = "No radar data — run POST /api/cycle/run or /api/radar/refresh"
     elif not alpaca.configured:
         market_radar_status = "not_connected"
         market_radar_message = "Waiting for Alpaca sync"
@@ -358,8 +351,13 @@ def build_dashboard(session: Session) -> dict[str, Any]:
         "statusChips": [
             {
                 "label": "Market Status",
-                "value": "OPEN" if health.alpaca_connected else "UNKNOWN",
-                "variant": "success" if health.alpaca_connected else "neutral",
+                "value": session_state.us_stock_session.upper(),
+                "variant": "success" if session_state.stock_trading_allowed else "neutral",
+            },
+            {
+                "label": "Session Mode",
+                "value": session_state.mode.upper().replace("_", " "),
+                "variant": "info",
             },
             {
                 "label": "AI Mode",
@@ -372,6 +370,7 @@ def build_dashboard(session: Session) -> dict[str, Any]:
                 "variant": "info",
             },
         ],
+        "session": session_state.to_dict(),
         "accountSurvival": account_survival,
         "aiFundManager": ai_fund_manager,
         "memoryGraph": memory_graph,
