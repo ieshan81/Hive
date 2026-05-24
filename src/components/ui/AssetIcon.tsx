@@ -1,0 +1,62 @@
+"use client";
+
+import { useState } from "react";
+import { cn } from "@/lib/utils";
+import {
+  baseSymbol,
+  cryptoIconUrl,
+  isLikelyCrypto,
+  tickerAccent,
+} from "@/lib/assetIcons";
+
+interface AssetIconProps {
+  symbol: string;
+  assetClass?: string;
+  size?: "sm" | "md";
+  className?: string;
+}
+
+export function AssetIcon({ symbol, assetClass, size = "sm", className }: AssetIconProps) {
+  const [failed, setFailed] = useState(false);
+  const base = baseSymbol(symbol);
+  const crypto = isLikelyCrypto(symbol, assetClass);
+  const dim = size === "md" ? "h-9 w-9" : "h-8 w-8";
+  const text = size === "md" ? "text-[11px]" : "text-[10px]";
+
+  if (crypto && !failed) {
+    return (
+      <span
+        className={cn(
+          "inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-white/5 ring-1 ring-white/10",
+          dim,
+          className
+        )}
+      >
+        <img
+          src={cryptoIconUrl(symbol)}
+          alt=""
+          width={size === "md" ? 36 : 32}
+          height={size === "md" ? 36 : 32}
+          className="h-full w-full object-cover"
+          onError={() => setFailed(true)}
+        />
+      </span>
+    );
+  }
+
+  const accent = tickerAccent(symbol);
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center justify-center rounded-full font-bold text-white ring-1 ring-white/10",
+        dim,
+        text,
+        className
+      )}
+      style={{ backgroundColor: `${accent}33`, color: accent }}
+      aria-hidden
+    >
+      {base.slice(0, 3)}
+    </span>
+  );
+}

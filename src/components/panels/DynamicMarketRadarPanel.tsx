@@ -2,8 +2,8 @@
 
 import { Radar } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
-import { RingGauge } from "@/components/ui/RingGauge";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { AssetIcon } from "@/components/ui/AssetIcon";
 import { formatShortTime } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 import type { MarketAsset } from "@/types/dashboard";
@@ -22,17 +22,54 @@ function eligibilityStyles(status: string) {
   return "bg-slate-500/15 text-slate-400 border-slate-500/30";
 }
 
-function AssetIcon({ symbol }: { symbol: string }) {
+function classStyles(assetClass?: string) {
+  if (assetClass === "crypto") return "bg-violet-500/15 text-violet-300 border-violet-500/25";
+  return "bg-sky-500/15 text-sky-300 border-sky-500/25";
+}
+
+function metricLabel(label: string, value: string | number | null) {
+  const display =
+    value === null || value === undefined ? "No data" : typeof value === "number" ? `${Math.round(value)}` : value;
+  const empty = display === "No data";
   return (
-    <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-white/5 text-[9px] font-bold text-slate-300 border border-white/8">
-      {symbol.slice(0, 2)}
-    </span>
+    <div>
+      <p className="text-[8px] uppercase tracking-wider text-slate-500">{label}</p>
+      <p className={cn("text-[11px] font-medium truncate", empty ? "text-slate-600" : "text-slate-300")}>{display}</p>
+    </div>
   );
 }
 
-function ScoreCell({ value }: { value: number | null }) {
-  if (value === null || value === undefined) return <span className="text-[10px] text-slate-500">No data</span>;
-  return <RingGauge value={value} />;
+function RadarRow({ asset }: { asset: MarketAsset }) {
+  return (
+    <li className="rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2.5 hover:border-white/10 transition-colors">
+      <div className="flex items-start gap-2.5">
+        <AssetIcon symbol={asset.symbol} assetClass={asset.assetClass} size="md" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <p className="text-xs font-semibold text-white truncate">{asset.symbol}</p>
+            <span className={cn("rounded px-1.5 py-0.5 text-[8px] font-bold uppercase border", classStyles(asset.assetClass))}>
+              {asset.assetClass ?? "—"}
+            </span>
+            <span className={cn("rounded px-1.5 py-0.5 text-[8px] font-bold uppercase border", eligibilityStyles(asset.eligibility))}>
+              {asset.eligibility}
+            </span>
+          </div>
+          {asset.name && asset.name !== asset.symbol && (
+            <p className="text-[10px] text-slate-500 truncate mt-0.5">{asset.name}</p>
+          )}
+          <div className="mt-2 grid grid-cols-4 gap-2">
+            {metricLabel("Liq", asset.liquidity)}
+            {metricLabel("Sent", asset.sentiment)}
+            {metricLabel("Vol", asset.volatility)}
+            <div>
+              <p className="text-[8px] uppercase tracking-wider text-slate-500">Spread</p>
+              <p className="text-[11px] font-medium text-slate-300 truncate">{asset.spread}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </li>
+  );
 }
 
 export function DynamicMarketRadarPanel({
@@ -42,56 +79,19 @@ export function DynamicMarketRadarPanel({
   statusMessage,
 }: DynamicMarketRadarPanelProps) {
   return (
-    <GlassPanel
-      title="Dynamic Market Radar"
-      icon={<Radar className="h-4 w-4" />}
-      className="h-full"
-    >
+    <GlassPanel title="Dynamic Market Radar" icon={<Radar className="h-4 w-4" />} className="h-full flex flex-col">
       {assets.length === 0 ? (
         <EmptyState message={statusMessage ?? "No market data — run POST /api/cycle/run"} />
       ) : (
-        <div className="w-full overflow-x-auto scrollbar-thin">
-          <table className="w-full min-w-[680px] text-left">
-            <thead>
-              <tr className="border-b border-white/5">
-                {["Asset", "Class", "Liquidity", "Sentiment", "Volatility", "Spread", "Eligibility"].map((col) => (
-                  <th key={col} className="pb-2 pr-3 text-[9px] font-semibold uppercase tracking-wider text-slate-500 whitespace-nowrap">
-                    {col}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {assets.map((asset) => (
-                <tr key={`${asset.symbol}-${asset.assetClass}`} className="border-b border-white/3 last:border-0">
-                  <td className="py-2.5 pr-3 whitespace-nowrap">
-                    <div className="flex items-center gap-2">
-                      <AssetIcon symbol={asset.symbol} />
-                      <div>
-                        <p className="text-xs font-semibold text-white">{asset.symbol}</p>
-                        <p className="text-[9px] text-slate-500">{asset.name}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="py-2.5 pr-3 text-[10px] uppercase text-slate-400">{asset.assetClass ?? "—"}</td>
-                  <td className="py-2.5 pr-3"><ScoreCell value={asset.liquidity} /></td>
-                  <td className="py-2.5 pr-3"><ScoreCell value={asset.sentiment} /></td>
-                  <td className="py-2.5 pr-3"><ScoreCell value={asset.volatility} /></td>
-                  <td className="py-2.5 pr-3 text-xs text-slate-400 whitespace-nowrap">{asset.spread}</td>
-                  <td className="py-2.5">
-                    <span className={cn("inline-block rounded px-2 py-0.5 text-[8px] font-bold tracking-wider border", eligibilityStyles(asset.eligibility))}>
-                      {asset.eligibility}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <ul className="space-y-2 max-h-[420px] overflow-y-auto overflow-x-hidden pr-0.5 scrollbar-thin flex-1">
+          {assets.map((asset) => (
+            <RadarRow key={`${asset.symbol}-${asset.assetClass}`} asset={asset} />
+          ))}
+        </ul>
       )}
-      <footer className="flex items-center justify-between mt-3 pt-2 border-t border-white/5 text-[10px] text-slate-500">
-        <span>Data refreshed {refreshedAt ? `${formatShortTime(refreshedAt)} local` : "—"}</span>
-        <span>{opportunitiesScanned} opportunities scanned</span>
+      <footer className="flex flex-wrap items-center justify-between gap-2 mt-3 pt-2 border-t border-white/5 text-[10px] text-slate-500 shrink-0">
+        <span>Refreshed {refreshedAt ? `${formatShortTime(refreshedAt)} local` : "—"}</span>
+        <span>{opportunitiesScanned} scanned</span>
       </footer>
     </GlassPanel>
   );

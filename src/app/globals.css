@@ -80,9 +80,14 @@
     }
   }
 
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 209, 255, 0.15) transparent;
+  }
+
   .scrollbar-thin::-webkit-scrollbar {
-    width: 4px;
-    height: 4px;
+    width: 3px;
+    height: 0;
   }
 
   .scrollbar-thin::-webkit-scrollbar-track {
@@ -90,7 +95,11 @@
   }
 
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background: rgba(0, 209, 255, 0.2);
-    border-radius: 4px;
+    background: rgba(0, 209, 255, 0.15);
+    border-radius: 999px;
+  }
+
+  .scrollbar-thin:hover::-webkit-scrollbar-thumb {
+    background: rgba(0, 209, 255, 0.35);
   }
 }
