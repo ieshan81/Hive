@@ -137,25 +137,27 @@ def blocked_decisions(session: Session, cycle_run_id: str = "latest") -> list[di
     ).all()
     sig_map = _signal_map(session, cid)
     out: list[dict[str, Any]] = []
+    cycle_lessons = list(session.exec(select(LessonNode).where(LessonNode.cycle_run_id == cid)).all())
     for b in risk_blocks:
         mem = next(
             (
                 m
-                for m in session.exec(select(LessonNode).where(LessonNode.cycle_run_id == cid)).all()
+                for m in cycle_lessons
                 if m.symbol == b.symbol and "block" in (m.memory_type or "")
             ),
             None,
         )
+        ev = b.evidence_json if isinstance(b.evidence_json, dict) else {}
         out.append(
             {
                 "symbol": b.symbol,
-                "strategy": b.strategy,
-                "side": b.side,
-                "block_reason_code": b.block_reason_code,
-                "human_reason": b.human_reason,
-                "risk_rule": b.risk_rule,
-                "severity": (b.evidence_json or {}).get("severity", "MEDIUM"),
-                "evidence_summary": str((b.evidence_json or {}))[:200],
+                "strategy": b.strategy or "",
+                "side": b.side or "",
+                "block_reason_code": b.block_reason_code or b.reason,
+                "human_reason": b.human_reason or b.reason,
+                "risk_rule": b.risk_rule or "",
+                "severity": ev.get("severity", "MEDIUM"),
+                "evidence_summary": str(ev)[:200],
                 "related_memory_id": mem.id if mem else None,
                 "related_memory_title": mem.title if mem else None,
                 "source": "risk",
