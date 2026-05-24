@@ -107,8 +107,14 @@ class StrategySignal(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     strategy: str = Field(index=True)
     symbol: str = Field(index=True)
+    asset_class: str = Field(default="stock", index=True)
     signal: str
+    side: str = "hold"
     strength: float = 0.0
+    confidence: float = 0.0
+    status: str = Field(default="generated", index=True)
+    stop_loss: Optional[float] = None
+    take_profit: Optional[float] = None
     signal_metadata: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -278,6 +284,22 @@ def _migrate_columns() -> None:
         with engine.begin() as conn:
             if "status_reason" not in state_cols:
                 conn.execute(text("ALTER TABLE strategy_states ADD COLUMN status_reason VARCHAR"))
+
+    if insp.has_table("strategy_signals"):
+        sig_cols = {c["name"] for c in insp.get_columns("strategy_signals")}
+        with engine.begin() as conn:
+            if "asset_class" not in sig_cols:
+                conn.execute(text("ALTER TABLE strategy_signals ADD COLUMN asset_class VARCHAR DEFAULT 'stock'"))
+            if "side" not in sig_cols:
+                conn.execute(text("ALTER TABLE strategy_signals ADD COLUMN side VARCHAR DEFAULT 'hold'"))
+            if "confidence" not in sig_cols:
+                conn.execute(text("ALTER TABLE strategy_signals ADD COLUMN confidence FLOAT DEFAULT 0"))
+            if "status" not in sig_cols:
+                conn.execute(text("ALTER TABLE strategy_signals ADD COLUMN status VARCHAR DEFAULT 'generated'"))
+            if "stop_loss" not in sig_cols:
+                conn.execute(text("ALTER TABLE strategy_signals ADD COLUMN stop_loss FLOAT"))
+            if "take_profit" not in sig_cols:
+                conn.execute(text("ALTER TABLE strategy_signals ADD COLUMN take_profit FLOAT"))
 
 
 def init_db() -> None:

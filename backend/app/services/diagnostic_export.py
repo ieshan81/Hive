@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 from sqlmodel import Session, select
 
@@ -15,11 +15,10 @@ from app.database import (
     BacktestResult,
     BlockedTrade,
     BrokerError,
-    ConfigCurrent,
-    ConfigHistory,
     MonteCarloResult,
     OrderRecord,
     RiskEvent,
+    StrategySignal,
     StrategyState,
     SymbolCandidate,
     SystemHealth,
@@ -40,6 +39,17 @@ def _serialize(rows: list) -> list[dict]:
     return result
 
 
+def _latest_cycle_from_activity(session: Session) -> Optional[dict]:
+    row = session.exec(
+        select(ActivityLog)
+        .where(ActivityLog.event_type == "cycle_end")
+        .order_by(ActivityLog.created_at.desc())
+    ).first()
+    if row and row.details:
+        return row.details
+    return None
+
+
 def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
     config_mgr = ConfigManager(session)
     dashboard = build_dashboard(session)
@@ -47,12 +57,13 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
 
     activity_rows = list(session.exec(select(ActivityLog).order_by(ActivityLog.created_at.desc())).all())
     strategy_rows = list(session.exec(select(StrategyState)).all())
+    signal_rows = list(session.exec(select(StrategySignal).order_by(StrategySignal.created_at.desc())).all())
     candidate_rows = list(session.exec(select(SymbolCandidate)).all())
     blocked_rows = list(session.exec(select(BlockedTrade)).all())
     risk_rows = list(session.exec(select(RiskEvent)).all())
 
-    last_cycle = None
-    if health and health.details:
+    last_cycle = _latest_cycle_from_activity(session)
+    if last_cycle is None and health and health.details:
         last_cycle = health.details.get("last_cycle")
 
     summary_lines = [
@@ -68,21 +79,46 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         "## Backend Data Counts",
         f"- activity_logs: {len(activity_rows)}",
         f"- strategy_states: {len(strategy_rows)}",
+        f"- strategy_signals: {len(signal_rows)}",
         f"- symbol_candidates: {len(candidate_rows)}",
         f"- blocked_trades: {len(blocked_rows)}",
         f"- risk_events: {len(risk_rows)}",
         "",
         "## Last Cycle",
-        f"- Status: {last_cycle.get('status') if last_cycle else 'never run'}",
-        f"- Radar count: {last_cycle.get('radar_count') if last_cycle else 0}",
-        f"- Signals: {last_cycle.get('signals_generated') if last_cycle else 0}",
-        "",
-        "## Core Principle",
-        "Rules trade fast. AI learns slowly. Risk engine blocks danger.",
-        "Paper trading only. No live trading. No fake data.",
-        "",
-        "Run POST /api/cycle/run to populate activity logs, radar, and strategy states.",
     ]
+
+    if last_cycle:
+        summary_lines.extend(
+            [
+                f"- Timestamp: {last_cycle.get('ended_at') or last_cycle.get('started_at', 'unknown')}",
+                f"- Status: {last_cycle.get('status', 'unknown')}",
+                f"- Session mode: {(last_cycle.get('session') or {}).get('mode', 'unknown')}",
+                f"- Radar count: {last_cycle.get('radar_count', 0)}",
+                f"- Signals generated: {last_cycle.get('signals_generated', 0)}",
+                f"- Signals created: {last_cycle.get('signals_created', 0)}",
+                f"- Signals evaluated: {last_cycle.get('signals_evaluated', 0)}",
+                f"- Blocked: {last_cycle.get('blocked', 0)}",
+                f"- Approved: {last_cycle.get('approved', 0)}",
+                f"- Orders submitted: {last_cycle.get('orders_submitted', 0)}",
+                f"- Errors: {', '.join(last_cycle.get('errors') or []) or 'none'}",
+                "",
+                "## Strategy States (last cycle)",
+            ]
+        )
+        for st in last_cycle.get("strategy_states") or []:
+            summary_lines.append(f"- {st.get('strategy')}: {st.get('status')} — {st.get('reason')}")
+    else:
+        summary_lines.append("- Status: never run")
+        summary_lines.append("- Run POST /api/cycle/run to populate backend data")
+
+    summary_lines.extend(
+        [
+            "",
+            "## Core Principle",
+            "Rules trade fast. AI learns slowly. Risk engine blocks danger.",
+            "Paper trading only. No live trading. No fake data.",
+        ]
+    )
 
     return {
         "activity.json": _serialize(activity_rows),
@@ -97,6 +133,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         "backtest_results.json": _serialize(list(session.exec(select(BacktestResult)).all())),
         "monte_carlo_results.json": _serialize(list(session.exec(select(MonteCarloResult)).all())),
         "strategy_states.json": _serialize(strategy_rows),
+        "strategy_signals.json": _serialize(signal_rows),
         "symbol_candidates.json": _serialize(candidate_rows),
         "alpaca_errors.json": _serialize(list(session.exec(select(BrokerError)).all())),
         "system_health.json": _serialize([health] if health else []),

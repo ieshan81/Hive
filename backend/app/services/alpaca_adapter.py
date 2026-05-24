@@ -176,10 +176,13 @@ class AlpacaAdapter:
         if not self.configured:
             return []
         try:
+            from alpaca.data.enums import MostActivesBy
             from alpaca.data.historical.screener import ScreenerClient
+            from alpaca.data.requests import MostActivesRequest
 
             screener = ScreenerClient(settings.alpaca_api_key, settings.alpaca_secret_key)
-            actives = screener.get_most_actives()
+            req = MostActivesRequest(by=MostActivesBy.VOLUME, top=limit)
+            actives = screener.get_most_actives(req)
             results = []
             for item in (actives.most_actives or [])[:limit]:
                 results.append(
@@ -194,7 +197,6 @@ class AlpacaAdapter:
             return results
         except Exception as exc:
             self._log_error("get_most_actives", str(exc))
-            # Fallback: top tradable equities
             return self.get_tradable_assets(asset_class="stock", limit=limit)
 
     @staticmethod
@@ -234,9 +236,11 @@ class AlpacaAdapter:
             ask = float(q.ask_price)
             bid, ask = normalize_prices(bid, ask, reference_price)
             spread_pct, spread_display = spread_from_bid_ask(bid, ask)
+            mid = (bid + ask) / 2.0
             return {
                 "bid": bid,
                 "ask": ask,
+                "mid": mid,
                 "spread_pct": spread_pct,
                 "spread_display": spread_display,
             }
@@ -244,7 +248,45 @@ class AlpacaAdapter:
             self._log_error("get_latest_crypto_quote", str(exc), {"symbol": symbol})
             return None
 
-    def get_bars(self, symbol: str, timeframe: str = "1Day", limit: int = 100) -> list[dict]:
+    def get_crypto_bars(self, symbol: str, timeframe: str = "1Hour", limit: int = 50) -> list[dict]:
+        if not self.configured:
+            return []
+        try:
+            from alpaca.data.historical import CryptoHistoricalDataClient
+            from alpaca.data.requests import CryptoBarsRequest
+            from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+
+            quote_symbol = normalize_crypto_symbol(symbol)
+            tf_map = {
+                "1Hour": TimeFrame(1, TimeFrameUnit.Hour),
+                "1Day": TimeFrame(1, TimeFrameUnit.Day),
+            }
+            tf = tf_map.get(timeframe, TimeFrame(1, TimeFrameUnit.Hour))
+            end = datetime.utcnow()
+            start = end - timedelta(days=limit * 3)
+            client = CryptoHistoricalDataClient(settings.alpaca_api_key, settings.alpaca_secret_key)
+            req = CryptoBarsRequest(symbol_or_symbols=quote_symbol, timeframe=tf, start=start, end=end, limit=limit)
+            bars = client.get_crypto_bars(req)
+            if quote_symbol not in bars.data:
+                return []
+            return [
+                {
+                    "timestamp": b.timestamp.isoformat(),
+                    "open": float(b.open),
+                    "high": float(b.high),
+                    "low": float(b.low),
+                    "close": float(b.close),
+                    "volume": float(b.volume),
+                }
+                for b in bars.data[quote_symbol]
+            ]
+        except Exception as exc:
+            self._log_error("get_crypto_bars", str(exc), {"symbol": symbol})
+            return []
+
+    def get_bars(self, symbol: str, timeframe: str = "1Day", limit: int = 100, asset_class: str = "stock") -> list[dict]:
+        if asset_class == "crypto":
+            return self.get_crypto_bars(symbol, timeframe=timeframe, limit=limit)
         data_client = self._get_data_client()
         if data_client is None:
             return []
@@ -298,9 +340,11 @@ class AlpacaAdapter:
             ask = float(q.ask_price)
             bid, ask = normalize_prices(bid, ask, reference_price)
             spread_pct, spread_display = spread_from_bid_ask(bid, ask)
+            mid = (bid + ask) / 2.0
             return {
                 "bid": bid,
                 "ask": ask,
+                "mid": mid,
                 "spread_pct": spread_pct,
                 "spread_display": spread_display,
             }

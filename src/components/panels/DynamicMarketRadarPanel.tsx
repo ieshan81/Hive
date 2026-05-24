@@ -31,7 +31,7 @@ function AssetIcon({ symbol }: { symbol: string }) {
 }
 
 function ScoreCell({ value }: { value: number | null }) {
-  if (value === null) return <span className="text-[10px] text-slate-500">—</span>;
+  if (value === null || value === undefined) return <span className="text-[10px] text-slate-500">No data</span>;
   return <RingGauge value={value} />;
 }
 

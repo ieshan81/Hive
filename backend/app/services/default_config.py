@@ -42,6 +42,9 @@ DEFAULT_CONFIG = {
         "reserve_cash_bucket_fraction": 0.15,
         "emergency_cash_bucket_fraction": 0.05,
     },
+    "crypto_momentum_lookback_bars": 12,
+    "crypto_momentum_threshold": 0.008,
+    "crypto_momentum_max_volatility": 0.08,
     "locked_safety_caps": {
         "max_risk_per_trade": 0.02,
         "daily_loss_limit_pct": 0.05,

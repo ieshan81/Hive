@@ -73,6 +73,28 @@ def refresh_radar(session: Session = Depends(get_session)):
     return {"status": "ok", "count": len(candidates), "mode": session_state.mode}
 
 
+@router.get("/symbols/discover")
+def discover_symbols(
+    asset_class: str = "all",
+    limit: int = 25,
+    session: str = "auto",
+    refresh: bool = False,
+    db: Session = Depends(get_session),
+):
+    from app.services.symbol_discovery_service import SymbolDiscoveryService
+
+    if asset_class not in ("stock", "crypto", "all"):
+        return {"status": "error", "message": "asset_class must be stock, crypto, or all"}
+    if session not in ("auto", "stock_day", "crypto_night", "closed"):
+        return {"status": "error", "message": "session must be auto, stock_day, crypto_night, or closed"}
+    return SymbolDiscoveryService(db).discover(
+        asset_class=asset_class,
+        limit=min(max(limit, 1), 100),
+        session_mode=session,
+        refresh=refresh,
+    )
+
+
 @router.post("/sync/alpaca")
 def sync_alpaca(session: Session = Depends(get_session)):
     adapter = AlpacaAdapter(session)

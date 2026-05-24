@@ -9,18 +9,8 @@ from sqlmodel import Session, delete
 from app.database import SymbolCandidate
 from app.services.activity_logger import log_activity
 from app.services.alpaca_adapter import AlpacaAdapter
-from app.services.quote_utils import eligibility_from_spread, spread_from_bid_ask
+from app.services.quote_utils import eligibility_from_spread, liquidity_from_volume, spread_from_bid_ask, volatility_score_from_bars
 from app.services.session_engine import SessionState
-
-
-def _liquidity_from_volume(volume: float | None) -> float | None:
-    if volume is None:
-        return None
-    import math
-
-    if volume <= 0:
-        return 0.0
-    return min(100.0, math.log10(volume + 1) * 20)
 
 
 class MarketRadarService:
@@ -63,8 +53,7 @@ class MarketRadarService:
             return []
 
         if session_state.mode == "stock_day":
-            crypto_items = self.alpaca.get_crypto_assets(limit=5)
-            for item in crypto_items:
+            for item in self.alpaca.get_crypto_assets(limit=5):
                 candidates.append({**item, "asset_class": "crypto", "source": "alpaca_crypto"})
 
         seen: set[str] = set()
@@ -82,12 +71,10 @@ class MarketRadarService:
         for c in unique:
             symbol = c["symbol"]
             asset_class = c.get("asset_class", "stock")
+            tf = "1Hour" if asset_class == "crypto" else "1Day"
 
-            ref_price = None
-            if asset_class == "stock":
-                bars = self.alpaca.get_bars(symbol, timeframe="1Day", limit=2)
-                if bars:
-                    ref_price = bars[-1]["close"]
+            bars = self.alpaca.get_bars(symbol, timeframe=tf, limit=20, asset_class=asset_class)
+            ref_price = bars[-1]["close"] if bars else None
 
             quote = self.alpaca.get_quote(symbol, asset_class, reference_price=ref_price)
             spread_pct, spread_display = spread_from_bid_ask(
@@ -96,11 +83,14 @@ class MarketRadarService:
             )
 
             liquidity = None
-            if asset_class == "stock":
-                bars = self.alpaca.get_bars(symbol, timeframe="1Day", limit=5)
-                if bars:
-                    avg_vol = sum(b["volume"] for b in bars) / len(bars)
-                    liquidity = _liquidity_from_volume(avg_vol)
+            if asset_class == "stock" and bars:
+                avg_vol = sum(b["volume"] for b in bars) / len(bars)
+                liquidity = liquidity_from_volume(avg_vol)
+            elif asset_class == "crypto" and bars:
+                avg_vol = sum(b.get("volume", 0) for b in bars[-5:]) / min(len(bars), 5)
+                liquidity = liquidity_from_volume(avg_vol)
+
+            volatility = volatility_score_from_bars(bars)
 
             eligibility = eligibility_from_spread(
                 spread_pct,
@@ -115,7 +105,7 @@ class MarketRadarService:
                 asset_class=asset_class,
                 liquidity_score=liquidity,
                 sentiment_score=None,
-                volatility_score=None,
+                volatility_score=volatility,
                 spread_pct=spread_pct,
                 spread_display=spread_display,
                 eligibility=eligibility,

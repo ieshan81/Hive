@@ -52,3 +52,36 @@ def eligibility_from_spread(
     if spread_pct > max_spread * 0.6:
         return "caution"
     return "eligible"
+
+
+def liquidity_from_volume(volume: float | None) -> float | None:
+    if volume is None or volume <= 0:
+        return None
+    import math
+
+    return min(100.0, math.log10(volume + 1) * 20)
+
+
+def volatility_score_from_bars(bars: list[dict]) -> float | None:
+    if len(bars) < 5:
+        return None
+    closes = [b["close"] for b in bars]
+    returns = [
+        (closes[i] - closes[i - 1]) / closes[i - 1]
+        for i in range(1, len(closes))
+        if closes[i - 1] > 0
+    ]
+    from app.services import quant_math
+
+    vol = quant_math.volatility(returns)
+    if vol is None:
+        return None
+    return round(min(100.0, vol * 2000), 2)
+
+
+def spread_score(spread_pct: float | None, max_spread: float) -> float | None:
+    if spread_pct is None:
+        return None
+    if spread_pct <= 0:
+        return 100.0
+    return round(max(0.0, min(100.0, (1.0 - spread_pct / max_spread) * 100)), 2)
