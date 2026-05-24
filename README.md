@@ -77,6 +77,13 @@ Normal config (risk limits, strategy settings, etc.) lives in **database** `conf
 
 If backend build fails with `pip: command not found`, confirm root directory is `backend` and redeploy (or toggle builder Nixpacks ↔ Railpack to bust cache).
 
+**Backend Railway settings (required):**
+- Root Directory: `backend`
+- Builder: Nixpacks
+- Custom Build Command: *(leave empty — Nixpacks reads requirements.txt automatically)*
+- Start Command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+- Do **not** set `NIXPACKS_INSTALL_CMD` or `NIXPACKS_NO_UPGRADE_PIP` — remove if present; the repo nixpacks.toml no longer runs pip upgrade.
+
 ### Frontend on Railway (optional second service)
 
 - Build: `npm run build`
