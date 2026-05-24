@@ -4,9 +4,13 @@ import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { Network } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { PanelError } from "@/components/ui/PanelError";
 import { MemoryLessonDrawer, type LessonDetail } from "@/components/panels/MemoryLessonDrawer";
+import { apiGet } from "@/lib/apiClient";
+import { isLessonGraphNode, lessonNodeIdForApi, normalizeMemoryGraph } from "@/lib/apiNormalize";
+import type { MemoryGraphNode } from "@/types/api";
+import type { PanelLoadMeta } from "@/types/api";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const CX = 50;
 const CY = 50;
 
@@ -17,30 +21,13 @@ type CategoryFilter =
   | "ai_review_memory"
   | "operator_note";
 
-interface GraphNode {
-  id: string;
-  label: string;
-  type: string;
-  category?: string;
-  severity?: string;
-  confidence?: number;
-  status?: string;
-  badge?: string;
-  count?: number;
-  color?: string;
-  x: number;
-  y: number;
-  symbol?: string;
-}
-
 interface Props {
   compact?: boolean;
   showArchived?: boolean;
   categoryFilter?: CategoryFilter;
 }
 
-/** Even radial layout — lesson nodes only (no symbol satellites). */
-function layoutLessonNodes(lessons: GraphNode[]): (GraphNode & { angle: number })[] {
+function layoutLessonNodes(lessons: MemoryGraphNode[]): (MemoryGraphNode & { angle: number })[] {
   const n = lessons.length;
   if (n === 0) return [];
   const radius = Math.min(40, 30 + n * 1.8);
@@ -63,7 +50,7 @@ function labelAnchor(angle: number): "start" | "middle" | "end" {
   return "middle";
 }
 
-function labelPosition(node: GraphNode & { angle: number }) {
+function labelPosition(node: MemoryGraphNode & { angle: number }) {
   const pad = 7.5;
   return {
     x: CX + (pad + 33) * Math.cos(node.angle),
@@ -78,9 +65,9 @@ export function HiveMemoryGraphPanel({
   categoryFilter = "all",
 }: Props) {
   const uid = useId().replace(/:/g, "");
-  const [rawNodes, setRawNodes] = useState<GraphNode[]>([]);
+  const [rawNodes, setRawNodes] = useState<MemoryGraphNode[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [meta, setMeta] = useState<PanelLoadMeta>({ source: "empty", lastUpdated: new Date().toISOString() });
   const [selected, setSelected] = useState<LessonDetail | null>(null);
   const [filter, setFilter] = useState<CategoryFilter>(categoryFilter);
   const [archived, setArchived] = useState(showArchived);
@@ -88,24 +75,36 @@ export function HiveMemoryGraphPanel({
 
   const load = useCallback(async () => {
     setLoading(true);
-    try {
-      const params = new URLSearchParams();
-      if (filter !== "all") params.set("category", filter);
-      if (archived) {
-        params.set("include_archived", "true");
-        params.set("graph_default", "false");
-      } else {
-        params.set("graph_default", filter === "all" ? "true" : "false");
-      }
-      const res = await fetch(`${API_BASE}/api/memory/graph?${params}`);
-      const data = await res.json();
-      setRawNodes(data.nodes || []);
-      setError(null);
-    } catch {
-      setError("Could not load memory graph");
-    } finally {
-      setLoading(false);
+    const params = new URLSearchParams();
+    if (filter !== "all") params.set("category", filter);
+    if (archived) {
+      params.set("include_archived", "true");
+      params.set("graph_default", "false");
+    } else {
+      params.set("graph_default", filter === "all" ? "true" : "false");
     }
+    const path = `/api/memory/graph?${params}`;
+    const result = await apiGet<unknown>(path);
+    if (result.ok && result.data) {
+      const graph = normalizeMemoryGraph(result.data);
+      setRawNodes(graph.nodes);
+      setMeta({
+        source: "live_api",
+        lastUpdated: new Date().toISOString(),
+        endpoint: path,
+        httpStatus: result.status,
+      });
+    } else {
+      setRawNodes([]);
+      setMeta({
+        source: "empty",
+        lastUpdated: new Date().toISOString(),
+        endpoint: path,
+        httpStatus: result.status,
+        error: result.error || `HTTP ${result.status}`,
+      });
+    }
+    setLoading(false);
   }, [filter, archived]);
 
   useEffect(() => {
@@ -113,21 +112,24 @@ export function HiveMemoryGraphPanel({
   }, [load]);
 
   const lessonNodes = useMemo(
-    () => rawNodes.filter((n) => n.type === "lesson"),
+    () => rawNodes.filter((n) => n.type === "lesson" || n.id.startsWith("lesson-")),
     [rawNodes]
   );
-
   const positioned = useMemo(() => layoutLessonNodes(lessonNodes), [lessonNodes]);
 
-  async function onNodeClick(node: GraphNode) {
-    try {
-      const res = await fetch(`${API_BASE}/api/memory/node/${encodeURIComponent(node.id)}`);
-      const data = await res.json();
-      if (data.status === "ok" && data.node) {
-        setSelected(data.node);
+  async function onNodeClick(node: MemoryGraphNode) {
+    if (!isLessonGraphNode(node.id, node.type)) return;
+    const apiId = lessonNodeIdForApi(node.id);
+    const result = await apiGet<{ status?: string; node?: LessonDetail }>(`/api/memory/node/${encodeURIComponent(apiId)}`);
+    if (result.ok && result.data) {
+      const payload = result.data as { node?: LessonDetail };
+      if (payload.node) {
+        setSelected(payload.node);
+        return;
       }
-    } catch {
-      setError("Failed to load lesson detail");
+      if ((result.data as LessonDetail).title) {
+        setSelected(result.data as LessonDetail);
+      }
     }
   }
 
@@ -139,7 +141,8 @@ export function HiveMemoryGraphPanel({
     { id: "operator_note", label: "Operator" },
   ];
 
-  const hiveCount = lessonNodes.length;
+  const showError = !loading && meta.error;
+  const showEmpty = !loading && !meta.error && positioned.length === 0;
 
   return (
     <>
@@ -147,13 +150,9 @@ export function HiveMemoryGraphPanel({
         title={compact ? "Memory graph" : "Hive Memory Graph"}
         icon={<Network className="h-4 w-4" />}
         action={
-          <button
-            type="button"
-            onClick={load}
-            className="text-[10px] font-medium text-hive-cyan hover:text-hive-cyan/80 transition"
-          >
-            Refresh
-          </button>
+          <span className="text-[9px] text-slate-600">
+            {meta.source === "live_api" ? "live" : meta.source}
+          </span>
         }
         className="h-full"
       >
@@ -166,28 +165,30 @@ export function HiveMemoryGraphPanel({
               className={`text-[9px] px-2 py-0.5 rounded-full border transition ${
                 filter === f.id
                   ? "border-hive-cyan text-hive-cyan bg-hive-cyan/10"
-                  : "border-white/10 text-slate-500 hover:border-white/20"
+                  : "border-white/10 text-slate-500"
               }`}
             >
               {f.label}
             </button>
           ))}
-          <label className="flex items-center gap-1 text-[9px] text-slate-500 ml-auto cursor-pointer">
-            <input
-              type="checkbox"
-              checked={archived}
-              onChange={(e) => setArchived(e.target.checked)}
-              className="accent-hive-cyan"
-            />
+          <button type="button" onClick={load} className="text-[9px] text-hive-cyan ml-auto">
+            Refresh
+          </button>
+          <label className="flex items-center gap-1 text-[9px] text-slate-500 cursor-pointer">
+            <input type="checkbox" checked={archived} onChange={(e) => setArchived(e.target.checked)} />
             Archived
           </label>
         </div>
 
         {loading ? (
           <EmptyState message="Loading memory graph…" className="min-h-[200px]" />
-        ) : error ? (
-          <EmptyState message={error} className="min-h-[200px]" />
-        ) : positioned.length === 0 ? (
+        ) : showError ? (
+          <PanelError
+            title="Could not load memory graph"
+            meta={meta}
+            expectedShape='{ status?: "ok", nodes: [...], edges: [...] }'
+          />
+        ) : showEmpty ? (
           <EmptyState message="No memories in this filter" className="min-h-[200px]" />
         ) : (
           <>
@@ -196,36 +197,16 @@ export function HiveMemoryGraphPanel({
                 compact ? "min-h-[240px]" : "min-h-[280px]"
               }`}
             >
-              <svg
-                viewBox="0 0 100 100"
-                className="w-full h-full"
-                aria-label="Hive memory network — memories feeding the hive"
-                preserveAspectRatio="xMidYMid meet"
-              >
+              <svg viewBox="0 0 100 100" className="w-full h-full" aria-label="Hive memory graph">
                 <defs>
-                  <filter id={`hiveGlow-${uid}`} x="-50%" y="-50%" width="200%" height="200%">
+                  <filter id={`hiveGlow-${uid}`}>
                     <feGaussianBlur stdDeviation="1.2" result="blur" />
                     <feMerge>
                       <feMergeNode in="blur" />
                       <feMergeNode in="SourceGraphic" />
                     </feMerge>
                   </filter>
-                  <radialGradient id={`hiveCore-${uid}`} cx="50%" cy="50%" r="50%">
-                    <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.45" />
-                    <stop offset="100%" stopColor="#0e7490" stopOpacity="0.05" />
-                  </radialGradient>
-                  <linearGradient id={`feedGrad-${uid}`} x1="0%" y1="0%" x2="100%" y2="0%">
-                    <stop offset="0%" stopColor="#22d3ee" stopOpacity="0" />
-                    <stop offset="50%" stopColor="#22d3ee" stopOpacity="0.9" />
-                    <stop offset="100%" stopColor="#a855f7" stopOpacity="0" />
-                  </linearGradient>
                 </defs>
-
-                {/* Ambient grid */}
-                <circle cx={CX} cy={CY} r="42" fill="none" stroke="#1e293b" strokeWidth="0.15" strokeDasharray="1 2" />
-                <circle cx={CX} cy={CY} r="28" fill="none" stroke="#1e293b" strokeWidth="0.1" strokeDasharray="0.8 1.5" />
-
-                {/* Memory feed channels + pulses */}
                 {positioned.map((node, i) => {
                   const color = node.color || "#3b82f6";
                   const active = hoverId === node.id;
@@ -233,15 +214,7 @@ export function HiveMemoryGraphPanel({
                   const delay = `${i * 0.45}s`;
                   return (
                     <g key={`feed-${node.id}`}>
-                      <line
-                        x1={node.x}
-                        y1={node.y}
-                        x2={CX}
-                        y2={CY}
-                        stroke={color}
-                        strokeWidth={active ? 0.35 : 0.2}
-                        strokeOpacity={active ? 0.35 : 0.12}
-                      />
+                      <line x1={node.x} y1={node.y} x2={CX} y2={CY} stroke={color} strokeWidth="0.2" strokeOpacity="0.15" />
                       <line
                         x1={node.x}
                         y1={node.y}
@@ -249,66 +222,36 @@ export function HiveMemoryGraphPanel({
                         y2={CY}
                         stroke={color}
                         strokeWidth="0.4"
-                        strokeOpacity="0.55"
                         strokeDasharray="1.5 3"
                         className="hive-feed-dash"
                         style={{ animationDuration: dur, animationDelay: delay }}
                       />
-                      <circle r="0.65" fill={color} opacity="0.95" filter={`url(#hiveGlow-${uid})`}>
-                        <animateMotion
-                          dur={dur}
-                          begin={delay}
-                          repeatCount="indefinite"
-                          path={`M ${node.x} ${node.y} L ${CX} ${CY}`}
-                        />
-                        <animate attributeName="opacity" values="0.3;1;0.3" dur={dur} repeatCount="indefinite" />
+                      <circle r="0.65" fill={color}>
+                        <animateMotion dur={dur} begin={delay} repeatCount="indefinite" path={`M ${node.x} ${node.y} L ${CX} ${CY}`} />
                       </circle>
                     </g>
                   );
                 })}
-
-                {/* Central hive */}
                 <g filter={`url(#hiveGlow-${uid})`}>
-                  <circle cx={CX} cy={CY} r="9" fill={`url(#hiveCore-${uid})`} className="hive-core-breathe" />
-                  <circle cx={CX} cy={CY} r="7.5" fill="none" stroke="#22d3ee" strokeWidth="0.25" strokeOpacity="0.5">
-                    <animate attributeName="r" values="7.5;11;7.5" dur="3s" repeatCount="indefinite" />
-                    <animate
-                      attributeName="stroke-opacity"
-                      values="0.5;0;0.5"
-                      dur="3s"
-                      repeatCount="indefinite"
-                    />
-                  </circle>
+                  <circle cx={CX} cy={CY} r="9" fill="#0e7490" fillOpacity="0.35" className="hive-core-breathe" />
                   <polygon
                     points={`${CX},${CY - 5.5} ${CX + 4.8},${CY - 2.75} ${CX + 4.8},${CY + 2.75} ${CX},${CY + 5.5} ${CX - 4.8},${CY + 2.75} ${CX - 4.8},${CY - 2.75}`}
                     fill="#0c4a6e"
-                    fillOpacity="0.6"
                     stroke="#22d3ee"
                     strokeWidth="0.35"
                   />
-                  <text
-                    x={CX}
-                    y={CY + 1.2}
-                    textAnchor="middle"
-                    fill="#e0f2fe"
-                    fontSize="2.8"
-                    fontWeight="700"
-                    style={{ letterSpacing: "0.08em" }}
-                  >
+                  <text x={CX} y={CY + 1.2} textAnchor="middle" fill="#e0f2fe" fontSize="2.8" fontWeight="700">
                     HIVE
                   </text>
-                  <text x={CX} y={CY + 5.5} textAnchor="middle" fill="#67e8f9" fontSize="1.6" opacity="0.85">
-                    {hiveCount}
+                  <text x={CX} y={CY + 5.5} textAnchor="middle" fill="#67e8f9" fontSize="1.6">
+                    {positioned.length}
                   </text>
                 </g>
-
-                {/* Lesson nodes */}
                 {positioned.map((node) => {
                   const color = node.color || "#3b82f6";
                   const active = hoverId === node.id;
                   const lbl = labelPosition(node);
-                  const short =
-                    node.label.length > 22 ? `${node.label.slice(0, 20)}…` : node.label;
+                  const short = node.label.length > 22 ? `${node.label.slice(0, 20)}…` : node.label;
                   return (
                     <g
                       key={node.id}
@@ -318,7 +261,6 @@ export function HiveMemoryGraphPanel({
                       onMouseLeave={() => setHoverId(null)}
                       role="button"
                       tabIndex={0}
-                      onKeyDown={(ev) => ev.key === "Enter" && onNodeClick(node)}
                     >
                       <circle
                         cx={node.x}
@@ -327,22 +269,9 @@ export function HiveMemoryGraphPanel({
                         fill={color}
                         fillOpacity={active ? 0.45 : 0.28}
                         stroke={color}
-                        strokeWidth={active ? 0.6 : 0.4}
-                        filter={`url(#hiveGlow-${uid})`}
+                        strokeWidth="0.4"
                       />
-                      {(node.count ?? 1) > 1 && (
-                        <text x={node.x} y={node.y + 1.2} textAnchor="middle" fill="#fef3c7" fontSize="2" fontWeight="bold">
-                          {node.count}
-                        </text>
-                      )}
-                      <text
-                        x={lbl.x}
-                        y={lbl.y}
-                        textAnchor={lbl.anchor}
-                        fill={active ? "#e2e8f0" : "#94a3b8"}
-                        fontSize="2.15"
-                        fontWeight={active ? "600" : "400"}
-                      >
+                      <text x={lbl.x} y={lbl.y} textAnchor={lbl.anchor} fill="#94a3b8" fontSize="2.15">
                         <title>{node.label}</title>
                         {short}
                       </text>
@@ -351,23 +280,8 @@ export function HiveMemoryGraphPanel({
                 })}
               </svg>
             </figure>
-
-            <footer className="flex flex-wrap items-center justify-center gap-4 mt-2 text-[9px] text-slate-500">
-              <span className="flex items-center gap-1.5">
-                <span className="inline-block w-6 h-px bg-gradient-to-r from-cyan-500/80 to-transparent" />
-                Memory feed
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="inline-block w-2 h-2 rounded-full bg-cyan-400/80 animate-pulse" />
-                Pulse → HIVE
-              </span>
-              <span>
-                <span className="text-cyan-400">●</span> Trading
-                <span className="mx-1.5 text-orange-400">●</span> System
-              </span>
-            </footer>
-            <p className="text-[10px] text-slate-600 mt-1 text-center">
-              {positioned.length} memories feeding the hive — click a node for evidence
+            <p className="text-[10px] text-slate-500 mt-2 text-center">
+              {positioned.length} memories · {meta.source} · click node for evidence
             </p>
           </>
         )}

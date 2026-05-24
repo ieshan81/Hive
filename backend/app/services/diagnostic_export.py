@@ -520,6 +520,17 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         "ai_decision_context_latest.json": decisions_latest if cid else {"status": "no_cycle"},
     }
 
+    from app.services.frontend_api_contract import (
+        FRONTEND_API_CONTRACT,
+        UI_PANEL_DATA_SOURCES,
+        build_frontend_endpoint_status,
+    )
+
+    try:
+        frontend_endpoint_status = build_frontend_endpoint_status(session)
+    except Exception as exc:
+        frontend_endpoint_status = [{"error": f"probe_failed: {exc}"}]
+
     return {
         "activity.json": activity_data,
         "trades.json": [_serialize_row(r) for r in session.exec(select(TradeRecord)).all()],
@@ -579,6 +590,9 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             "latest_cycle_error_count": len(latest_cycle_errors),
             "historical_error_count": len(historical_alpaca_errors),
         },
+        "frontend_api_contract.json": FRONTEND_API_CONTRACT,
+        "frontend_endpoint_status.json": frontend_endpoint_status,
+        "ui_panel_data_sources.json": UI_PANEL_DATA_SOURCES,
         "ai_bundle": ai_bundle,
     }
 

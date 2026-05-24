@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:api": "npx tsx scripts/verify_frontend_api_client.ts && npx tsx scripts/verify_response_normalizers.ts && npx tsx scripts/verify_memory_graph_fetch.ts && npx tsx scripts/verify_positions_tab_render.ts && npx tsx scripts/verify_decision_drilldowns_render.ts"
   },
   "engines": {
     "node": ">=20.19.0"

@@ -1,6 +1,5 @@
 import type { DashboardData } from "@/types/dashboard";
-
-const API_URL = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { apiGet, buildApiUrl } from "@/lib/apiClient";
 
 function emptyDashboard(message: string): DashboardData {
   return {
@@ -75,19 +74,15 @@ function emptyDashboard(message: string): DashboardData {
 }
 
 export async function getDashboardData(): Promise<DashboardData> {
-  try {
-    const res = await fetch(`${API_URL}/api/dashboard`, {
-      next: { revalidate: 15 },
-    });
-    if (!res.ok) {
-      return emptyDashboard(`API unavailable (${res.status})`);
-    }
-    return res.json();
-  } catch {
-    return emptyDashboard("API unavailable — start backend with: cd backend && uvicorn app.main:app --reload");
+  const result = await apiGet<DashboardData>("/api/dashboard", { forServer: true });
+  if (!result.ok || !result.data) {
+    return emptyDashboard(
+      result.error || `API unavailable (${result.status}) — ${result.url}`
+    );
   }
+  return result.data;
 }
 
 export function getDiagnosticBundleUrl(): string {
-  return `${API_URL}/api/diagnostic-bundle/download`;
+  return buildApiUrl("/api/diagnostic-bundle/download", true);
 }

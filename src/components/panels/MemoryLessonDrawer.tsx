@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { apiPost } from "@/lib/apiClient";
 
 export interface LessonDetail {
   node_id: string;
@@ -57,11 +57,7 @@ export function MemoryLessonDrawer({ detail, onClose, onUpdated }: Props) {
     if (!lessonId) return;
     setBusy(true);
     try {
-      await fetch(`${API_BASE}/api/memory/lesson/${lessonId}/${path}`, {
-        method: "POST",
-        headers: body ? { "Content-Type": "application/json" } : undefined,
-        body: body ? JSON.stringify(body) : undefined,
-      });
+      await apiPost(`/api/memory/lesson/${lessonId}/${path}`, body);
       onUpdated?.();
       onClose();
     } finally {
