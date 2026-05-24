@@ -1,7 +1,11 @@
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import type { DashboardData } from "@/types/dashboard";
 
-export function LatestCyclePanel({ data }: { data: DashboardData["latestCycle"] }) {
+export function LatestCyclePanel({
+  data,
+}: {
+  data: NonNullable<DashboardData["latestCycle"]>;
+}) {
   if (!data.cycleRunId) {
     return (
       <GlassPanel title="Latest Cycle" className="h-full">

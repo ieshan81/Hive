@@ -1,7 +1,7 @@
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import type { DashboardData } from "@/types/dashboard";
 
-export function OrdersPanel({ data }: { data: DashboardData["orders"] }) {
+export function OrdersPanel({ data }: { data: NonNullable<DashboardData["orders"]> }) {
   return (
     <GlassPanel title="Paper Orders (latest cycle)" className="h-full">
       {data.count === 0 ? (

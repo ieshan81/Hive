@@ -102,4 +102,29 @@
   .scrollbar-thin:hover::-webkit-scrollbar-thumb {
     background: rgba(0, 209, 255, 0.35);
   }
+
+  .hive-feed-dash {
+    animation: hive-feed-flow 2s linear infinite;
+  }
+
+  @keyframes hive-feed-flow {
+    to {
+      stroke-dashoffset: -12;
+    }
+  }
+
+  .hive-core-breathe {
+    animation: hive-core-breathe 4s ease-in-out infinite;
+  }
+
+  @keyframes hive-core-breathe {
+    0%,
+    100% {
+      opacity: 0.85;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+
 }

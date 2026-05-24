@@ -54,7 +54,7 @@ def latest_summary(session: Session, cycle_run_id: str = "latest") -> dict[str, 
     observations = [
         _row_signal(s)
         for s in sigs.values()
-        if s.status in ("observation", "downtrend", "watch_only")
+        if (s.status or "") in ("observation", "downtrend", "watch_only")
     ]
     return {
         "status": "ok",

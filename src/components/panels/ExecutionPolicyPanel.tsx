@@ -1,7 +1,9 @@
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import type { DashboardData } from "@/types/dashboard";
 
-export function ExecutionPolicyPanel({ data }: { data: DashboardData["executionPolicy"] }) {
+type ExecutionPolicyData = NonNullable<DashboardData["executionPolicy"]>;
+
+export function ExecutionPolicyPanel({ data }: { data: ExecutionPolicyData }) {
   const enabled = data.paperOrdersEnabled;
   return (
     <GlassPanel title="Execution Policy" className="h-full">

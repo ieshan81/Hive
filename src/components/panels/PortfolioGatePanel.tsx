@@ -1,7 +1,11 @@
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import type { DashboardData } from "@/types/dashboard";
 
-export function PortfolioGatePanel({ data }: { data: DashboardData["portfolioGate"] }) {
+export function PortfolioGatePanel({
+  data,
+}: {
+  data: NonNullable<DashboardData["portfolioGate"]>;
+}) {
   return (
     <GlassPanel title="Portfolio Gate" className="h-full">
       <div className="text-sm space-y-2">
