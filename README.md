@@ -84,11 +84,15 @@ If backend build fails with `pip: command not found`, confirm root directory is 
 - Start Command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 - Do **not** set `NIXPACKS_INSTALL_CMD` or `NIXPACKS_NO_UPGRADE_PIP` — remove if present; the repo nixpacks.toml no longer runs pip upgrade.
 
-### Frontend on Railway (optional second service)
+### Frontend on Railway (second service)
 
-- Build: `npm run build`
-- Start: `npm start`
-- Set `NEXT_PUBLIC_API_URL` to your API service URL
+- **Root Directory:** `/` (repo root — there is no `frontend/` folder)
+- **Builder:** Nixpacks
+- **Custom Build Command:** leave empty (repo `nixpacks.toml` uses `npm install`)
+- **Start Command:** `npm start` — **NOT** `cd frontend && ...`
+- **Variable:** `NEXT_PUBLIC_API_URL` = your backend Railway URL
+
+If build fails on `npm ci` / lock file sync, latest `nixpacks.toml` uses `npm install --include=optional` instead.
 
 ## Core modules
 

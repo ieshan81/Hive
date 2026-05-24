@@ -1,9 +1,10 @@
-# Frontend service — Node.js only (set Railway root directory to repo root)
+# Frontend — Railway root directory must be / (repo root, NOT backend)
+# Use npm install (not npm ci): lock file optional deps differ on Linux vs Windows
 [phases.setup]
-nixPkgs = ["nodejs_20"]
+nixPkgs = ["nodejs_22"]
 
 [phases.install]
-cmds = ["npm ci"]
+cmds = ["npm install --include=optional"]
 
 [phases.build]
 cmds = ["npm run build"]
