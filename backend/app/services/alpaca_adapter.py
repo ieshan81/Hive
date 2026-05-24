@@ -11,6 +11,7 @@ from sqlmodel import Session, select
 from app.config import settings
 from app.database import AccountSnapshot, BrokerError, PositionSnapshot
 
+from app.services.cycle_context import current_cycle_run_id
 from app.services.quote_utils import normalize_prices, spread_from_bid_ask
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,16 @@ class AlpacaAdapter:
         return settings.alpaca_configured
 
     def _log_error(self, operation: str, message: str, details: Optional[dict] = None) -> None:
-        row = BrokerError(operation=operation, message=message, details=details)
+        cycle_id = current_cycle_run_id.get()
+        payload = dict(details or {})
+        if cycle_id:
+            payload.setdefault("cycle_run_id", cycle_id)
+        row = BrokerError(
+            operation=operation,
+            message=message,
+            details=payload or None,
+            cycle_run_id=cycle_id,
+        )
         self.session.add(row)
         self.session.commit()
         logger.error("Alpaca %s: %s", operation, message)

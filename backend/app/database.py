@@ -267,6 +267,7 @@ class BrokerError(SQLModel, table=True):
     operation: str
     message: str
     details: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    cycle_run_id: Optional[str] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -331,6 +332,12 @@ def _migrate_columns() -> None:
         with engine.begin() as conn:
             if "review_status" not in ai_cols:
                 conn.execute(text("ALTER TABLE ai_reviews ADD COLUMN review_status VARCHAR DEFAULT 'success'"))
+
+    if insp.has_table("broker_errors"):
+        be_cols = {c["name"] for c in insp.get_columns("broker_errors")}
+        with engine.begin() as conn:
+            if "cycle_run_id" not in be_cols:
+                conn.execute(text("ALTER TABLE broker_errors ADD COLUMN cycle_run_id VARCHAR"))
 
 
 def init_db() -> None:

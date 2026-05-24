@@ -33,15 +33,134 @@ from app.services.cycle_persistence import (
 )
 
 
-def _serialize(rows: list) -> list[dict]:
-    result = []
-    for row in rows:
-        data = row.model_dump() if hasattr(row, "model_dump") else dict(row)
-        for k, v in data.items():
-            if isinstance(v, datetime):
-                data[k] = v.isoformat() + "Z"
-        result.append(data)
-    return result
+def _iso(dt: Optional[datetime]) -> Optional[str]:
+    if dt is None:
+        return None
+    return dt.isoformat() + "Z"
+
+
+def _serialize_row(row) -> dict[str, Any]:
+    """Generic ORM serializer — materialize immediately to survive session expiry."""
+    if hasattr(row, "model_dump"):
+        data = row.model_dump(mode="python")
+    else:
+        data = dict(row)
+    for key, value in list(data.items()):
+        if isinstance(value, datetime):
+            data[key] = _iso(value)
+    return data
+
+
+def _is_useful_row(data: dict[str, Any]) -> bool:
+    if not data:
+        return False
+    return any(v is not None for k, v in data.items() if k != "id") or data.get("id") is not None
+
+
+def serialize_activity(row: ActivityLog) -> dict[str, Any]:
+    details = row.details if isinstance(row.details, dict) else {}
+    evidence = details.get("evidence_json")
+    if evidence is None and details and row.event_type not in ("cycle_end", "cycle_start"):
+        evidence = details
+    return {
+        "id": row.id,
+        "created_at": _iso(row.created_at),
+        "cycle_run_id": details.get("cycle_run_id"),
+        "event_type": row.event_type,
+        "source": details.get("source", "system"),
+        "message": row.message,
+        "symbol": details.get("symbol"),
+        "strategy": details.get("strategy"),
+        "status": details.get("status"),
+        "evidence_json": evidence,
+    }
+
+
+def serialize_strategy_signal(row: StrategySignal) -> dict[str, Any]:
+    meta = row.signal_metadata if isinstance(row.signal_metadata, dict) else {}
+    return {
+        "id": row.id,
+        "cycle_run_id": row.cycle_run_id,
+        "symbol": row.symbol,
+        "asset_class": row.asset_class,
+        "strategy_name": row.strategy,
+        "side": row.side,
+        "signal_strength": row.strength,
+        "confidence": row.confidence,
+        "status": row.status,
+        "entry_reason": meta.get("entry_reason") or meta.get("reason"),
+        "invalidation_reason": meta.get("invalidation_reason"),
+        "stop_loss": row.stop_loss,
+        "take_profit": row.take_profit,
+        "expected_hold_time": meta.get("expected_hold_time"),
+        "created_at": _iso(row.created_at),
+    }
+
+
+def serialize_risk_event(row: RiskEvent) -> dict[str, Any]:
+    details = row.details if isinstance(row.details, dict) else {}
+    evidence = details.get("evidence") if isinstance(details.get("evidence"), dict) else {}
+    return {
+        "id": row.id,
+        "cycle_run_id": evidence.get("cycle_run_id") or details.get("cycle_run_id"),
+        "symbol": evidence.get("symbol"),
+        "strategy": evidence.get("strategy"),
+        "event_type": row.event_type,
+        "risk_rule": details.get("risk_rule"),
+        "block_reason_code": details.get("block_reason_code"),
+        "human_reason": details.get("human_reason"),
+        "evidence_json": evidence or None,
+        "created_at": _iso(row.created_at),
+    }
+
+
+def serialize_blocked_trade(row: BlockedTrade) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "cycle_run_id": row.cycle_run_id,
+        "symbol": row.symbol,
+        "strategy": row.strategy,
+        "side": row.side,
+        "reason": row.reason,
+        "block_reason_code": row.block_reason_code,
+        "human_reason": row.human_reason,
+        "risk_rule": row.risk_rule,
+        "evidence_json": row.evidence_json,
+        "risk_engine_result": row.risk_engine_result,
+        "risk_checks_failed": row.risk_checks_failed,
+        "proposed_qty": row.proposed_qty,
+        "signal_id": row.signal_id,
+        "created_at": _iso(row.created_at),
+    }
+
+
+def serialize_broker_error(
+    row: BrokerError,
+    *,
+    latest_cycle_id: Optional[str],
+    cycle_started: Optional[str],
+) -> dict[str, Any]:
+    details = row.details if isinstance(row.details, dict) else {}
+    cycle_id = row.cycle_run_id or details.get("cycle_run_id")
+    is_latest = bool(latest_cycle_id and cycle_id == latest_cycle_id)
+    if not is_latest and latest_cycle_id and cycle_started and row.created_at:
+        is_latest = _iso(row.created_at) >= cycle_started
+    return {
+        "id": row.id,
+        "source": row.source,
+        "operation": row.operation,
+        "message": row.message,
+        "details": details or None,
+        "created_at": _iso(row.created_at),
+        "cycle_run_id": cycle_id,
+        "is_latest_cycle": is_latest,
+        "historical": not is_latest,
+    }
+
+
+def _materialize(rows: list, serializer) -> list[dict[str, Any]]:
+    out = [serializer(r) for r in rows]
+    return [r for r in out if _is_useful_row(r)]
 
 
 def _row_created_at(row) -> str:
@@ -68,6 +187,25 @@ def _filter_cycle_rows(
     return rows
 
 
+def _resolve_cycle_status(last_cycle: dict[str, Any], health: Optional[SystemHealth]) -> str:
+    status = last_cycle.get("status")
+    if status:
+        return status
+    if health and health.details:
+        health_cycle = health.details.get("last_cycle") or {}
+        if health_cycle.get("cycle_run_id") == last_cycle.get("cycle_run_id"):
+            status = health_cycle.get("status")
+            if status:
+                return status
+    if last_cycle.get("errors"):
+        return "partial"
+    if last_cycle.get("alpaca_configured") is False:
+        return "ok"
+    if last_cycle.get("account_synced"):
+        return "ok"
+    return "partial"
+
+
 def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
     session.commit()
     session.expire_all()
@@ -87,6 +225,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             .order_by(RiskEvent.created_at.desc())
         ).all()
     )
+    broker_error_rows = list(session.exec(select(BrokerError).order_by(BrokerError.created_at.desc())).all())
 
     db_counts = count_cycle_rows(session)
     cycle_log = latest_cycle_end(session)
@@ -117,6 +256,24 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         )
         db_counts = count_cycle_rows(session, latest_cycle_id)
 
+    # Materialize rows before build_dashboard() — its commit expires ORM instances.
+    activity_data = _materialize(activity_rows, serialize_activity)
+    signal_data = _materialize(signal_rows, serialize_strategy_signal)
+    blocked_data = _materialize(blocked_rows, serialize_blocked_trade)
+    risk_data = _materialize(risk_rows, serialize_risk_event)
+    broker_errors_all = [
+        serialize_broker_error(
+            row,
+            latest_cycle_id=latest_cycle_id,
+            cycle_started=cycle_started,
+        )
+        for row in broker_error_rows
+    ]
+    latest_cycle_errors = [e for e in broker_errors_all if e.get("is_latest_cycle")]
+    historical_alpaca_errors = [e for e in broker_errors_all if e.get("historical")]
+
+    cycle_status = _resolve_cycle_status(last_cycle, health) if last_cycle else "never_run"
+
     summary_lines = [
         "# Caged Hive Quant — System Summary",
         f"Generated: {datetime.utcnow().isoformat()}Z",
@@ -131,10 +288,10 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         "## Backend Data Counts (from DB)",
         f"- activity_logs: {len(activity_rows)}",
         f"- strategy_states: {len(strategy_rows)}",
-        f"- strategy_signals: {len(signal_rows)}",
+        f"- strategy_signals: {len(signal_data)}",
         f"- symbol_candidates: {len(candidate_rows)}",
-        f"- blocked_trades: {len(blocked_rows)}",
-        f"- risk_events (trade_blocked): {len(risk_rows)}",
+        f"- blocked_trades: {len(blocked_data)}",
+        f"- risk_events (trade_blocked): {len(risk_data)}",
         "",
         "## Last Cycle",
     ]
@@ -144,7 +301,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             [
                 f"- Cycle run id: {last_cycle.get('cycle_run_id', 'unknown')}",
                 f"- Timestamp: {last_cycle.get('ended_at') or last_cycle.get('started_at', 'unknown')}",
-                f"- Status: {last_cycle.get('status', 'unknown')}",
+                f"- Status: {cycle_status}",
                 f"- Session mode: {(last_cycle.get('session') or {}).get('mode', 'unknown')}",
                 f"- Radar count: {last_cycle.get('radar_count', 0)}",
                 f"- Signals generated: {last_cycle.get('signals_generated', 0)}",
@@ -191,22 +348,24 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
     dashboard = build_dashboard(session)
 
     return {
-        "activity.json": _serialize(activity_rows),
-        "trades.json": _serialize(list(session.exec(select(TradeRecord)).all())),
-        "orders.json": _serialize(list(session.exec(select(OrderRecord)).all())),
-        "blocked_trades.json": _serialize(blocked_rows),
-        "risk_events.json": _serialize(risk_rows),
-        "ai_reviews.json": _serialize(list(session.exec(select(AIReview)).all())),
-        "ai_memories.json": _serialize(list(session.exec(select(AIMemory)).all())),
-        "config_history.json": _serialize(config_mgr.list_history(100)),
+        "activity.json": activity_data,
+        "trades.json": [_serialize_row(r) for r in session.exec(select(TradeRecord)).all()],
+        "orders.json": [_serialize_row(r) for r in session.exec(select(OrderRecord)).all()],
+        "blocked_trades.json": blocked_data,
+        "risk_events.json": risk_data,
+        "ai_reviews.json": [_serialize_row(r) for r in session.exec(select(AIReview)).all()],
+        "ai_memories.json": [_serialize_row(r) for r in session.exec(select(AIMemory)).all()],
+        "config_history.json": [_serialize_row(r) for r in config_mgr.list_history(100)],
         "current_config.json": config_mgr.get_current(),
-        "backtest_results.json": _serialize(list(session.exec(select(BacktestResult)).all())),
-        "monte_carlo_results.json": _serialize(list(session.exec(select(MonteCarloResult)).all())),
-        "strategy_states.json": _serialize(strategy_rows),
-        "strategy_signals.json": _serialize(signal_rows),
-        "symbol_candidates.json": _serialize(candidate_rows),
-        "alpaca_errors.json": _serialize(list(session.exec(select(BrokerError)).all())),
-        "system_health.json": _serialize([health] if health else []),
+        "backtest_results.json": [_serialize_row(r) for r in session.exec(select(BacktestResult)).all()],
+        "monte_carlo_results.json": [_serialize_row(r) for r in session.exec(select(MonteCarloResult)).all()],
+        "strategy_states.json": [_serialize_row(r) for r in strategy_rows],
+        "strategy_signals.json": signal_data,
+        "symbol_candidates.json": [_serialize_row(r) for r in candidate_rows],
+        "alpaca_errors.json": broker_errors_all,
+        "latest_cycle_errors.json": latest_cycle_errors,
+        "historical_alpaca_errors.json": historical_alpaca_errors,
+        "system_health.json": [_serialize_row(health)] if health else [],
         "system_summary.md": "\n".join(summary_lines),
         "dashboard_snapshot.json": dashboard,
         "bundle_meta.json": {
@@ -214,6 +373,9 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             "exported_at": datetime.utcnow().isoformat() + "Z",
             "db_counts": db_counts,
             "last_cycle_run_id": last_cycle.get("cycle_run_id") if last_cycle else None,
+            "last_cycle_status": cycle_status,
+            "latest_cycle_error_count": len(latest_cycle_errors),
+            "historical_error_count": len(historical_alpaca_errors),
         },
     }
 

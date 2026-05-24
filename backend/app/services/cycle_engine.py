@@ -14,6 +14,7 @@ from app.services.ai_fund_manager import AIFundManager
 from app.services.alpaca_adapter import AlpacaAdapter, normalize_crypto_symbol
 from app.services.capital_buckets import bucket_for_asset_class, compute_buckets, compute_position_size
 from app.services.config_manager import ConfigManager
+from app.services.cycle_context import current_cycle_run_id
 from app.services.cycle_persistence import verify_cycle_persistence
 from app.services.market_radar_service import MarketRadarService
 from app.services.memory_engine import MemoryEngine
@@ -54,6 +55,13 @@ class CycleEngine:
 
     def run(self) -> dict[str, Any]:
         cycle_run_id = str(uuid.uuid4())
+        token = current_cycle_run_id.set(cycle_run_id)
+        try:
+            return self._run_cycle(cycle_run_id)
+        finally:
+            current_cycle_run_id.reset(token)
+
+    def _run_cycle(self, cycle_run_id: str) -> dict[str, Any]:
         self.strategies.cycle_run_id = cycle_run_id
         summary: dict[str, Any] = {
             "cycle_run_id": cycle_run_id,
@@ -247,6 +255,14 @@ class CycleEngine:
             for s in self.strategies.get_all_states()
         ]
         summary["ended_at"] = datetime.utcnow().isoformat() + "Z"
+        summary["status"] = "ok" if account or not self.alpaca.configured else "partial"
+        summary["message"] = (
+            "Cycle completed — Alpaca not configured"
+            if not self.alpaca.configured
+            else "Cycle completed"
+            if account
+            else "Cycle completed without account sync — check Alpaca credentials"
+        )
 
         health = self.session.get(SystemHealth, 1)
         if health is None:
@@ -268,14 +284,6 @@ class CycleEngine:
         self.session.commit()
 
         verify_cycle_persistence(self.session, summary)
-        summary["status"] = "ok" if account or not self.alpaca.configured else "partial"
-        summary["message"] = (
-            "Cycle completed — Alpaca not configured"
-            if not self.alpaca.configured
-            else "Cycle completed"
-            if account
-            else "Cycle completed without account sync — check Alpaca credentials"
-        )
         self.session.commit()
         return summary
 

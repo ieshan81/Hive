@@ -116,14 +116,26 @@ class AIFundManager:
             return row, meta
         except Exception as exc:
             err_type = type(exc).__name__
+            err_msg = str(exc)[:500]
+            quota_exhausted = (
+                err_type == "ResourceExhausted"
+                or "429" in err_msg
+                or "quota" in err_msg.lower()
+                or "rate limit" in err_msg.lower()
+            )
             meta.update(
                 {
                     "ai_review_status": "failed",
                     "ai_review_error_type": err_type,
-                    "ai_review_error_message": str(exc)[:500],
+                    "ai_review_error_message": err_msg,
+                    "retry_count": 0,
+                    "quota_exhausted": quota_exhausted,
                 }
             )
-            logger.error("Gemini review failed (%s): %s", err_type, exc)
+            if quota_exhausted:
+                logger.warning("Gemini quota exhausted — not retrying: %s", err_msg[:200])
+            else:
+                logger.error("Gemini review failed (%s): %s", err_type, exc)
             row = self._record_failure(subject_type, meta, subject_id or cycle_run_id)
             return row, meta
 

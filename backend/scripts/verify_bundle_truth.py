@@ -64,6 +64,10 @@ def main() -> None:
         "signals_generated": 4,
         "blocked": 4,
         "approved": 0,
+        "status": "ok",
+        "started_at": "2099-01-01T00:00:00Z",
+        "account_synced": False,
+        "alpaca_configured": False,
     }
     verify_cycle_persistence(session, summary)
     log_activity(
@@ -81,6 +85,17 @@ def main() -> None:
     assert len(bundle["strategy_signals.json"]) == 4, bundle["strategy_signals.json"]
     assert len(bundle["blocked_trades.json"]) == 4
     assert len(bundle["risk_events.json"]) == 4
+    for row in bundle["strategy_signals.json"]:
+        assert row.get("id") is not None
+        assert row.get("symbol")
+        assert row.get("strategy_name")
+    for row in bundle["risk_events.json"]:
+        assert row.get("id") is not None
+        assert row.get("block_reason_code")
+    for row in bundle["activity.json"]:
+        assert row.get("id") is not None
+        assert row.get("event_type")
+    assert "Status: ok" in bundle["system_summary.md"] or "Status: partial" in bundle["system_summary.md"]
     for row in bundle["blocked_trades.json"]:
         assert row.get("block_reason_code")
         assert row.get("human_reason")
