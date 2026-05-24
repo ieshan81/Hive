@@ -1,4 +1,4 @@
-"""AI Fund Manager — Gemini structured JSON only."""
+"""AI Fund Manager — Gemini with budget guard, compact payloads."""
 
 from __future__ import annotations
 
@@ -13,9 +13,10 @@ from sqlmodel import Session
 
 from app.config import settings
 from app.database import AIReview
+from app.services.ai_budget_guard import AIBudgetGuard
+from app.services.config_manager import ConfigManager
 
 logger = logging.getLogger(__name__)
-GEMINI_MODEL = "gemini-2.0-flash"
 
 
 class AIReviewOutput(BaseModel):
@@ -37,10 +38,17 @@ class AIReviewOutput(BaseModel):
 class AIFundManager:
     def __init__(self, session: Session):
         self.session = session
+        self.config = ConfigManager(session).get_current()
+        self.budget = AIBudgetGuard(session)
 
     @property
     def configured(self) -> bool:
-        return settings.gemini_configured
+        return settings.gemini_configured and bool(self.config.get("ai_enabled", True))
+
+    def _model_for_mode(self, mode: str) -> str:
+        if mode == "deep":
+            return self.config.get("ai_model_deep", "gemini-2.5-pro")
+        return self.config.get("ai_model_quick", "gemini-2.5-flash")
 
     def review(
         self,
@@ -48,39 +56,60 @@ class AIFundManager:
         context: dict,
         subject_id: Optional[str] = None,
         cycle_run_id: Optional[str] = None,
+        mode: str = "quick",
+        force: bool = False,
     ) -> tuple[Optional[AIReview], dict[str, Any]]:
+        model = self._model_for_mode(mode)
+        est_cost = float(self.config.get("ai_estimated_cost_per_review_usd", 0.002))
         meta: dict[str, Any] = {
             "ai_review_status": "skipped",
             "ai_review_error_type": None,
             "ai_review_error_message": None,
-            "model": GEMINI_MODEL,
+            "model": model,
+            "mode": mode,
             "schema_validation_error": None,
             "retry_count": 0,
             "created_at": datetime.utcnow().isoformat() + "Z",
             "cycle_run_id": cycle_run_id,
         }
-        if not self.configured:
-            meta["ai_review_status"] = "skipped"
+
+        if not settings.gemini_configured:
             meta["ai_review_error_message"] = "Gemini not configured"
             return None, meta
+
+        if not self.config.get("ai_enabled", True):
+            meta["ai_review_status"] = "skipped"
+            meta["ai_review_error_message"] = "AI disabled in config"
+            return None, meta
+
+        allow, reason = self.budget.allow_review(force=force, mode=mode)
+        if not allow:
+            meta["ai_review_status"] = "skipped_budget_guard"
+            meta["ai_review_error_message"] = reason
+            return None, meta
+
+        compact = json.dumps(context, default=str)
+        if len(compact) > 12000:
+            compact = compact[:12000] + "…[truncated]"
 
         try:
             import google.generativeai as genai
 
             genai.configure(api_key=settings.gemini_api_key)
-            model = genai.GenerativeModel(GEMINI_MODEL)
+            gemini = genai.GenerativeModel(model)
             prompt = (
-                "You are the AI Fund Manager for Caged Hive Quant. "
-                "You review trading activity but CANNOT execute trades or bypass risk controls. "
-                "Respond ONLY with valid JSON matching this schema:\n"
+                "You are the AI Fund Manager for Caged Hive Quant (paper trading, $5/mo AI budget). "
+                "You CANNOT execute trades or override risk. Be concise. "
+                "Respond ONLY with valid JSON matching:\n"
                 f"{AIReviewOutput.model_json_schema()}\n\n"
-                f"Subject: {subject_type}\nContext:\n{json.dumps(context, default=str)}"
+                f"Subject: {subject_type}\nContext:\n{compact}"
             )
-            response = model.generate_content(
+            response = gemini.generate_content(
                 prompt,
                 generation_config=genai.GenerationConfig(
                     response_mime_type="application/json",
                     temperature=0.2,
+                    max_output_tokens=int(self.config.get("ai_max_tokens_per_review", 2048)),
                 ),
             )
             parsed = AIReviewOutput.model_validate_json(response.text)
@@ -94,13 +123,22 @@ class AIFundManager:
                 payload={
                     **parsed.model_dump(),
                     "ai_review_status": "success",
-                    "model": GEMINI_MODEL,
+                    "model": model,
+                    "mode": mode,
                     "cycle_run_id": cycle_run_id,
                 },
             )
             self.session.add(row)
             self.session.commit()
             self.session.refresh(row)
+            self.budget.record_usage(
+                cycle_run_id=cycle_run_id,
+                model=model,
+                purpose=subject_type,
+                mode=mode,
+                status="ok",
+                estimated_cost_usd=est_cost,
+            )
             meta["ai_review_status"] = "success"
             return row, meta
         except ValidationError as exc:
@@ -111,6 +149,16 @@ class AIFundManager:
                     "ai_review_error_message": str(exc)[:500],
                     "schema_validation_error": str(exc)[:500],
                 }
+            )
+            self.budget.record_usage(
+                cycle_run_id=cycle_run_id,
+                model=model,
+                purpose=subject_type,
+                mode=mode,
+                status="failed",
+                estimated_cost_usd=0,
+                error_type="schema_validation_error",
+                error_message=str(exc)[:200],
             )
             row = self._record_failure(subject_type, meta, subject_id or cycle_run_id)
             return row, meta
@@ -133,9 +181,18 @@ class AIFundManager:
                 }
             )
             if quota_exhausted:
-                logger.warning("Gemini quota exhausted — not retrying: %s", err_msg[:200])
+                logger.warning("Gemini quota/billing limit — not retrying")
             else:
                 logger.error("Gemini review failed (%s): %s", err_type, exc)
+            self.budget.record_usage(
+                cycle_run_id=cycle_run_id,
+                model=model,
+                purpose=subject_type,
+                mode=mode,
+                status="failed",
+                error_type=err_type,
+                error_message=err_msg,
+            )
             row = self._record_failure(subject_type, meta, subject_id or cycle_run_id)
             return row, meta
 
@@ -152,10 +209,7 @@ class AIFundManager:
             review_status="failed",
             confidence=0.0,
             summary=meta.get("ai_review_error_message") or "AI review failed",
-            payload={
-                **meta,
-                "traceback": traceback.format_exc()[-1500:],
-            },
+            payload={**meta, "traceback": traceback.format_exc()[-1500:]},
         )
         self.session.add(row)
         self.session.commit()

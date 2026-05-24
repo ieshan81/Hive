@@ -13,8 +13,8 @@ from app.services import quant_math
 
 
 class StrategyEngine:
-    STRATEGIES = ["momentum_orb", "mean_reversion_pairs", "crypto_night_momentum"]
-    ALL_STRATEGIES = ["momentum_orb", "mean_reversion_pairs", "crypto_night_momentum"]
+    STRATEGIES = ["momentum_orb", "mean_reversion_pairs", "crypto_night_momentum", "crypto_push_pull"]
+    ALL_STRATEGIES = ["momentum_orb", "mean_reversion_pairs", "crypto_night_momentum", "crypto_push_pull"]
 
     def __init__(self, session: Session, config: dict):
         self.session = session
@@ -66,6 +66,7 @@ class StrategyEngine:
         confidence: float,
         stop_loss: Optional[float] = None,
         take_profit: Optional[float] = None,
+        signal_type: str = "entry",
         metadata: Optional[dict] = None,
     ) -> StrategySignal:
         row = StrategySignal(
@@ -77,6 +78,7 @@ class StrategyEngine:
             strength=strength,
             confidence=confidence,
             status="generated",
+            signal_type=signal_type,
             stop_loss=stop_loss,
             take_profit=take_profit,
             signal_metadata=metadata or {},

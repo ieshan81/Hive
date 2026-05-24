@@ -123,6 +123,7 @@ class StrategySignal(SQLModel, table=True):
     stop_loss: Optional[float] = None
     take_profit: Optional[float] = None
     signal_metadata: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    signal_type: str = Field(default="entry", index=True)  # entry, exit, observation
     cycle_run_id: Optional[str] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -186,6 +187,66 @@ class AIMemory(SQLModel, table=True):
     result_after_action: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_confirmed_at: Optional[datetime] = None
+
+
+class AIUsageLog(SQLModel, table=True):
+    __tablename__ = "ai_usage_logs"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    cycle_run_id: Optional[str] = Field(default=None, index=True)
+    model: str = "gemini-2.5-flash"
+    purpose: str
+    mode: str = "quick"
+    prompt_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    estimated_cost_usd: Optional[float] = None
+    status: str = "ok"
+    error_type: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AIConfigProposal(SQLModel, table=True):
+    __tablename__ = "ai_config_proposals"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    cycle_run_id: Optional[str] = Field(default=None, index=True)
+    proposed_by: str = "ai"
+    config_patch: dict = Field(sa_column=Column(JSON))
+    reason: str
+    status: str = "proposed"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AIStrategyNote(SQLModel, table=True):
+    __tablename__ = "ai_strategy_notes"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    strategy: str = Field(index=True)
+    cycle_run_id: Optional[str] = None
+    note: str
+    source: str = "ai"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class SymbolMemory(SQLModel, table=True):
+    __tablename__ = "symbol_memories"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    symbol: str = Field(index=True)
+    memory_key: str
+    lesson: str
+    strength: float = 0.5
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class StrategyMemory(SQLModel, table=True):
+    __tablename__ = "strategy_memories"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    strategy: str = Field(index=True)
+    memory_key: str
+    lesson: str
+    strength: float = 0.5
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class ConfigCurrent(SQLModel, table=True):
@@ -311,6 +372,8 @@ def _migrate_columns() -> None:
                 conn.execute(text("ALTER TABLE strategy_signals ADD COLUMN take_profit FLOAT"))
             if "cycle_run_id" not in sig_cols:
                 conn.execute(text("ALTER TABLE strategy_signals ADD COLUMN cycle_run_id VARCHAR"))
+            if "signal_type" not in sig_cols:
+                conn.execute(text("ALTER TABLE strategy_signals ADD COLUMN signal_type VARCHAR DEFAULT 'entry'"))
 
     if insp.has_table("blocked_trades"):
         bt_cols = {c["name"] for c in insp.get_columns("blocked_trades")}

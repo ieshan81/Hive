@@ -31,6 +31,9 @@ class TradeProposal:
     signal_id: Optional[int] = None
     signal_confidence: Optional[float] = None
     cycle_run_id: Optional[str] = None
+    signal_type: str = "entry"
+    broker_position_qty: float = 0.0
+    volatility: Optional[float] = None
 
 
 @dataclass
@@ -118,11 +121,36 @@ class RiskEngine:
         if self.config.get("live_trading_enabled"):
             fail("live_trading", "Live trading is disabled in MVP")
 
+        # MVP: no naked sells / shorts
+        if proposal.side == "sell":
+            if proposal.broker_position_qty <= 0:
+                fail(
+                    "sell_no_position",
+                    "Sell blocked — no broker position (MVP: no short selling)",
+                )
+                return self._finalize(proposal, reasons, checks)
+            if proposal.quantity > proposal.broker_position_qty + 1e-9:
+                fail(
+                    "broker_qty",
+                    f"Exit quantity {proposal.quantity:.6f} exceeds broker position {proposal.broker_position_qty:.6f}",
+                )
+        elif proposal.side == "buy" and proposal.signal_type == "exit":
+            fail("sell_no_position", "Invalid exit signal side")
+            return self._finalize(proposal, reasons, checks)
+
+        if proposal.entry_price is None or proposal.entry_price <= 0:
+            fail("no_quote", "Missing or invalid entry price")
+            return self._finalize(proposal, reasons, checks)
+
         if self.config.get("stop_loss_required") and proposal.stop_loss is None:
             fail("stop_loss", "Stop-loss required on all positions")
 
         if proposal.take_profit is None and self.config.get("take_profit_required"):
-            fail("exit_logic", "Exit logic (take profit) required")
+            fail("exit_logic", "Take-profit required when configured")
+
+        max_vol = self.config.get("crypto_push_pull", {}).get("max_volatility", 0.10)
+        if proposal.volatility is not None and proposal.volatility > max_vol:
+            fail("volatility", f"Volatility {proposal.volatility:.4f} exceeds max {max_vol:.4f}")
 
         min_conf = self.config.get("confidence_threshold", 0.6)
         if proposal.signal_confidence is not None and proposal.signal_confidence < min_conf:
@@ -153,6 +181,19 @@ class RiskEngine:
         else:
             pass_check("liquidity")
 
+        if proposal.expected_edge is not None and proposal.expected_edge <= 0:
+            fail("edge", f"Expected edge {proposal.expected_edge:.4f} below estimated cost threshold")
+
+        if proposal.entry_price and proposal.quantity > 0:
+            notional = proposal.entry_price * proposal.quantity
+            min_notional = self.config.get("min_order_notional_usd", 1.0)
+            if notional < min_notional:
+                fail("notional", f"Notional ${notional:.2f} below minimum ${min_notional:.2f}")
+
+        if proposal.stop_loss is not None and proposal.entry_price:
+            if abs(proposal.entry_price - proposal.stop_loss) <= 0:
+                fail("stop_distance", "Stop distance is zero or invalid")
+
         account = self.alpaca.sync_account()
         if account is None:
             fail("alpaca_connection", "Alpaca connection unstable or not configured")
@@ -160,7 +201,8 @@ class RiskEngine:
         pass_check("alpaca_connection")
 
         if proposal.entry_price and account.buying_power < proposal.entry_price * proposal.quantity:
-            fail("buying_power", "Insufficient buying power")
+            if proposal.side == "buy":
+                fail("buying_power", "Insufficient buying power after reserve cash")
         else:
             pass_check("buying_power")
 
@@ -237,7 +279,15 @@ class RiskEngine:
         approved = len(reasons) == 0
         if not approved:
             return self._finalize(proposal, reasons, checks)
-        return RiskDecision(approved=True, reasons=[], checks=checks)
+        # MVP paper-only: approved but no order
+        return RiskDecision(
+            approved=True,
+            reasons=["Paper trading only — no order submitted"],
+            checks={**checks, "paper_only": True},
+            block_reason_code="PAPER_ONLY_APPROVED_NO_ORDER",
+            human_reason="Approved in paper mode — execution disabled",
+            risk_rule=CHECK_TO_RULE.get("paper_only", "Paper only"),
+        )
 
     def _finalize(
         self,

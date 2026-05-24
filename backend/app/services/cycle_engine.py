@@ -8,26 +8,30 @@ from typing import Any
 
 from sqlmodel import Session
 
-from app.database import StrategySignal, SystemHealth
+from app.database import PositionSnapshot, StrategySignal, SystemHealth
 from app.services.activity_logger import log_activity
 from app.services.ai_fund_manager import AIFundManager
+from app.services.ai_lab_service import build_compact_cycle_context, deterministic_cycle_summary
 from app.services.alpaca_adapter import AlpacaAdapter, normalize_crypto_symbol
-from app.services.capital_buckets import bucket_for_asset_class, compute_buckets, compute_position_size
+from app.services.capital_buckets import compute_buckets
 from app.services.config_manager import ConfigManager
+from app.services.crypto_push_pull import CryptoPushPullStrategy, broker_position_qty
 from app.services.cycle_context import current_cycle_run_id
 from app.services.cycle_persistence import verify_cycle_persistence
 from app.services.market_radar_service import MarketRadarService
 from app.services.memory_engine import MemoryEngine
+from app.services.position_sizing import compute_safe_position_size
 from app.services.risk_engine import RiskEngine, TradeProposal
 from app.services.session_engine import SessionEngine
+from app.services.signal_utils import is_tradeable_signal
 from app.services.strategy_engine import StrategyEngine
-from app.services import quant_math
+from app.services.ai_budget_guard import AIBudgetGuard
 
 
 def _asset_class_for_signal(sig: StrategySignal) -> str:
     if sig.asset_class:
         return sig.asset_class
-    if sig.strategy == "crypto_night_momentum":
+    if sig.strategy in ("crypto_night_momentum", "crypto_push_pull"):
         return "crypto"
     if sig.strategy == "mean_reversion_pairs":
         return "stock"
@@ -52,6 +56,8 @@ class CycleEngine:
         self.strategies = StrategyEngine(session, self.config)
         self.risk = RiskEngine(session)
         self.ai = AIFundManager(session)
+        self.ai_budget = AIBudgetGuard(session)
+        self.positions: list[PositionSnapshot] = []
 
     def run(self) -> dict[str, Any]:
         cycle_run_id = str(uuid.uuid4())
@@ -70,6 +76,9 @@ class CycleEngine:
             "signals_generated": 0,
             "signals_created": 0,
             "signals_evaluated": 0,
+            "observations": 0,
+            "entries": 0,
+            "exits": 0,
             "blocked": 0,
             "approved": 0,
             "orders_submitted": 0,
@@ -87,31 +96,28 @@ class CycleEngine:
         summary["steps"].append("cycle_start")
 
         account = None
-        positions = []
         if self.alpaca.configured:
             account = self.alpaca.sync_account()
-            positions = self.alpaca.sync_positions()
+            self.positions = self.alpaca.sync_positions()
+        else:
+            self.positions = []
         summary["account_synced"] = account is not None
-        summary["positions_count"] = len(positions)
+        summary["positions_count"] = len([p for p in self.positions if (p.qty or 0) > 0])
+        summary["account_equity"] = account.equity if account else 0
         log_activity(
             self.session,
             "alpaca_sync",
-            f"Synced account equity={account.equity if account else 'N/A'}, positions={len(positions)}",
-            {"configured": self.alpaca.configured, "cycle_run_id": cycle_run_id},
+            f"Synced equity={account.equity if account else 'N/A'}, positions={summary['positions_count']}",
+            {"cycle_run_id": cycle_run_id, "positions_count": summary["positions_count"]},
         )
         summary["steps"].append("alpaca_sync")
 
         session_state = self.session_engine.detect()
         summary["session"] = session_state.to_dict()
-        log_activity(
-            self.session,
-            "session",
-            f"Session mode: {session_state.mode}",
-            {**session_state.to_dict(), "cycle_run_id": cycle_run_id},
-        )
         summary["steps"].append("session")
 
         equity = account.equity if account else 0.0
+        cash = account.cash if account else 0.0
         buckets = compute_buckets(equity, self.config)
         summary["capital_buckets"] = buckets.to_dict()
         summary["steps"].append("capital_buckets")
@@ -120,11 +126,11 @@ class CycleEngine:
         summary["radar_count"] = len(candidates)
         summary["steps"].append("market_radar")
 
-        signals: list[StrategySignal] = []
+        tradeable: list[StrategySignal] = []
         all_created: list[StrategySignal] = []
 
         stock_symbols = [c.symbol for c in candidates if c.asset_class == "stock" and c.eligibility == "eligible"][:8]
-        crypto_symbols = [c.symbol for c in candidates if c.asset_class == "crypto" and c.eligibility == "eligible"][:5]
+        crypto_symbols = [c.symbol for c in candidates if c.asset_class == "crypto" and c.eligibility in ("eligible", "caution")][:8]
 
         if not self.alpaca.configured:
             self._set_all_strategies_inactive("Alpaca not configured")
@@ -136,57 +142,73 @@ class CycleEngine:
                     sig = self.strategies.run_momentum_orb(sym)
                     if sig:
                         all_created.append(sig)
-                        if sig.signal != "hold":
-                            signals.append(sig)
+                        if is_tradeable_signal(sig):
+                            tradeable.append(sig)
                 if len(stock_symbols) >= 2:
                     sig = self.strategies.run_mean_reversion_pairs(stock_symbols[0], stock_symbols[1])
                     if sig:
                         all_created.append(sig)
-                        if sig.signal != "hold":
-                            signals.append(sig)
-                self.strategies.set_state("momentum_orb", "active", "Stock session — signals evaluated")
-                self.strategies.set_state("mean_reversion_pairs", "active", "Pairs research active")
-            else:
-                self.strategies.set_state("momentum_orb", "inactive", "No eligible stock symbols in radar")
-                self.strategies.set_state("mean_reversion_pairs", "inactive", "No eligible stock symbols for pairs")
-            self.strategies.set_state("crypto_night_momentum", "inactive", "Stock session — crypto strategy disabled")
+                        if is_tradeable_signal(sig):
+                            tradeable.append(sig)
+            self.strategies.set_state("crypto_push_pull", "inactive", "Stock session — crypto disabled")
+            self.strategies.set_state("crypto_night_momentum", "inactive", "Legacy strategy inactive")
         elif session_state.mode == "crypto_night":
             self.strategies.set_state("momentum_orb", "inactive", "US stock market closed")
             self.strategies.set_state("mean_reversion_pairs", "inactive", "US stock market closed")
-            if crypto_symbols:
-                crypto_non_hold = 0
-                for sym in crypto_symbols[:5]:
-                    sig = self.strategies.run_crypto_night_momentum(sym)
-                    if sig:
-                        all_created.append(sig)
-                        if sig.signal != "hold":
-                            signals.append(sig)
-                            crypto_non_hold += 1
-                if crypto_non_hold:
-                    self.strategies.set_state(
-                        "crypto_night_momentum",
-                        "active",
-                        f"Generated {crypto_non_hold} crypto momentum signal(s)",
-                    )
-                elif all_created:
-                    self.strategies.set_state("crypto_night_momentum", "inactive", "No eligible crypto signal")
-                else:
-                    self.strategies.set_state("crypto_night_momentum", "inactive", "Data unavailable for crypto symbols")
+            self.strategies.set_state("crypto_night_momentum", "inactive", "Replaced by crypto_push_pull")
+
+            cpp = CryptoPushPullStrategy(self.session, self.config, self.alpaca)
+            cpp.cycle_run_id = cycle_run_id
+            entries = exits = obs = 0
+            cand_map = {c.symbol: c for c in candidates}
+            for sym in crypto_symbols[:8]:
+                c_row = cand_map.get(sym)
+                sig = cpp.evaluate(
+                    sym,
+                    positions=self.positions,
+                    liquidity_score=c_row.liquidity_score if c_row else None,
+                    spread_pct=c_row.spread_pct if c_row else None,
+                    eligibility=c_row.eligibility if c_row else "eligible",
+                )
+                if not sig:
+                    continue
+                all_created.append(sig)
+                st = (sig.signal_type or "entry").lower()
+                if st == "observation":
+                    obs += 1
+                    summary["observations"] = summary.get("observations", 0) + 1
+                elif st == "entry":
+                    entries += 1
+                    tradeable.append(sig)
+                elif st == "exit":
+                    exits += 1
+                    tradeable.append(sig)
+
+            summary["entries"] = entries
+            summary["exits"] = exits
+            if tradeable:
+                self.strategies.set_state(
+                    "crypto_push_pull",
+                    "active",
+                    f"Generated {entries} entry, {exits} exit, {obs} observation(s)",
+                )
+            elif obs:
+                self.strategies.set_state(
+                    "crypto_push_pull",
+                    "active",
+                    f"{obs} observation(s) — no tradeable signals",
+                )
             else:
-                reason = "Crypto data unavailable" if not candidates else "No eligible crypto pairs in radar"
-                self.strategies.set_state("crypto_night_momentum", "inactive", reason)
+                self.strategies.set_state("crypto_push_pull", "inactive", "No crypto push-pull signals")
         else:
             self._set_all_strategies_inactive("Market closed")
 
-        summary["signals_generated"] = len(signals)
+        summary["signals_generated"] = len(tradeable)
         summary["signals_created"] = len(all_created)
         summary["steps"].append("strategy_signals")
         self.session.commit()
 
-        max_risk_pct = self.config.get("max_risk_per_trade", 0.01)
-        max_strategy_pct = self.config.get("capital_allocation_rules", {}).get("max_per_strategy_pct", 0.5)
-
-        for sig in signals:
+        for sig in tradeable:
             summary["signals_evaluated"] += 1
             approved = self._evaluate_signal(
                 sig,
@@ -194,31 +216,25 @@ class CycleEngine:
                 session_state,
                 account,
                 equity,
+                cash,
                 buckets,
                 candidates,
-                max_risk_pct,
-                max_strategy_pct,
             )
             if approved:
                 summary["approved"] += 1
             else:
                 summary["blocked"] += 1
 
-        meaningful_ai = (
-            summary["signals_evaluated"] > 0
-            or summary["blocked"] > 0
-            or summary["approved"] > 0
-            or (summary["signals_created"] > 0 and summary["radar_count"] > 0)
-        )
-        if meaningful_ai and self.ai.configured:
-            from app.services.dashboard_service import build_dashboard
-
-            dashboard = build_dashboard(self.session)
+        meaningful_ai = summary["signals_evaluated"] > 0 or summary["blocked"] > 0 or summary["observations"] > 0
+        allow, reason = self.ai_budget.allow_review()
+        if meaningful_ai and self.ai.configured and allow:
+            ctx = build_compact_cycle_context(self.session, cycle_run_id, summary)
             review, ai_meta = self.ai.review(
                 "cycle",
-                {"cycle_summary": summary, "dashboard": dashboard},
+                ctx,
                 subject_id=cycle_run_id,
                 cycle_run_id=cycle_run_id,
+                mode="quick",
             )
             summary["ai_review_meta"] = ai_meta
             if review and ai_meta.get("ai_review_status") == "success":
@@ -237,18 +253,23 @@ class CycleEngine:
                 summary["errors"].append(
                     f"AI review failed: {ai_meta.get('ai_review_error_type')}: {ai_meta.get('ai_review_error_message')}"
                 )
+                log_activity(self.session, "ai_review_failed", summary["errors"][-1], ai_meta)
+            summary["steps"].append("ai_review")
+        else:
+            fb = deterministic_cycle_summary(self.session, cycle_run_id, summary)
+            summary["fallback_summary"] = fb
+            summary["ai_review_meta"] = {
+                "ai_review_status": "skipped_budget_guard" if not allow else "skipped",
+                "ai_review_error_message": reason if not allow else "Gemini not configured or no meaningful activity",
+                "fallback_summary_source": "system",
+            }
+            if meaningful_ai and not allow:
                 log_activity(
                     self.session,
-                    "ai_review_failed",
-                    summary["errors"][-1],
-                    ai_meta,
+                    "ai_review_skipped",
+                    f"AI review skipped: {reason}",
+                    {"cycle_run_id": cycle_run_id, "budget": self.ai_budget.status()},
                 )
-            summary["steps"].append("ai_review")
-        elif meaningful_ai:
-            summary["ai_review_meta"] = {
-                "ai_review_status": "skipped",
-                "ai_review_error_message": "Gemini not configured",
-            }
 
         summary["strategy_states"] = [
             {"strategy": s.strategy, "status": s.status, "reason": s.status_reason}
@@ -261,12 +282,10 @@ class CycleEngine:
             if not self.alpaca.configured
             else "Cycle completed"
             if account
-            else "Cycle completed without account sync — check Alpaca credentials"
+            else "Cycle completed without account sync"
         )
 
-        health = self.session.get(SystemHealth, 1)
-        if health is None:
-            health = SystemHealth(id=1)
+        health = self.session.get(SystemHealth, 1) or SystemHealth(id=1)
         health.alpaca_connected = account is not None
         health.database_connected = True
         health.gemini_configured = self.ai.configured
@@ -278,11 +297,10 @@ class CycleEngine:
         log_activity(
             self.session,
             "cycle_end",
-            f"Cycle complete: {summary['signals_generated']} signals, {summary['blocked']} blocked, {summary['approved']} approved",
+            f"Cycle: {summary['signals_generated']} tradeable, {summary['observations']} obs, {summary['blocked']} blocked",
             summary,
         )
         self.session.commit()
-
         verify_cycle_persistence(self.session, summary)
         self.session.commit()
         return summary
@@ -294,82 +312,71 @@ class CycleEngine:
         session_state,
         account,
         equity: float,
+        cash: float,
         buckets,
         candidates,
-        max_risk_pct: float,
-        max_strategy_pct: float,
     ) -> bool:
         asset_class = _asset_class_for_signal(sig)
+        signal_type = (sig.signal_type or "entry").lower()
+        is_exit = signal_type == "exit"
+        meta = sig.signal_metadata or {}
+        pos_qty = broker_position_qty(self.positions, sig.symbol)
+
         if not self.session_engine.asset_class_allowed(asset_class, session_state):
-            self.risk.log_block(
-                symbol=sig.symbol,
-                strategy=sig.strategy,
-                side=sig.side,
-                reason="Market closed for asset class",
-                check_name="market_session",
-                signal_id=sig.id,
-                cycle_run_id=cycle_run_id,
-            )
-            self.strategies.update_signal_status(
-                sig.id,
-                "blocked",
-                {
-                    "invalidation_reason": "Market closed",
-                    "block_reason_code": "MARKET_CLOSED",
-                },
-            )
-            log_activity(
-                self.session,
-                "signal_blocked",
-                f"Blocked {sig.symbol}: market closed",
-                {"signal_id": sig.id, "cycle_run_id": cycle_run_id},
-            )
-            self.session.commit()
+            self._block_signal(sig, cycle_run_id, "MARKET_CLOSED", "Market closed for asset class", "market_session")
             return False
 
         quote_sym = _quote_symbol(sig)
         quote = self.alpaca.get_quote(quote_sym, asset_class)
-        if sig.side in ("buy", "buy_spread"):
-            entry = quote["ask"] if quote else None
-        elif sig.side == "sell":
+        if is_exit or sig.side == "sell":
             entry = quote["bid"] if quote else None
+        elif sig.side in ("buy", "buy_spread"):
+            entry = quote["ask"] if quote else None
         else:
             entry = quote.get("mid") if quote else None
 
         if entry is None:
+            self._block_signal(sig, cycle_run_id, "DATA_MISSING", "No quote available", "no_quote")
+            return False
+
+        stop = sig.stop_loss or (entry * 0.985 if sig.side == "buy" else entry * 1.015)
+        size = compute_safe_position_size(
+            account_equity=equity,
+            cash=cash,
+            buying_power=account.buying_power if account else 0,
+            entry_price=entry,
+            stop_loss=stop,
+            asset_class=asset_class,
+            buckets=buckets,
+            config=self.config,
+            broker_position_qty=pos_qty,
+            is_exit=is_exit,
+        )
+        if size.block_code:
             self.risk.log_block(
                 symbol=sig.symbol,
                 strategy=sig.strategy,
                 side=sig.side,
-                reason="No quote available",
-                check_name="no_quote",
+                reason=size.block_reason or size.block_code,
+                check_name=size.block_code.lower().replace("_", "_") if size.block_code else "notional",
                 signal_id=sig.id,
                 cycle_run_id=cycle_run_id,
+                evidence={"sizing": size.__dict__},
             )
-            self.strategies.update_signal_status(sig.id, "blocked", {"invalidation_reason": "No quote"})
-            log_activity(
-                self.session,
-                "signal_blocked",
-                f"Blocked {sig.symbol}: no quote",
-                {"signal_id": sig.id, "cycle_run_id": cycle_run_id},
+            self.strategies.update_signal_status(
+                sig.id,
+                "blocked",
+                {"block_reason_code": size.block_code, "invalidation_reason": size.block_reason},
             )
             self.session.commit()
             return False
 
-        stop = sig.stop_loss or (entry * 0.985 if "buy" in sig.side else entry * 1.015)
-        risk_dollars = equity * max_risk_pct
-        qty_by_risk = quant_math.position_quantity(risk_dollars, entry, stop) if equity > 0 else 0
-        bucket_cap = bucket_for_asset_class(asset_class, buckets)
-        qty_by_bucket = bucket_cap / entry if entry > 0 else 0
-        qty_by_strategy = (equity * max_strategy_pct) / entry if entry > 0 and equity > 0 else 0
-        qty_by_bp = account.buying_power / entry if account and entry > 0 else 0
-        qty = compute_position_size(qty_by_risk, qty_by_bucket, qty_by_strategy, qty_by_bp)
-
+        qty = size.quantity if not is_exit else min(size.quantity, pos_qty)
         candidate_row = next(
             (c for c in candidates if c.symbol == sig.symbol or c.symbol == quote_sym),
             None,
         )
-        spread_pct = candidate_row.spread_pct if candidate_row else (quote.get("spread_pct") if quote else None)
+        spread_pct = candidate_row.spread_pct if candidate_row else quote.get("spread_pct")
 
         proposal = TradeProposal(
             symbol=sig.symbol,
@@ -385,15 +392,23 @@ class CycleEngine:
             signal_id=sig.id,
             signal_confidence=sig.confidence,
             cycle_run_id=cycle_run_id,
+            signal_type=signal_type,
+            broker_position_qty=pos_qty,
+            expected_edge=meta.get("expected_edge") or meta.get("edge_score"),
+            volatility=meta.get("volatility"),
         )
         decision = self.risk.evaluate(proposal, session_state=session_state)
         if decision.approved:
-            self.strategies.update_signal_status(sig.id, "approved_no_order", {"execution": "disabled_in_mvp"})
+            self.strategies.update_signal_status(
+                sig.id,
+                "approved_no_order",
+                {"execution": "disabled_in_mvp", "block_reason_code": decision.block_reason_code},
+            )
             log_activity(
                 self.session,
                 "signal_approved",
-                f"Approved {sig.signal} {sig.symbol} (paper only — no order submitted)",
-                {"strategy": sig.strategy, "qty": qty, "signal_id": sig.id, "cycle_run_id": cycle_run_id},
+                f"Approved {signal_type} {sig.symbol} qty={qty:.6f} (paper only)",
+                {"signal_id": sig.id, "cycle_run_id": cycle_run_id, "qty": qty},
             )
             self.session.commit()
             return True
@@ -402,7 +417,7 @@ class CycleEngine:
             sig.id,
             "blocked",
             {
-                "invalidation_reason": decision.human_reason or "; ".join(decision.reasons),
+                "invalidation_reason": decision.human_reason,
                 "block_reason_code": decision.block_reason_code,
                 "risk_rule": decision.risk_rule,
             },
@@ -410,16 +425,36 @@ class CycleEngine:
         log_activity(
             self.session,
             "signal_blocked",
-            f"Blocked {sig.symbol}: {decision.human_reason or '; '.join(decision.reasons)}",
+            f"Blocked {sig.symbol}: {decision.human_reason}",
             {
                 "signal_id": sig.id,
                 "cycle_run_id": cycle_run_id,
                 "block_reason_code": decision.block_reason_code,
-                "reasons": decision.reasons,
             },
         )
         self.session.commit()
         return False
+
+    def _block_signal(self, sig, cycle_run_id, code, reason, check) -> None:
+        self.risk.log_block(
+            symbol=sig.symbol,
+            strategy=sig.strategy,
+            side=sig.side,
+            reason=reason,
+            check_name=check,
+            signal_id=sig.id,
+            cycle_run_id=cycle_run_id,
+        )
+        self.strategies.update_signal_status(
+            sig.id, "blocked", {"block_reason_code": code, "invalidation_reason": reason}
+        )
+        log_activity(
+            self.session,
+            "signal_blocked",
+            f"Blocked {sig.symbol}: {reason}",
+            {"signal_id": sig.id, "cycle_run_id": cycle_run_id},
+        )
+        self.session.commit()
 
     def _set_all_strategies_inactive(self, reason: str) -> None:
         for name in StrategyEngine.ALL_STRATEGIES:

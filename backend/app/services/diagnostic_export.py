@@ -12,11 +12,14 @@ from app.database import (
     ActivityLog,
     AIReview,
     AIMemory,
+    AIConfigProposal,
+    AIUsageLog,
     BacktestResult,
     BlockedTrade,
     BrokerError,
     MonteCarloResult,
     OrderRecord,
+    PositionSnapshot,
     RiskEvent,
     StrategySignal,
     StrategyState,
@@ -87,6 +90,8 @@ def serialize_strategy_signal(row: StrategySignal) -> dict[str, Any]:
         "side": row.side,
         "signal_strength": row.strength,
         "confidence": row.confidence,
+        "signal_type": row.signal_type,
+        "signal": row.signal,
         "status": row.status,
         "entry_reason": meta.get("entry_reason") or meta.get("reason"),
         "invalidation_reason": meta.get("invalidation_reason"),
@@ -344,8 +349,10 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
     )
 
     from app.services.dashboard_service import build_dashboard
+    from app.services.attention_radar_service import AttentionRadarService
 
     dashboard = build_dashboard(session)
+    attention = AttentionRadarService(session).scan(limit=25)
 
     return {
         "activity.json": activity_data,
@@ -355,6 +362,10 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         "risk_events.json": risk_data,
         "ai_reviews.json": [_serialize_row(r) for r in session.exec(select(AIReview)).all()],
         "ai_memories.json": [_serialize_row(r) for r in session.exec(select(AIMemory)).all()],
+        "ai_config_proposals.json": [_serialize_row(r) for r in session.exec(select(AIConfigProposal)).all()],
+        "ai_usage_logs.json": [_serialize_row(r) for r in session.exec(select(AIUsageLog)).all()],
+        "positions.json": [_serialize_row(r) for r in session.exec(select(PositionSnapshot)).all()],
+        "attention_radar.json": attention,
         "config_history.json": [_serialize_row(r) for r in config_mgr.list_history(100)],
         "current_config.json": config_mgr.get_current(),
         "backtest_results.json": [_serialize_row(r) for r in session.exec(select(BacktestResult)).all()],

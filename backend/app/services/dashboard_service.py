@@ -18,7 +18,9 @@ from app.database import (
     SystemHealth,
     TradeRecord,
 )
+from app.services.ai_budget_guard import AIBudgetGuard
 from app.services.ai_fund_manager import AIFundManager
+from app.services.capital_buckets import compute_buckets
 from app.services.alpaca_adapter import AlpacaAdapter
 from app.services.config_manager import ConfigManager
 from app.services.default_config import RISK_CAGE_RULES
@@ -39,6 +41,7 @@ def build_dashboard(session: Session) -> dict[str, Any]:
     alpaca = AlpacaAdapter(session)
     memory = MemoryEngine(session)
     ai = AIFundManager(session)
+    ai_budget = AIBudgetGuard(session).status()
     StrategyEngine(session, config)
 
     health = session.get(SystemHealth, 1)
@@ -109,6 +112,11 @@ def build_dashboard(session: Session) -> dict[str, Any]:
             "status": "ok",
             "message": None,
             "capital": account.equity,
+            "cash": account.cash,
+            "buyingPower": account.buying_power,
+            "cryptoBucket": compute_buckets(account.equity, config).crypto_night_bucket,
+            "reserveCash": compute_buckets(account.equity, config).reserve_cash_bucket,
+            "paperTradingOnly": True,
             "plToday": account.daily_pl,
             "plTodayPct": account.daily_pl_pct,
             "drawdown": account.drawdown_pct,
@@ -210,6 +218,7 @@ def build_dashboard(session: Session) -> dict[str, Any]:
         "momentum_orb": "Momentum / ORB",
         "mean_reversion_pairs": "Mean Reversion / Pairs",
         "crypto_night_momentum": "Crypto Night Momentum",
+        "crypto_push_pull": "Crypto Push-Pull",
     }
     strategies = []
     for s in states:
@@ -398,5 +407,25 @@ def build_dashboard(session: Session) -> dict[str, Any]:
         "backtest": {
             "status": backtest.status if backtest else "not_run",
             "message": (backtest.warnings[0] if backtest and backtest.warnings else "Backtest not run yet"),
+        },
+        "aiBudget": ai_budget,
+        "cryptoPushPull": next(
+            (
+                {
+                    "id": s["id"],
+                    "name": s["name"],
+                    "status": s["status"],
+                    "message": s.get("message"),
+                    "confidence": s.get("confidence"),
+                }
+                for s in strategies
+                if s["id"] == "crypto_push_pull"
+            ),
+            {"id": "crypto_push_pull", "name": "Crypto Push-Pull", "status": "inactive", "message": "No data"},
+        ),
+        "lab": {
+            "backtestStatus": backtest.status if backtest else "not_run",
+            "memoryCount": len(memory.list_memories(100)),
+            "aiBudgetGuardActive": ai_budget.get("budget_guard_active", False),
         },
     }
