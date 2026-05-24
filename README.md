@@ -67,12 +67,15 @@ Normal config (risk limits, strategy settings, etc.) lives in **database** `conf
 
 1. Push to GitHub: `https://github.com/ieshan81/Hive.git`
 2. Create Railway project → **Deploy from GitHub repo**
-3. Add services:
-   - **API/Web:** root directory, start `cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-   - **Worker:** start `cd backend && python worker.py`
+3. Add services (each needs its own **Root Directory** in Railway Settings → Source):
+   - **Backend API:** root directory `backend`, builder Nixpacks, env `NIXPACKS_PYTHON_VERSION=3.11`
+   - **Frontend:** root directory `/` (repo root), builder Nixpacks
+   - **Worker:** root directory `backend`, start command `python worker.py`
    - **Postgres:** add PostgreSQL plugin, set `DATABASE_URL`
 4. Set env vars in Railway dashboard
 5. Health check: `/health`
+
+If backend build fails with `pip: command not found`, confirm root directory is `backend` and redeploy (or toggle builder Nixpacks ↔ Railpack to bust cache).
 
 ### Frontend on Railway (optional second service)
 
