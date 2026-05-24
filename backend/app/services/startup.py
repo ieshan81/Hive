@@ -14,3 +14,8 @@ def bootstrap_database() -> None:
     with Session(engine) as session:
         ConfigManager(session).get_current()
         StrategyEngine(session, ConfigManager(session).get_current())
+        from app.services.memory_reclassify import reclassify_existing_lessons
+
+        n = reclassify_existing_lessons(session)
+        if n:
+            session.commit()

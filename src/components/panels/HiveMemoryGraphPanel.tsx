@@ -8,13 +8,22 @@ import { MemoryLessonDrawer, type LessonDetail } from "@/components/panels/Memor
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+type CategoryFilter =
+  | "all"
+  | "trading_memory"
+  | "system_issue"
+  | "ai_review_memory"
+  | "operator_note";
+
 interface GraphNode {
   id: string;
   label: string;
   type: string;
+  category?: string;
   severity?: string;
   confidence?: number;
   status?: string;
+  badge?: string;
   count?: number;
   color?: string;
   x: number;
@@ -29,17 +38,37 @@ interface GraphEdge {
   relation: string;
 }
 
-export function HiveMemoryGraphPanel() {
+interface Props {
+  compact?: boolean;
+  showArchived?: boolean;
+  categoryFilter?: CategoryFilter;
+}
+
+export function HiveMemoryGraphPanel({
+  compact = false,
+  showArchived = false,
+  categoryFilter = "all",
+}: Props) {
   const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [edges, setEdges] = useState<GraphEdge[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<LessonDetail | null>(null);
+  const [filter, setFilter] = useState<CategoryFilter>(categoryFilter);
+  const [archived, setArchived] = useState(showArchived);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/memory/graph`);
+      const params = new URLSearchParams();
+      if (filter !== "all") params.set("category", filter);
+      if (archived) {
+        params.set("include_archived", "true");
+        params.set("graph_default", "false");
+      } else {
+        params.set("graph_default", filter === "all" ? "true" : "false");
+      }
+      const res = await fetch(`${API_BASE}/api/memory/graph?${params}`);
       const data = await res.json();
       setNodes(data.nodes || []);
       setEdges(data.edges || []);
@@ -49,7 +78,7 @@ export function HiveMemoryGraphPanel() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [filter, archived]);
 
   useEffect(() => {
     load();
@@ -62,17 +91,6 @@ export function HiveMemoryGraphPanel() {
       const data = await res.json();
       if (data.status === "ok" && data.node) {
         setSelected(data.node);
-      } else if (node.type === "lesson") {
-        setSelected({
-          node_id: node.id,
-          title: node.label,
-          summary: "Open lesson from graph",
-          detailed_lesson: "",
-          severity: node.severity || "MEDIUM",
-          confidence: node.confidence || 0.5,
-          source: "graph",
-          action_status: node.status || "none",
-        });
       }
     } catch {
       setError("Failed to load lesson detail");
@@ -80,13 +98,18 @@ export function HiveMemoryGraphPanel() {
   }
 
   const lessonNodes = nodes.filter((n) => n.id !== "hive");
-  const centerX = 50;
-  const centerY = 50;
+  const filters: { id: CategoryFilter; label: string }[] = [
+    { id: "all", label: "All" },
+    { id: "trading_memory", label: "Trading" },
+    { id: "system_issue", label: "System issues" },
+    { id: "ai_review_memory", label: "AI reviews" },
+    { id: "operator_note", label: "Operator" },
+  ];
 
   return (
     <>
       <GlassPanel
-        title="Hive Memory Graph"
+        title={compact ? "Memory graph" : "Hive Memory Graph"}
         icon={<Network className="h-4 w-4" />}
         action={
           <button
@@ -99,15 +122,35 @@ export function HiveMemoryGraphPanel() {
         }
         className="h-full"
       >
+        <div className="flex flex-wrap gap-1 mb-2">
+          {filters.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              onClick={() => setFilter(f.id)}
+              className={`text-[9px] px-2 py-0.5 rounded border ${
+                filter === f.id
+                  ? "border-hive-cyan text-hive-cyan bg-hive-cyan/10"
+                  : "border-white/10 text-slate-500"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+          <label className="flex items-center gap-1 text-[9px] text-slate-500 ml-auto">
+            <input type="checkbox" checked={archived} onChange={(e) => setArchived(e.target.checked)} />
+            Archived
+          </label>
+        </div>
         {loading ? (
-          <EmptyState message="Loading memory graph…" className="min-h-[200px]" />
+          <EmptyState message="Loading memory graph…" className="min-h-[160px]" />
         ) : error ? (
-          <EmptyState message={error} className="min-h-[200px]" />
+          <EmptyState message={error} className="min-h-[160px]" />
         ) : lessonNodes.length === 0 ? (
-          <EmptyState message="No lessons yet — run a cycle or backfill memories" className="min-h-[200px]" />
+          <EmptyState message="No memories in this filter" className="min-h-[160px]" />
         ) : (
           <>
-            <figure className="relative aspect-[4/3] w-full min-h-[220px]">
+            <figure className={`relative w-full ${compact ? "min-h-[180px]" : "min-h-[220px]"} aspect-[4/3]`}>
               <svg viewBox="0 0 100 100" className="w-full h-full" aria-label="Hive memory network graph">
                 <defs>
                   <filter id="memGlow">
@@ -142,9 +185,8 @@ export function HiveMemoryGraphPanel() {
                   stroke="#22d3ee"
                   strokeWidth="0.4"
                   filter="url(#memGlow)"
-                  className="cursor-default"
                 />
-                <text x={centerX} y={centerY + 1} textAnchor="middle" fill="#22d3ee" fontSize="3.2" fontWeight="bold">
+                <text x={50} y={51} textAnchor="middle" fill="#22d3ee" fontSize="3.2" fontWeight="bold">
                   HIVE
                 </text>
                 {lessonNodes.map((node) => (
@@ -160,17 +202,17 @@ export function HiveMemoryGraphPanel() {
                     <circle
                       r="5"
                       fill={node.color || "#3b82f6"}
-                      fillOpacity="0.3"
+                      fillOpacity="0.35"
                       stroke={node.color || "#3b82f6"}
                       strokeWidth="0.5"
                       filter="url(#memGlow)"
                     />
-                    <text y="-6" textAnchor="middle" fill="#94a3b8" fontSize="2.4">
+                    <text y="-6" textAnchor="middle" fill="#94a3b8" fontSize="2.2">
                       {node.label}
                     </text>
-                    {(node.count ?? 1) > 1 && (
-                      <text y="8" textAnchor="middle" fill="#fbbf24" fontSize="2.2">
-                        ×{node.count}
+                    {node.badge && (
+                      <text y="8" textAnchor="middle" fill="#fbbf24" fontSize="1.8">
+                        {node.badge}
                       </text>
                     )}
                   </g>
@@ -178,7 +220,7 @@ export function HiveMemoryGraphPanel() {
               </svg>
             </figure>
             <p className="text-[10px] text-slate-500 mt-2 text-center">
-              {lessonNodes.length} lesson node(s) — click to open evidence drawer
+              {lessonNodes.length} node(s) — click for drawer
             </p>
           </>
         )}

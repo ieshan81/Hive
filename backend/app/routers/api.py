@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends
 from fastapi.responses import Response
 from sqlmodel import Session
 
@@ -187,66 +187,20 @@ def run_selected_paper_orders(cycle_run_id: str = "latest", session: Session = D
 
 @router.get("/orders")
 def get_orders(cycle_run_id: str = "latest", limit: int = 50, session: Session = Depends(get_session)):
-    from sqlmodel import select
-    from app.database import OrderRecord
+    from app.services.positions_tab_service import orders_history
 
     cid = resolve_cycle_run_id(session, cycle_run_id)
-    q = select(OrderRecord).order_by(OrderRecord.submitted_at.desc()).limit(min(limit, 100))
-    rows = session.exec(q).all()
+    rows = orders_history(session, limit=min(limit, 100))
     if cid:
-        rows = [r for r in rows if r.cycle_run_id == cid or r.cycle_run_id is None]
-    return {
-        "status": "ok",
-        "cycle_run_id": cid,
-        "count": len(rows),
-        "orders": [
-            {
-                "id": r.id,
-                "alpaca_order_id": r.alpaca_order_id,
-                "client_order_id": r.broker_client_order_id,
-                "symbol": r.symbol,
-                "side": r.side,
-                "qty": r.qty,
-                "order_type": r.order_type,
-                "status": r.status,
-                "limit_price": (r.raw_payload or {}).get("limit_price"),
-                "filled_avg_price": r.filled_avg_price,
-                "submitted_at": r.submitted_at.isoformat() + "Z" if r.submitted_at else None,
-                "cycle_run_id": r.cycle_run_id,
-                "signal_id": r.signal_id,
-            }
-            for r in rows
-        ],
-    }
+        rows = [r for r in rows if r.get("cycle_run_id") == cid or not r.get("cycle_run_id")]
+    return {"status": "ok", "cycle_run_id": cid, "count": len(rows), "orders": rows}
 
 
 @router.get("/positions")
 def get_positions(session: Session = Depends(get_session)):
-    from sqlmodel import select
-    from app.database import PositionSnapshot
+    from app.services.positions_tab_service import current_positions
 
-    rows = session.exec(select(PositionSnapshot).order_by(PositionSnapshot.synced_at.desc())).all()
-    seen = set()
-    out = []
-    for p in rows:
-        if p.symbol in seen:
-            continue
-        seen.add(p.symbol)
-        if (p.qty or 0) <= 0:
-            continue
-        out.append(
-            {
-                "symbol": p.symbol,
-                "qty": p.qty,
-                "side": p.side,
-                "avg_entry_price": p.avg_entry_price,
-                "current_price": p.current_price,
-                "market_value": p.market_value,
-                "unrealized_pl": p.unrealized_pl,
-                "unrealized_pl_pct": p.unrealized_pl_pct,
-                "synced_at": p.synced_at.isoformat() + "Z" if p.synced_at else None,
-            }
-        )
+    out = current_positions(session)
     return {"status": "ok", "count": len(out), "positions": out}
 
 
@@ -324,13 +278,60 @@ def promotion_request(target_stage: str = "PRE_LIVE", session: Session = Depends
 
 
 @router.get("/memory/graph")
-def memory_graph(session: Session = Depends(get_session)):
+def memory_graph(
+    category: str | None = None,
+    severity: str | None = None,
+    include_archived: bool = False,
+    graph_default: bool = True,
+    session: Session = Depends(get_session),
+):
     from app.services.config_manager import ConfigManager
     from app.services.lesson_memory_service import LessonMemoryService
 
     config = ConfigManager(session).get_current()
-    graph = LessonMemoryService(session, config).build_graph()
+    graph = LessonMemoryService(session, config).build_graph(
+        category=category,
+        severity=severity,
+        include_archived=include_archived,
+        graph_default=graph_default,
+    )
     return {"status": "ok", **graph}
+
+
+@router.get("/memory/hive-mind")
+def memory_hive_mind(session: Session = Depends(get_session)):
+    from app.services.config_manager import ConfigManager
+    from app.services.lesson_memory_service import LessonMemoryService
+    from app.services.ai_budget_guard import AIBudgetGuard
+    from app.services.query_service import resolve_cycle_run_id
+    from sqlmodel import select
+    from app.database import AIReview
+
+    config = ConfigManager(session).get_current()
+    svc = LessonMemoryService(session, config)
+    latest_cid = resolve_cycle_run_id(session, "latest")
+    latest_review = session.exec(select(AIReview).order_by(AIReview.created_at.desc())).first()
+    review_cid = (latest_review.payload or {}).get("cycle_run_id") if latest_review else None
+    freshness = "latest"
+    skip_reason = None
+    if not latest_review:
+        freshness = "none"
+    elif latest_cid and review_cid != latest_cid:
+        freshness = "stale"
+    if latest_review and (latest_review.review_status or "").lower() in ("skipped", "skip"):
+        freshness = "skipped"
+        skip_reason = (latest_review.payload or {}).get("skip_reason", "rate_or_daily_limit")
+    return {
+        "status": "ok",
+        **svc.hive_mind_summary(),
+        "ai_review_freshness": {
+            "latest_cycle_run_id": latest_cid,
+            "review_cycle_run_id": review_cid,
+            "freshness": freshness,
+            "skip_reason": skip_reason,
+        },
+        "ai_budget": AIBudgetGuard(session).status(),
+    }
 
 
 @router.get("/memory/node/{node_id}")
@@ -348,11 +349,13 @@ def memory_node_detail(node_id: str, session: Session = Depends(get_session)):
 @router.get("/memory/lessons")
 def memory_lessons(
     symbol: str | None = None,
+    category: str | None = None,
     severity: str | None = None,
     memory_type: str | None = None,
     cycle_run_id: str | None = None,
     strategy_name: str | None = None,
     action_status: str | None = None,
+    include_archived: bool = False,
     limit: int = 100,
     session: Session = Depends(get_session),
 ):
@@ -362,11 +365,13 @@ def memory_lessons(
     config = ConfigManager(session).get_current()
     rows = LessonMemoryService(session, config).list_lessons(
         symbol=symbol,
+        category=category,
         severity=severity,
         memory_type=memory_type,
         cycle_run_id=cycle_run_id,
         strategy_name=strategy_name,
         action_status=action_status,
+        include_archived=include_archived,
         limit=limit,
     )
     return {"status": "ok", "count": len(rows), "lessons": rows}
@@ -419,6 +424,204 @@ def memory_lesson_reject(lesson_id: int, session: Session = Depends(get_session)
     row = LessonMemoryService(session, config).reject(lesson_id)
     session.commit()
     return {"status": "ok" if row else "error", "lesson_id": lesson_id}
+
+
+@router.post("/memory/lesson/{lesson_id}/archive")
+def memory_lesson_archive(
+    lesson_id: int,
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+):
+    from app.services.config_manager import ConfigManager
+    from app.services.lesson_memory_service import LessonMemoryService
+
+    config = ConfigManager(session).get_current()
+    row = LessonMemoryService(session, config).archive(
+        lesson_id,
+        reason=body.get("reason", ""),
+        hide_from_ai=body.get("hide_from_ai", True),
+        hide_from_graph=body.get("hide_from_graph", True),
+    )
+    session.commit()
+    return {"status": "ok" if row else "error", "lesson_id": lesson_id}
+
+
+@router.post("/memory/lesson/{lesson_id}/restore")
+def memory_lesson_restore(lesson_id: int, session: Session = Depends(get_session)):
+    from app.services.config_manager import ConfigManager
+    from app.services.lesson_memory_service import LessonMemoryService
+
+    config = ConfigManager(session).get_current()
+    row = LessonMemoryService(session, config).restore(lesson_id)
+    session.commit()
+    return {"status": "ok" if row else "error", "lesson_id": lesson_id}
+
+
+@router.post("/memory/lesson/{lesson_id}/delete")
+def memory_lesson_delete(
+    lesson_id: int,
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+):
+    from app.services.config_manager import ConfigManager
+    from app.services.lesson_memory_service import LessonMemoryService
+
+    config = ConfigManager(session).get_current()
+    row = LessonMemoryService(session, config).soft_delete(
+        lesson_id, reason=body.get("reason", "")
+    )
+    session.commit()
+    return {"status": "ok" if row else "error", "lesson_id": lesson_id}
+
+
+@router.post("/memory/lesson/{lesson_id}/resolve")
+def memory_lesson_resolve(lesson_id: int, session: Session = Depends(get_session)):
+    from app.services.config_manager import ConfigManager
+    from app.services.lesson_memory_service import LessonMemoryService
+
+    config = ConfigManager(session).get_current()
+    row = LessonMemoryService(session, config).mark_resolved(lesson_id)
+    session.commit()
+    return {"status": "ok" if row else "error", "lesson_id": lesson_id}
+
+
+@router.post("/memory/lesson/{lesson_id}/visibility")
+def memory_lesson_visibility(
+    lesson_id: int,
+    body: dict,
+    session: Session = Depends(get_session),
+):
+    from app.services.config_manager import ConfigManager
+    from app.services.lesson_memory_service import LessonMemoryService
+
+    config = ConfigManager(session).get_current()
+    row = LessonMemoryService(session, config).set_visibility(
+        lesson_id,
+        visible_to_ai=body.get("visible_to_ai"),
+        visible_in_graph=body.get("visible_in_graph"),
+        can_influence_ranking=body.get("can_influence_ranking"),
+    )
+    session.commit()
+    return {"status": "ok" if row else "error", "lesson_id": lesson_id}
+
+
+@router.post("/memory/bulk/archive")
+def memory_bulk_archive(body: dict, session: Session = Depends(get_session)):
+    from app.services.config_manager import ConfigManager
+    from app.services.lesson_memory_service import LessonMemoryService
+
+    config = ConfigManager(session).get_current()
+    ids = body.get("lesson_ids") or []
+    n = LessonMemoryService(session, config).bulk_archive(
+        ids,
+        reason=body.get("reason", ""),
+        hide_from_ai=body.get("hide_from_ai", True),
+        hide_from_graph=body.get("hide_from_graph", True),
+    )
+    session.commit()
+    return {"status": "ok", "archived": n}
+
+
+@router.get("/decisions/latest")
+def decisions_latest(cycle_run_id: str = "latest", session: Session = Depends(get_session)):
+    from app.services.decisions_service import latest_summary
+
+    return latest_summary(session, cycle_run_id)
+
+
+@router.get("/decisions/approved")
+def decisions_approved(cycle_run_id: str = "latest", session: Session = Depends(get_session)):
+    from app.services.decisions_service import approved_decisions
+
+    cid = resolve_cycle_run_id(session, cycle_run_id)
+    rows = approved_decisions(session, cycle_run_id)
+    return {"status": "ok", "cycle_run_id": cid, "count": len(rows), "decisions": rows}
+
+
+@router.get("/decisions/blocked")
+def decisions_blocked(cycle_run_id: str = "latest", session: Session = Depends(get_session)):
+    from app.services.decisions_service import blocked_decisions
+
+    cid = resolve_cycle_run_id(session, cycle_run_id)
+    rows = blocked_decisions(session, cycle_run_id)
+    return {"status": "ok", "cycle_run_id": cid, "count": len(rows), "decisions": rows}
+
+
+@router.get("/decisions/deferred")
+def decisions_deferred(cycle_run_id: str = "latest", session: Session = Depends(get_session)):
+    from app.services.decisions_service import deferred_decisions
+
+    cid = resolve_cycle_run_id(session, cycle_run_id)
+    rows = deferred_decisions(session, cycle_run_id)
+    return {"status": "ok", "cycle_run_id": cid, "count": len(rows), "decisions": rows}
+
+
+@router.get("/decisions/orders")
+def decisions_orders(cycle_run_id: str = "latest", session: Session = Depends(get_session)):
+    from app.services.decisions_service import orders_decisions
+
+    cid = resolve_cycle_run_id(session, cycle_run_id)
+    rows = orders_decisions(session, cycle_run_id)
+    return {"status": "ok", "cycle_run_id": cid, "count": len(rows), "orders": rows}
+
+
+@router.get("/decisions/lessons")
+def decisions_lessons(cycle_run_id: str = "latest", session: Session = Depends(get_session)):
+    from app.services.decisions_service import lessons_decisions
+
+    cid = resolve_cycle_run_id(session, cycle_run_id)
+    rows = lessons_decisions(session, cycle_run_id)
+    return {"status": "ok", "cycle_run_id": cid, "count": len(rows), "lessons": rows}
+
+
+@router.get("/positions/state")
+def positions_state(session: Session = Depends(get_session)):
+    from app.services.positions_tab_service import position_states
+
+    rows = position_states(session)
+    return {"status": "ok", "count": len(rows), "states": rows}
+
+
+@router.get("/trades/history")
+def trades_history(limit: int = 50, session: Session = Depends(get_session)):
+    from app.services.positions_tab_service import trades_history as th
+
+    rows = th(session, limit=limit)
+    return {"status": "ok", "count": len(rows), "trades": rows}
+
+
+@router.post("/positions/refresh")
+def positions_refresh(session: Session = Depends(get_session)):
+    from app.services.positions_tab_service import refresh_positions
+
+    return refresh_positions(session)
+
+
+@router.post("/positions/monitor/run")
+def positions_monitor_run(session: Session = Depends(get_session)):
+    from app.services.config_manager import ConfigManager
+    from app.services.memory_cycle_processor import process_cycle_memories
+    from app.services.query_service import resolve_cycle_run_id
+
+    config = ConfigManager(session).get_current()
+    cid = resolve_cycle_run_id(session, "latest") or "manual-monitor"
+    ids = process_cycle_memories(session, config, cid)
+    session.commit()
+    return {"status": "ok", "cycle_run_id": cid, "memories_touched": len(ids)}
+
+
+@router.post("/positions/{symbol}/manual-exit-request")
+def positions_manual_exit(symbol: str, session: Session = Depends(get_session)):
+    from app.services.paper_execution_service import PaperExecutionService
+
+    return {
+        "status": "pending",
+        "message": "Manual exit must pass paper preflight — use execution panel or POST /execution/paper/run-selected for exits when implemented",
+        "symbol": symbol,
+        "paper_only": True,
+        "live_locked": True,
+        **PaperExecutionService(session).status(),
+    }
 
 
 @router.post("/memory/backfill")

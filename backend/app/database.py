@@ -453,6 +453,7 @@ class LessonNode(SQLModel, table=True):
 
     __tablename__ = "lesson_nodes"
     id: Optional[int] = Field(default=None, primary_key=True)
+    category: str = Field(default="trading_memory", index=True)
     memory_type: str = Field(index=True)
     title: str
     summary: str
@@ -471,6 +472,14 @@ class LessonNode(SQLModel, table=True):
     evidence_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     proposed_action: Optional[str] = None
     action_status: str = Field(default="none", index=True)
+    status: str = Field(default="active", index=True)  # active|archived|deleted|resolved|ignored
+    visible_in_graph: bool = Field(default=True)
+    visible_to_ai: bool = Field(default=True)
+    can_influence_ranking: bool = Field(default=True)
+    human_review_status: str = Field(default="pending", index=True)
+    archive_reason: Optional[str] = None
+    deleted_at: Optional[datetime] = None
+    deleted_by: Optional[str] = None
     pattern_key: Optional[str] = Field(default=None, index=True)
     occurrence_count: int = 1
     first_seen_at: datetime = Field(default_factory=datetime.utcnow)
@@ -582,6 +591,26 @@ def _migrate_columns() -> None:
             ]:
                 if col not in ord_cols:
                     conn.execute(text(f"ALTER TABLE orders ADD COLUMN {col} {typ}"))
+
+    if insp.has_table("lesson_nodes"):
+        ln_cols = {c["name"] for c in insp.get_columns("lesson_nodes")}
+        with engine.begin() as conn:
+            for col, typ, default in [
+                ("category", "VARCHAR", "'trading_memory'"),
+                ("status", "VARCHAR", "'active'"),
+                ("visible_in_graph", "BOOLEAN", "true"),
+                ("visible_to_ai", "BOOLEAN", "true"),
+                ("can_influence_ranking", "BOOLEAN", "true"),
+                ("human_review_status", "VARCHAR", "'pending'"),
+                ("archive_reason", "VARCHAR", None),
+                ("deleted_at", "TIMESTAMP", None),
+                ("deleted_by", "VARCHAR", None),
+            ]:
+                if col not in ln_cols:
+                    ddl = f"ALTER TABLE lesson_nodes ADD COLUMN {col} {typ}"
+                    if default is not None:
+                        ddl += f" DEFAULT {default}"
+                    conn.execute(text(ddl))
 
 
 def init_db() -> None:

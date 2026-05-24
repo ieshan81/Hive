@@ -12,11 +12,12 @@ export type NavItemId =
 export type DataStatus =
   | "ok"
   | "active"
+  | "stale"
+  | "skipped"
   | "empty"
   | "not_connected"
   | "waiting"
   | "not_configured"
-  | "waiting"
   | "unavailable"
   | "not_configured"
   | "not_run"
@@ -60,10 +61,13 @@ export interface AIFundManagerData {
   memoryUsedPct: number | null;
   approvalStatus: string;
   approvalMessage: string;
+  aiReviewFreshness?: string;
   stats: {
     decisionsToday: number;
     approved: number;
     blocked: number;
+    deferred?: number;
+    ordersSubmitted?: number;
     learnedLessons: number;
   };
 }

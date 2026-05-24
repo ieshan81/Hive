@@ -3,13 +3,25 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Optional
 
 from sqlmodel import Session, select
 
 from app.database import LessonNode, MemoryEdge, MemoryEvidence
 from app.services.engine_config import cfg_get
+from app.services.memory_categories import (
+    CATEGORY_SYSTEM,
+    CATEGORY_TRADING,
+    CATEGORY_COLORS,
+    classify_memory_type,
+    default_visibility,
+    drawer_title,
+    normalize_memory_type,
+    node_badge,
+    system_impact,
+    trading_impact,
+)
 
 
 SEVERITY_COLORS = {
@@ -37,6 +49,7 @@ class LessonMemoryService:
         title: str,
         summary: str,
         detailed_lesson: str,
+        category: Optional[str] = None,
         severity: str = "MEDIUM",
         confidence: float = 0.9,
         source: str = "deterministic",
@@ -55,9 +68,16 @@ class LessonMemoryService:
         tags: Optional[list[str]] = None,
         aggregate: bool = False,
         unsupported_claim: bool = False,
+        visible_in_graph: Optional[bool] = None,
+        visible_to_ai: Optional[bool] = None,
+        can_influence_ranking: Optional[bool] = None,
     ) -> LessonNode:
         if not self.enabled:
             raise RuntimeError("memory disabled")
+
+        memory_type = normalize_memory_type(memory_type)
+        cat = category or classify_memory_type(memory_type)
+        vis = default_visibility(cat, memory_type, severity)
 
         pk = pattern_key or self._pattern_key(memory_type, symbol, extra=related_entity_id or "")
         existing: Optional[LessonNode] = None
@@ -68,6 +88,13 @@ class LessonMemoryService:
 
         now = datetime.utcnow()
         if existing:
+            existing.memory_type = memory_type
+            existing.category = cat
+            vis = default_visibility(cat, memory_type, severity)
+            existing.visible_to_ai = visible_to_ai if visible_to_ai is not None else vis["visible_to_ai"]
+            existing.can_influence_ranking = (
+                can_influence_ranking if can_influence_ranking is not None else vis["can_influence_ranking"]
+            )
             existing.occurrence_count += 1
             existing.last_seen_at = now
             existing.updated_at = now
@@ -82,6 +109,7 @@ class LessonMemoryService:
             return existing
 
         lesson = LessonNode(
+            category=cat,
             memory_type=memory_type,
             title=title,
             summary=summary,
@@ -100,6 +128,13 @@ class LessonMemoryService:
             evidence_json=evidence or {},
             proposed_action=proposed_action,
             action_status=action_status,
+            status="active",
+            visible_in_graph=visible_in_graph if visible_in_graph is not None else vis["visible_in_graph"],
+            visible_to_ai=visible_to_ai if visible_to_ai is not None else vis["visible_to_ai"],
+            can_influence_ranking=can_influence_ranking
+            if can_influence_ranking is not None
+            else vis["can_influence_ranking"],
+            human_review_status="pending",
             pattern_key=pk,
             occurrence_count=1,
             first_seen_at=now,
@@ -123,6 +158,8 @@ class LessonMemoryService:
         return lesson
 
     def _ensure_edges(self, lesson: LessonNode) -> None:
+        if lesson.status in ("deleted",) or not lesson.visible_in_graph:
+            return
         hive_id = "hive"
         lesson_nid = f"lesson-{lesson.id}"
         self._add_edge(hive_id, lesson_nid, "learned_from", lesson.id)
@@ -138,6 +175,8 @@ class LessonMemoryService:
             self._add_edge(lesson_nid, oid, "learned_from", lesson.id)
         if lesson.memory_type in ("fee_lesson", "broker_behavior"):
             self._add_edge(lesson_nid, "broker-alpaca", "broker_behavior", lesson.id)
+        if lesson.category == CATEGORY_SYSTEM:
+            self._add_edge(lesson_nid, "system-issues", "related_bug", lesson.id)
 
     def _add_edge(self, source: str, target: str, relation: str, lesson_id: int) -> None:
         exists = self.session.exec(
@@ -186,6 +225,7 @@ class LessonMemoryService:
                 evidence={"refs": evidence_refs, "unsupported": True},
                 action_status="rejected",
                 unsupported_claim=True,
+                visible_to_ai=False,
             )
         return self.upsert_lesson(
             memory_type="ai_review_issue",
@@ -200,6 +240,46 @@ class LessonMemoryService:
             evidence={"refs": evidence_refs},
             action_status="pending_human_review",
         )
+
+    def _filter_rows(
+        self,
+        rows: list[LessonNode],
+        *,
+        category: Optional[str] = None,
+        memory_type: Optional[str] = None,
+        symbol: Optional[str] = None,
+        severity: Optional[str] = None,
+        cycle_run_id: Optional[str] = None,
+        strategy_name: Optional[str] = None,
+        action_status: Optional[str] = None,
+        include_archived: bool = False,
+        graph_default: bool = False,
+    ) -> list[LessonNode]:
+        out = []
+        for r in rows:
+            if not include_archived and r.status in ("archived", "deleted"):
+                continue
+            if graph_default:
+                if not r.visible_in_graph:
+                    continue
+                if r.category == CATEGORY_SYSTEM and r.severity not in ("HIGH", "CRITICAL"):
+                    continue
+            if category and r.category != category:
+                continue
+            if memory_type and r.memory_type != memory_type:
+                continue
+            if symbol and r.symbol != symbol:
+                continue
+            if severity and r.severity != severity:
+                continue
+            if cycle_run_id and r.cycle_run_id != cycle_run_id:
+                continue
+            if strategy_name and r.strategy_name != strategy_name:
+                continue
+            if action_status and r.action_status != action_status:
+                continue
+            out.append(r)
+        return out
 
     def get_lesson(self, node_id: str) -> Optional[dict[str, Any]]:
         if node_id.startswith("lesson-"):
@@ -226,16 +306,28 @@ class LessonMemoryService:
 
         return {
             "node_id": f"lesson-{row.id}",
+            "lesson_id": row.id,
             "type": "lesson",
+            "category": row.category,
+            "memory_type": row.memory_type,
+            "drawer_title": drawer_title(row.category),
             "title": row.title,
             "summary": row.summary,
             "detailed_lesson": row.detailed_lesson,
             "what_happened": row.summary,
-            "bot_learned": row.detailed_lesson,
+            "why_it_matters": row.detailed_lesson,
+            "bot_learned": row.detailed_lesson if row.category == CATEGORY_TRADING else None,
+            "trading_impact": trading_impact(row.category),
+            "system_impact": system_impact(row.category),
             "severity": row.severity,
             "confidence": row.confidence,
             "source": row.source,
             "action_status": row.action_status,
+            "status": row.status,
+            "human_review_status": row.human_review_status,
+            "visible_to_ai": row.visible_to_ai,
+            "visible_in_graph": row.visible_in_graph,
+            "can_influence_ranking": row.can_influence_ranking,
             "proposed_action": row.proposed_action,
             "proposed_prevention": row.proposed_action,
             "symbol": row.symbol,
@@ -245,11 +337,15 @@ class LessonMemoryService:
             "broker_order_id": row.broker_order_id,
             "order_id": row.order_id,
             "occurrence_count": row.occurrence_count,
+            "badge": node_badge(row),
             "evidence_human": self._human_evidence(row.evidence_json or {}),
             "evidence_json": row.evidence_json,
-            "evidence_attachments": [{"type": r.evidence_type, "payload": r.payload} for r in evidence_rows],
+            "evidence_attachments": [
+                {"type": r.evidence_type, "payload": r.payload} for r in evidence_rows
+            ],
             "linked_nodes": linked,
             "tags": row.tags or [],
+            "archive_reason": row.archive_reason,
             "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
             "last_seen_at": row.last_seen_at.isoformat() + "Z" if row.last_seen_at else None,
         }
@@ -263,12 +359,27 @@ class LessonMemoryService:
             out.append({"label": k.replace("_", " ").title(), "value": str(v)})
         return out
 
-    def build_graph(self, limit: int = 80) -> dict[str, Any]:
-        lessons = list(
+    def build_graph(
+        self,
+        limit: int = 80,
+        category: Optional[str] = None,
+        severity: Optional[str] = None,
+        include_archived: bool = False,
+        graph_default: bool = True,
+    ) -> dict[str, Any]:
+        all_rows = list(
             self.session.exec(
-                select(LessonNode).order_by(LessonNode.last_seen_at.desc()).limit(limit)
+                select(LessonNode).order_by(LessonNode.last_seen_at.desc()).limit(limit * 3)
             ).all()
         )
+        lessons = self._filter_rows(
+            all_rows,
+            category=category,
+            severity=severity,
+            include_archived=include_archived,
+            graph_default=graph_default and not category and not include_archived,
+        )[:limit]
+
         nodes: list[dict] = [
             {
                 "id": "hive",
@@ -280,6 +391,7 @@ class LessonMemoryService:
                 "count": len(lessons),
                 "x": 50,
                 "y": 50,
+                "color": "#00d1ff",
             }
         ]
         edges_out: list[dict] = []
@@ -288,19 +400,22 @@ class LessonMemoryService:
         for i, lesson in enumerate(lessons):
             nid = f"lesson-{lesson.id}"
             x, y = positions[i] if i < len(positions) else (50, 50)
+            cat_color = CATEGORY_COLORS.get(lesson.category, SEVERITY_COLORS.get(lesson.severity, "#64748b"))
             nodes.append(
                 {
                     "id": nid,
                     "label": lesson.title[:28] + ("…" if len(lesson.title) > 28 else ""),
                     "type": "lesson",
+                    "category": lesson.category,
                     "severity": lesson.severity,
                     "confidence": lesson.confidence,
-                    "status": lesson.action_status,
+                    "status": lesson.status,
+                    "badge": node_badge(lesson),
                     "count": lesson.occurrence_count,
                     "symbol": lesson.symbol,
                     "strategy_name": lesson.strategy_name,
                     "memory_type": lesson.memory_type,
-                    "color": SEVERITY_COLORS.get(lesson.severity, "#64748b"),
+                    "color": cat_color,
                     "x": x,
                     "y": y,
                     "created_at": lesson.created_at.isoformat() + "Z" if lesson.created_at else None,
@@ -347,18 +462,20 @@ class LessonMemoryService:
                 )
 
         db_edges = self.session.exec(select(MemoryEdge).limit(200)).all()
+        node_ids = {n["id"] for n in nodes}
         for e in db_edges:
-            if not any(x["id"] == f"ge-{e.id}" for x in edges_out):
-                edges_out.append(
-                    {
-                        "id": f"ge-{e.id}",
-                        "source": e.source_id,
-                        "target": e.target_id,
-                        "relation": e.relation,
-                        "weight": e.weight,
-                        "evidence_count": e.evidence_count,
-                    }
-                )
+            if e.source_id in node_ids and e.target_id in node_ids:
+                if not any(x["id"] == f"ge-{e.id}" for x in edges_out):
+                    edges_out.append(
+                        {
+                            "id": f"ge-{e.id}",
+                            "source": e.source_id,
+                            "target": e.target_id,
+                            "relation": e.relation,
+                            "weight": e.weight,
+                            "evidence_count": e.evidence_count,
+                        }
+                    )
 
         return {"nodes": nodes, "edges": edges_out}
 
@@ -377,35 +494,43 @@ class LessonMemoryService:
     def list_lessons(
         self,
         *,
+        category: Optional[str] = None,
         symbol: Optional[str] = None,
         severity: Optional[str] = None,
         memory_type: Optional[str] = None,
         cycle_run_id: Optional[str] = None,
         strategy_name: Optional[str] = None,
         action_status: Optional[str] = None,
+        include_archived: bool = False,
         limit: int = 100,
     ) -> list[dict]:
-        q = select(LessonNode).order_by(LessonNode.last_seen_at.desc()).limit(limit)
-        rows = list(self.session.exec(q).all())
-        if symbol:
-            rows = [r for r in rows if r.symbol == symbol]
-        if severity:
-            rows = [r for r in rows if r.severity == severity]
-        if memory_type:
-            rows = [r for r in rows if r.memory_type == memory_type]
-        if cycle_run_id:
-            rows = [r for r in rows if r.cycle_run_id == cycle_run_id]
-        if strategy_name:
-            rows = [r for r in rows if r.strategy_name == strategy_name]
-        if action_status:
-            rows = [r for r in rows if r.action_status == action_status]
-        return [self._lesson_detail(r) for r in rows]
+        rows = list(
+            self.session.exec(
+                select(LessonNode).order_by(LessonNode.last_seen_at.desc()).limit(limit * 2)
+            ).all()
+        )
+        filtered = self._filter_rows(
+            rows,
+            category=category,
+            memory_type=memory_type,
+            symbol=symbol,
+            severity=severity,
+            cycle_run_id=cycle_run_id,
+            strategy_name=strategy_name,
+            action_status=action_status,
+            include_archived=include_archived,
+            graph_default=False,
+        )[:limit]
+        return [self._lesson_detail(r) for r in filtered]
 
     def symbol_memory_penalty(self, symbol: str) -> float:
         max_pen = float(cfg_get(self.config, "memory.max_memory_penalty", 0.15))
         rows = self.session.exec(
             select(LessonNode).where(
                 LessonNode.symbol == symbol,
+                LessonNode.category == CATEGORY_TRADING,
+                LessonNode.can_influence_ranking == True,  # noqa: E712
+                LessonNode.status == "active",
                 LessonNode.severity.in_(["HIGH", "CRITICAL"]),
             )
         ).all()
@@ -417,6 +542,7 @@ class LessonMemoryService:
         row = self.session.get(LessonNode, lesson_id)
         if row:
             row.action_status = "approved"
+            row.human_review_status = "approved"
             row.updated_at = datetime.utcnow()
             self.session.add(row)
         return row
@@ -425,6 +551,131 @@ class LessonMemoryService:
         row = self.session.get(LessonNode, lesson_id)
         if row:
             row.action_status = "rejected"
+            row.human_review_status = "rejected"
             row.updated_at = datetime.utcnow()
             self.session.add(row)
         return row
+
+    def archive(
+        self,
+        lesson_id: int,
+        *,
+        reason: str = "",
+        hide_from_ai: bool = True,
+        hide_from_graph: bool = True,
+        by: str = "operator",
+    ) -> Optional[LessonNode]:
+        row = self.session.get(LessonNode, lesson_id)
+        if not row:
+            return None
+        row.status = "archived"
+        row.archive_reason = reason or "archived by operator"
+        row.visible_in_graph = not hide_from_graph if hide_from_graph is False else False
+        row.visible_to_ai = not hide_from_ai if hide_from_ai is False else False
+        row.can_influence_ranking = False
+        row.updated_at = datetime.utcnow()
+        self.session.add(row)
+        return row
+
+    def restore(self, lesson_id: int) -> Optional[LessonNode]:
+        row = self.session.get(LessonNode, lesson_id)
+        if not row:
+            return None
+        row.status = "active"
+        vis = default_visibility(row.category, row.memory_type, row.severity)
+        row.visible_in_graph = vis["visible_in_graph"]
+        row.visible_to_ai = vis["visible_to_ai"]
+        row.can_influence_ranking = vis["can_influence_ranking"]
+        row.archive_reason = None
+        row.deleted_at = None
+        row.deleted_by = None
+        row.updated_at = datetime.utcnow()
+        self.session.add(row)
+        return row
+
+    def soft_delete(
+        self,
+        lesson_id: int,
+        *,
+        reason: str = "",
+        by: str = "operator",
+    ) -> Optional[LessonNode]:
+        row = self.session.get(LessonNode, lesson_id)
+        if not row:
+            return None
+        row.status = "deleted"
+        row.visible_in_graph = False
+        row.visible_to_ai = False
+        row.can_influence_ranking = False
+        row.deleted_at = datetime.utcnow()
+        row.deleted_by = by
+        row.archive_reason = reason or "deleted by operator"
+        row.updated_at = datetime.utcnow()
+        self.session.add(row)
+        return row
+
+    def mark_resolved(self, lesson_id: int) -> Optional[LessonNode]:
+        row = self.session.get(LessonNode, lesson_id)
+        if row:
+            row.status = "resolved"
+            row.can_influence_ranking = False
+            row.updated_at = datetime.utcnow()
+            self.session.add(row)
+        return row
+
+    def set_visibility(
+        self,
+        lesson_id: int,
+        *,
+        visible_to_ai: Optional[bool] = None,
+        visible_in_graph: Optional[bool] = None,
+        can_influence_ranking: Optional[bool] = None,
+    ) -> Optional[LessonNode]:
+        row = self.session.get(LessonNode, lesson_id)
+        if not row:
+            return None
+        if visible_to_ai is not None:
+            row.visible_to_ai = visible_to_ai
+        if visible_in_graph is not None:
+            row.visible_in_graph = visible_in_graph
+        if can_influence_ranking is not None:
+            row.can_influence_ranking = can_influence_ranking
+        row.updated_at = datetime.utcnow()
+        self.session.add(row)
+        return row
+
+    def bulk_archive(
+        self,
+        lesson_ids: list[int],
+        *,
+        reason: str = "",
+        hide_from_ai: bool = True,
+        hide_from_graph: bool = True,
+    ) -> int:
+        n = 0
+        for lid in lesson_ids:
+            if self.archive(lid, reason=reason, hide_from_ai=hide_from_ai, hide_from_graph=hide_from_graph):
+                n += 1
+        return n
+
+    def hive_mind_summary(self) -> dict[str, Any]:
+        rows = list(self.session.exec(select(LessonNode).order_by(LessonNode.last_seen_at.desc()).limit(200)).all())
+        trading = [r for r in rows if r.category == CATEGORY_TRADING and r.status == "active"][:8]
+        system = [r for r in rows if r.category == CATEGORY_SYSTEM and r.status == "active"][:5]
+        ai_rows = [r for r in rows if r.category == "ai_review_memory"][:5]
+        patterns = [r for r in rows if r.occurrence_count >= 2 and r.status == "active"][:8]
+        return {
+            "trading_recent": [self._lesson_detail(r) for r in trading],
+            "system_recent": [self._lesson_detail(r) for r in system],
+            "ai_recent": [self._lesson_detail(r) for r in ai_rows],
+            "patterns": [
+                {
+                    "id": r.id,
+                    "title": r.title,
+                    "memory_type": r.memory_type,
+                    "occurrence_count": r.occurrence_count,
+                    "symbol": r.symbol,
+                }
+                for r in patterns
+            ],
+        }

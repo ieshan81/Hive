@@ -120,7 +120,7 @@ def on_duplicate_position_export(
 ) -> LessonNode:
     svc = LessonMemoryService(session, config)
     return svc.upsert_lesson(
-        memory_type="reconciliation_lesson",
+        memory_type="reconciliation_bug",
         title=f"Duplicate position rows for {symbol}",
         summary=f"Exported {exported_count} rows but broker shows {broker_positions_count} position(s)",
         detailed_lesson=(
@@ -158,7 +158,7 @@ def on_dashboard_truth_mismatch(
 ) -> LessonNode:
     svc = LessonMemoryService(session, config)
     return svc.upsert_lesson(
-        memory_type="dashboard_truth_issue",
+        memory_type="ui_truth_bug",
         title="Dashboard truth mismatch",
         summary=f"{dashboard_field}: dashboard={dashboard_value!s} vs truth={truth_value!s}",
         detailed_lesson=(
@@ -284,7 +284,7 @@ def on_open_position_monitor(
 ) -> LessonNode:
     svc = LessonMemoryService(session, config)
     return svc.upsert_lesson(
-        memory_type="position_management_issue",
+        memory_type="position_management_lesson",
         title=f"Monitor open position: {position.symbol}",
         summary=f"Qty {position.qty} unrealized P/L {position.unrealized_pl}",
         detailed_lesson="Exit monitor must check stop, take profit, momentum reversal, max hold, and kill switch.",

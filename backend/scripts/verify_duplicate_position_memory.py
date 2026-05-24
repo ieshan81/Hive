@@ -22,7 +22,8 @@ def test():
             cycle_run_id="8796825e-5f25-4cfa-b0f9-b0141f61859c",
         )
         session.commit()
-        assert row.memory_type == "reconciliation_lesson"
+        assert row.memory_type == "reconciliation_bug"
+        assert row.category == "system_issue"
         assert row.evidence_json.get("duplicate_count") == 2
         print("verify_duplicate_position_memory: PASS")
 

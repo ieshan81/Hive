@@ -11,6 +11,7 @@ import {
   LineChart,
   TrendingUp,
   FileText,
+  Wallet,
   Settings,
   Shield,
   Hexagon,
@@ -20,6 +21,7 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
   { href: "/ai-manager", label: "AI Manager", icon: Brain },
+  { href: "/positions", label: "Positions", icon: Wallet },
   { href: "/strategies", label: "Strategies", icon: FlaskConical },
   { href: "/market-radar", label: "Market Radar", icon: Radar },
   { href: "/risk-cage", label: "Risk Cage", icon: Lock },

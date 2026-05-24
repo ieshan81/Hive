@@ -33,6 +33,7 @@ from app.database import (
     MemoryEdge,
     MemoryEvidence,
 )
+from app.services.ai_budget_guard import AIBudgetGuard
 from app.services.config_manager import ConfigManager
 from app.services.cycle_persistence import (
     count_cycle_rows,
@@ -452,6 +453,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
     def _lesson_row(r: LessonNode) -> dict:
         return {
             "id": r.id,
+            "category": getattr(r, "category", None),
             "memory_type": r.memory_type,
             "title": r.title,
             "summary": r.summary,
@@ -459,6 +461,11 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             "severity": r.severity,
             "confidence": r.confidence,
             "source": r.source,
+            "status": getattr(r, "status", "active"),
+            "visible_in_graph": getattr(r, "visible_in_graph", True),
+            "visible_to_ai": getattr(r, "visible_to_ai", True),
+            "can_influence_ranking": getattr(r, "can_influence_ranking", True),
+            "human_review_status": getattr(r, "human_review_status", "pending"),
             "cycle_run_id": r.cycle_run_id,
             "signal_id": r.signal_id,
             "broker_order_id": r.broker_order_id,
@@ -468,8 +475,50 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             "proposed_action": r.proposed_action,
             "action_status": r.action_status,
             "occurrence_count": r.occurrence_count,
+            "archive_reason": getattr(r, "archive_reason", None),
             "created_at": r.created_at.isoformat() + "Z" if r.created_at else None,
         }
+
+    from app.services.decisions_service import latest_summary
+    from app.services.positions_tab_service import (
+        current_positions,
+        orders_history,
+        position_states,
+        trades_history,
+    )
+    from app.services.memory_categories import CATEGORY_SYSTEM, CATEGORY_TRADING
+
+    decisions_latest = latest_summary(session, "latest")
+    cid = decisions_latest.get("cycle_run_id")
+    trading_rows = [r for r in lesson_rows if getattr(r, "category", "") == CATEGORY_TRADING]
+    system_rows = [r for r in lesson_rows if getattr(r, "category", "") == CATEGORY_SYSTEM]
+    archived_rows = [r for r in lesson_rows if getattr(r, "status", "") in ("archived", "deleted")]
+
+    ai_reviews_all = [_serialize_row(r) for r in session.exec(select(AIReview)).all()]
+    latest_ai = ai_reviews_all[-1] if ai_reviews_all else None
+    ai_bundle = {
+        "ai_reviews.json": ai_reviews_all,
+        "ai_usage_logs.json": [_serialize_row(r) for r in session.exec(select(AIUsageLog)).all()],
+        "ai_memories.json": [_serialize_row(r) for r in session.exec(select(AIMemory)).all()],
+        "ai_config_proposals.json": [_serialize_row(r) for r in session.exec(select(AIConfigProposal)).all()],
+        "ai_strategy_notes.json": [],
+        "ai_review_freshness.json": {
+            "latest_cycle_run_id": cid,
+            "latest_review": latest_ai,
+        },
+        "ai_budget_status.json": AIBudgetGuard(session).status(),
+        "ai_prompt_summaries.json": [
+            {
+                "cycle_run_id": (r.get("payload") or {}).get("cycle_run_id"),
+                "model": (r.get("payload") or {}).get("model"),
+                "status": r.get("review_status"),
+                "summary": (r.get("summary") or "")[:500],
+            }
+            for r in ai_reviews_all[-10:]
+        ],
+        "ai_errors.json": [r for r in ai_reviews_all if (r.get("review_status") or "") != "success"],
+        "ai_decision_context_latest.json": decisions_latest if cid else {"status": "no_cycle"},
+    }
 
     return {
         "activity.json": activity_data,
@@ -510,9 +559,17 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         "memory_evidence.json": [_serialize_row(r) for r in evidence_rows],
         "symbol_memory.json": [_lesson_row(r) for r in lesson_rows if r.symbol],
         "strategy_memory.json": [_lesson_row(r) for r in lesson_rows if r.strategy_name],
-        "execution_memory.json": [_lesson_row(r) for r in lesson_rows if "execution" in r.memory_type or "trade" in r.memory_type],
-        "risk_memory.json": [_lesson_row(r) for r in lesson_rows if "risk" in r.memory_type or "block" in r.memory_type],
+        "execution_memory.json": [_lesson_row(r) for r in trading_rows if "execution" in r.memory_type or "trade" in r.memory_type],
+        "risk_memory.json": [_lesson_row(r) for r in trading_rows if "risk" in r.memory_type or "block" in r.memory_type],
+        "system_issues.json": [_lesson_row(r) for r in system_rows],
+        "archived_memories.json": [_lesson_row(r) for r in archived_rows],
         "operator_notes.json": [_lesson_row(r) for r in lesson_rows if r.memory_type == "operator_note"],
+        "decisions_latest.json": decisions_latest,
+        "approved_decisions.json": decisions_latest.get("approved", []),
+        "blocked_decisions.json": decisions_latest.get("blocked", []),
+        "deferred_decisions.json": decisions_latest.get("deferred", []),
+        "position_states.json": position_states(session),
+        "trades_history.json": trades_history(session),
         "bundle_meta.json": {
             "database_fingerprint": database_fingerprint(),
             "exported_at": datetime.utcnow().isoformat() + "Z",
@@ -522,6 +579,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             "latest_cycle_error_count": len(latest_cycle_errors),
             "historical_error_count": len(historical_alpaca_errors),
         },
+        "ai_bundle": ai_bundle,
     }
 
 
@@ -530,6 +588,7 @@ def bundle_as_zip_bytes(session: Session) -> bytes:
     import zipfile
 
     bundle = export_diagnostic_bundle(session)
+    ai_bundle = bundle.pop("ai_bundle", None)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, content in bundle.items():
@@ -537,4 +596,7 @@ def bundle_as_zip_bytes(session: Session) -> bytes:
                 zf.writestr(name, content)
             else:
                 zf.writestr(name, json.dumps(content, indent=2, default=str))
+        if ai_bundle:
+            for name, content in ai_bundle.items():
+                zf.writestr(f"ai_bundle/{name}", json.dumps(content, indent=2, default=str))
     return buf.getvalue()

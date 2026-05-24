@@ -43,6 +43,30 @@ def _empty_state(message: str) -> dict[str, Any]:
     return {"status": "empty", "message": message}
 
 
+def _cycle_decision_stats(session: Session, cycle_id: str | None, memory: MemoryEngine) -> dict[str, int]:
+    if not cycle_id:
+        return {
+            "decisionsToday": 0,
+            "approved": 0,
+            "blocked": 0,
+            "deferred": 0,
+            "ordersSubmitted": 0,
+            "learnedLessons": 0,
+        }
+    from app.services.decisions_service import latest_summary
+
+    summary = latest_summary(session, cycle_id)
+    counts = summary.get("counts") or {}
+    return {
+        "decisionsToday": counts.get("approved", 0) + counts.get("blocked", 0),
+        "approved": counts.get("approved", 0),
+        "blocked": counts.get("blocked", 0),
+        "deferred": counts.get("deferred", 0),
+        "ordersSubmitted": counts.get("orders", 0),
+        "learnedLessons": counts.get("lessons", 0),
+    }
+
+
 def build_dashboard(session: Session) -> dict[str, Any]:
     config_mgr = ConfigManager(session)
     config = config_mgr.get_current()
@@ -157,10 +181,23 @@ def build_dashboard(session: Session) -> dict[str, Any]:
         deferred_early = [d for d in portfolio_decs_early if d.portfolio_status == "portfolio_deferred"]
         approved_no_order_early = [s for s in signals_early if s.status == "approved_no_order"]
         if last_cycle.get("orders_submitted", 0) > 0:
-            truth_message = (
-                f"Paper order submitted this cycle ({last_cycle.get('orders_submitted')}) — "
-                "see execution logs and positions"
-            )
+            from app.database import ExecutionLog
+
+            filled = session.exec(
+                select(ExecutionLog)
+                .where(
+                    ExecutionLog.cycle_run_id == cycle_id,
+                    ExecutionLog.status == "paper_order_filled",
+                )
+                .limit(1)
+            ).first()
+            sym = filled.symbol if filled else None
+            if sym:
+                truth_message = f"Paper order submitted this cycle: {sym}"
+            else:
+                truth_message = (
+                    f"Paper order submitted this cycle ({last_cycle.get('orders_submitted')})"
+                )
         elif approved_no_order_early:
             meta0 = approved_no_order_early[0].signal_metadata or {}
             code = meta0.get("block_reason_code", "")
@@ -220,33 +257,64 @@ def build_dashboard(session: Session) -> dict[str, Any]:
             },
         }
     else:
+        from app.database import LessonNode
+
         payload = latest_review.payload or {}
-        ai_fund_manager = {
-            "status": "active",
-            "message": None,
-            "decision": latest_review.decision.upper(),
-            "decisionMessage": latest_review.summary[:120],
-            "confidence": int(latest_review.confidence * 100),
-            "confidenceLabel": "High"
-            if latest_review.confidence >= 0.7
-            else "Moderate"
-            if latest_review.confidence >= 0.4
-            else "Low",
-            "reasonSummary": latest_review.summary,
-            "memoryUsedPct": int(len(memory.list_memories(100)) / 100 * 100),
-            "approvalStatus": "AI_REVIEW"
-            if last_cycle.get("blocked", 0) == 0
-            else "MIXED",
-            "approvalMessage": truth_message
-            if cycle_id
-            else payload.get("risk_assessment", "Review complete — AI does not approve trades"),
-            "stats": {
-                "decisionsToday": 1,
-                "approved": approved_count,
-                "blocked": blocked_count,
-                "learnedLessons": len(memory.list_memories(100)),
-            },
-        }
+        review_cid = payload.get("cycle_run_id")
+        ai_fresh = review_cid == cycle_id if cycle_id else False
+        ai_skipped = (latest_review.review_status or "").lower() in ("skipped", "skip")
+        if ai_skipped:
+            ai_fund_manager = {
+                "status": "skipped",
+                "message": None,
+                "decision": "SKIPPED",
+                "decisionMessage": payload.get("skip_reason", "rate_or_daily_limit"),
+                "confidence": None,
+                "confidenceLabel": "N/A",
+                "reasonSummary": f"AI review skipped: {payload.get('skip_reason', 'budget or rate limit')}. Latest deterministic cycle still completed.",
+                "memoryUsedPct": None,
+                "approvalStatus": "SKIPPED",
+                "approvalMessage": truth_message if cycle_id else "AI review skipped this cycle",
+                "aiReviewFreshness": "skipped",
+                "stats": _cycle_decision_stats(session, cycle_id, memory),
+            }
+        elif cycle_id and not ai_fresh:
+            ai_fund_manager = {
+                "status": "stale",
+                "message": None,
+                "decision": "STALE",
+                "decisionMessage": "AI review stale for latest cycle",
+                "confidence": None,
+                "confidenceLabel": "N/A",
+                "reasonSummary": "AI review stale. Latest deterministic cycle still completed.",
+                "memoryUsedPct": None,
+                "approvalStatus": "STALE",
+                "approvalMessage": truth_message,
+                "aiReviewFreshness": "stale",
+                "stats": _cycle_decision_stats(session, cycle_id, memory),
+            }
+        else:
+            ai_fund_manager = {
+                "status": "active",
+                "message": None,
+                "decision": latest_review.decision.upper(),
+                "decisionMessage": latest_review.summary[:120],
+                "confidence": int(latest_review.confidence * 100),
+                "confidenceLabel": "High"
+                if latest_review.confidence >= 0.7
+                else "Moderate"
+                if latest_review.confidence >= 0.4
+                else "Low",
+                "reasonSummary": latest_review.summary,
+                "memoryUsedPct": min(
+                    100,
+                    len(session.exec(select(LessonNode)).all()),
+                ),
+                "approvalStatus": "CYCLE_TRUTH",
+                "approvalMessage": truth_message if cycle_id else "Review complete — AI does not approve trades",
+                "aiReviewFreshness": "latest",
+                "stats": _cycle_decision_stats(session, cycle_id, memory),
+            }
 
     # Memory graph
     nodes = memory.memory_graph_nodes()

@@ -21,7 +21,9 @@ def test():
             cycle_run_id="8796825e-5f25-4cfa-b0f9-b0141f61859c",
         )
         session.commit()
-        assert row.memory_type == "dashboard_truth_issue"
+        assert row.memory_type == "ui_truth_bug"
+        assert row.category == "system_issue"
+        assert row.can_influence_ranking is False
         print("verify_dashboard_truth_memory: PASS")
 
 
