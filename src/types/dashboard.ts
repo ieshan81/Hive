@@ -142,6 +142,7 @@ export interface SystemStatus {
 
 export interface DashboardData {
   lastSync: string;
+  lastSyncAt?: string | null;
   systemStatus: SystemStatus;
   statusChips: StatusChip[];
   accountSurvival: AccountSurvivalData;
@@ -154,7 +155,7 @@ export interface DashboardData {
   marketRadarMeta: {
     status: DataStatus;
     message: string | null;
-    refreshedAt: string;
+    refreshedAt: string | null;
     opportunitiesScanned: number;
   };
   backtest: {

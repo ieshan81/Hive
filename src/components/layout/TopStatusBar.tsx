@@ -2,10 +2,12 @@
 
 import { Activity, Brain, Clock, Download, FileText, Shield } from "lucide-react";
 import { getDiagnosticBundleUrl } from "@/lib/dashboard";
+import { formatSyncTime } from "@/lib/datetime";
 import type { StatusChip, SystemStatus } from "@/types/dashboard";
 
 interface TopStatusBarProps {
   lastSync: string;
+  lastSyncAt?: string | null;
   statusChips: StatusChip[];
   systemStatus: SystemStatus;
 }
@@ -17,7 +19,9 @@ function ChipIcon({ label }: { label: string }) {
   return <Clock className="h-3.5 w-3.5" />;
 }
 
-export function TopStatusBar({ lastSync, statusChips, systemStatus }: TopStatusBarProps) {
+export function TopStatusBar({ lastSync, lastSyncAt, statusChips, systemStatus }: TopStatusBarProps) {
+  const syncLabel = formatSyncTime(lastSyncAt ?? (lastSync !== "Not synced" ? lastSync : null));
+
   return (
     <header className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
       <div>
@@ -41,7 +45,7 @@ export function TopStatusBar({ lastSync, statusChips, systemStatus }: TopStatusB
         <div className="flex items-center gap-2 rounded-full border border-white/8 bg-white/3 px-3 py-1.5 text-xs">
           <Clock className="h-3.5 w-3.5 text-slate-500" />
           <span className="text-slate-500">Last Sync</span>
-          <span className="font-medium text-slate-300">{lastSync}</span>
+          <span className="font-medium text-slate-300">{syncLabel}</span>
         </div>
         <a href={getDiagnosticBundleUrl()} className="flex items-center gap-2 rounded-lg border border-hive-cyan/30 bg-hive-cyan/5 px-3 py-1.5 text-xs font-medium text-hive-cyan transition hover:bg-hive-cyan/10">
           <Download className="h-3.5 w-3.5" />

@@ -11,7 +11,18 @@ from sqlmodel import Session, select
 from app.config import settings
 from app.database import AccountSnapshot, BrokerError, PositionSnapshot
 
+from app.services.quote_utils import normalize_prices, spread_from_bid_ask
+
 logger = logging.getLogger(__name__)
+
+
+def normalize_crypto_symbol(symbol: str) -> str:
+    """Alpaca crypto quotes use BTC/USD; trading assets may be BTCUSD."""
+    if "/" in symbol:
+        return symbol
+    if symbol.endswith("USD") and len(symbol) > 3:
+        return f"{symbol[:-3]}/USD"
+    return symbol
 
 
 class AlpacaAdapter:
@@ -142,6 +153,7 @@ class AlpacaAdapter:
             ac = AssetClass.CRYPTO if asset_class == "crypto" else AssetClass.US_EQUITY
             req = GetAssetsRequest(status=AssetStatus.ACTIVE, asset_class=ac)
             assets = client.get_all_assets(req)
+            tradable = [a for a in assets if a.tradable]
             return [
                 {
                     "symbol": a.symbol,
@@ -151,8 +163,7 @@ class AlpacaAdapter:
                     "shortable": a.shortable,
                     "asset_class": asset_class,
                 }
-                for a in assets[:limit]
-                if a.tradable
+                for a in tradable[:limit]
             ]
         except Exception as exc:
             self._log_error("get_tradable_assets", str(exc), {"asset_class": asset_class})
@@ -188,41 +199,46 @@ class AlpacaAdapter:
 
     @staticmethod
     def compute_spread(bid: float, ask: float) -> tuple[float | None, float | None]:
-        """Returns (spread_pct as decimal, spread_display_pct)."""
-        if bid <= 0 or ask <= 0:
+        spread_pct, _ = spread_from_bid_ask(bid, ask)
+        if spread_pct is None:
             return None, None
-        mid = (bid + ask) / 2
-        if mid <= 0:
-            return None, None
-        spread_pct = (ask - bid) / mid
         return spread_pct, spread_pct * 100
 
-    def get_quote(self, symbol: str, asset_class: str = "stock") -> Optional[dict]:
+    def get_quote(
+        self,
+        symbol: str,
+        asset_class: str = "stock",
+        reference_price: Optional[float] = None,
+    ) -> Optional[dict]:
         if asset_class == "crypto":
-            return self.get_latest_crypto_quote(symbol)
-        return self.get_latest_quote(symbol)
+            return self.get_latest_crypto_quote(symbol, reference_price=reference_price)
+        return self.get_latest_quote(symbol, reference_price=reference_price)
 
-    def get_latest_crypto_quote(self, symbol: str) -> Optional[dict]:
+    def get_latest_crypto_quote(
+        self, symbol: str, reference_price: Optional[float] = None
+    ) -> Optional[dict]:
         if not self.configured:
             return None
         try:
             from alpaca.data.historical import CryptoHistoricalDataClient
             from alpaca.data.requests import CryptoLatestQuoteRequest
 
+            quote_symbol = normalize_crypto_symbol(symbol)
             client = CryptoHistoricalDataClient(settings.alpaca_api_key, settings.alpaca_secret_key)
-            req = CryptoLatestQuoteRequest(symbol_or_symbols=symbol)
+            req = CryptoLatestQuoteRequest(symbol_or_symbols=quote_symbol)
             quotes = client.get_crypto_latest_quote(req)
-            if symbol not in quotes:
+            if quote_symbol not in quotes:
                 return None
-            q = quotes[symbol]
+            q = quotes[quote_symbol]
             bid = float(q.bid_price)
             ask = float(q.ask_price)
-            spread_pct, spread_display = self.compute_spread(bid, ask)
+            bid, ask = normalize_prices(bid, ask, reference_price)
+            spread_pct, spread_display = spread_from_bid_ask(bid, ask)
             return {
                 "bid": bid,
                 "ask": ask,
                 "spread_pct": spread_pct,
-                "spread_display_pct": spread_display,
+                "spread_display": spread_display,
             }
         except Exception as exc:
             self._log_error("get_latest_crypto_quote", str(exc), {"symbol": symbol})
@@ -264,7 +280,9 @@ class AlpacaAdapter:
             self._log_error("get_bars", str(exc), {"symbol": symbol})
             return []
 
-    def get_latest_quote(self, symbol: str) -> Optional[dict]:
+    def get_latest_quote(
+        self, symbol: str, reference_price: Optional[float] = None
+    ) -> Optional[dict]:
         data_client = self._get_data_client()
         if data_client is None:
             return None
@@ -278,12 +296,13 @@ class AlpacaAdapter:
             q = quotes[symbol]
             bid = float(q.bid_price)
             ask = float(q.ask_price)
-            spread_pct, spread_display = self.compute_spread(bid, ask)
+            bid, ask = normalize_prices(bid, ask, reference_price)
+            spread_pct, spread_display = spread_from_bid_ask(bid, ask)
             return {
                 "bid": bid,
                 "ask": ask,
                 "spread_pct": spread_pct,
-                "spread_display_pct": spread_display,
+                "spread_display": spread_display,
             }
         except Exception as exc:
             self._log_error("get_latest_quote", str(exc), {"symbol": symbol})

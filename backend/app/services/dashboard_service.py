@@ -26,6 +26,7 @@ from app.services.memory_engine import MemoryEngine
 from app.services.monte_carlo_engine import MonteCarloEngine
 from app.services.backtest_engine import BacktestEngine
 from app.services.session_engine import SessionEngine
+from app.services.strategy_engine import StrategyEngine
 
 
 def _empty_state(message: str) -> dict[str, Any]:
@@ -38,6 +39,7 @@ def build_dashboard(session: Session) -> dict[str, Any]:
     alpaca = AlpacaAdapter(session)
     memory = MemoryEngine(session)
     ai = AIFundManager(session)
+    StrategyEngine(session, config)
 
     health = session.get(SystemHealth, 1)
     if health is None:
@@ -273,7 +275,12 @@ def build_dashboard(session: Session) -> dict[str, Any]:
 
     market_assets = []
     for c in candidates:
-        spread_str = c.spread_display if c.spread_display else ("No quote" if c.spread_pct is None else f"{c.spread_pct:.3f}%")
+        if c.spread_display:
+            spread_str = c.spread_display
+        elif c.spread_pct is None:
+            spread_str = "No quote"
+        else:
+            spread_str = f"{c.spread_pct * 100:.3f}%"
         market_assets.append(
             {
                 "symbol": c.symbol,
@@ -284,7 +291,7 @@ def build_dashboard(session: Session) -> dict[str, Any]:
                 "volatility": c.volatility_score,
                 "spread": spread_str,
                 "eligibility": c.eligibility.upper() if c.eligibility else "UNKNOWN",
-                "message": "No quote" if c.spread_pct is None and c.spread_display == "No quote" else None,
+                "message": c.spread_display if c.spread_display in ("No quote", "Invalid quote") else None,
             }
         )
 
@@ -338,8 +345,12 @@ def build_dashboard(session: Session) -> dict[str, Any]:
             "scenarios": scenarios,
         }
 
+    latest_scan = candidates[0].scanned_at if candidates else health.updated_at
+    sync_at = health.last_account_sync or (account.synced_at if account else None)
+
     return {
-        "lastSync": datetime.utcnow().strftime("%I:%M:%S %p · %b %d, %Y") if account else "Not synced",
+        "lastSyncAt": (sync_at.isoformat() + "Z") if sync_at else None,
+        "lastSync": (sync_at.isoformat() + "Z") if sync_at else "Not synced",
         "systemStatus": {
             "alpacaConnected": health.alpaca_connected,
             "geminiConfigured": health.gemini_configured,
@@ -380,7 +391,7 @@ def build_dashboard(session: Session) -> dict[str, Any]:
         "marketRadarMeta": {
             "status": market_radar_status,
             "message": market_radar_message,
-            "refreshedAt": datetime.utcnow().strftime("%I:%M %p") if account else "—",
+            "refreshedAt": (latest_scan.isoformat() + "Z") if latest_scan else None,
             "opportunitiesScanned": len(market_assets),
         },
         "monteCarlo": monte_carlo,

@@ -61,7 +61,7 @@ class SessionEngine:
             us_session = "closed"
 
         crypto_open = True  # Alpaca crypto 24/7
-        is_night = us_session in ("closed", "afterhours") or is_weekend
+        is_night = us_session in ("closed", "afterhours", "premarket") or is_weekend
         stock_allowed = us_session == "open" and not is_weekend
         crypto_allowed = crypto_open
 

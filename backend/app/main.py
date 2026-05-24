@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import init_db
 from app.routers import api
+from app.services.startup import bootstrap_database
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("hive")
@@ -31,6 +32,7 @@ app.include_router(api.router)
 def on_startup():
     logger.info("Starting Caged Hive Quant API")
     init_db()
+    bootstrap_database()
     if not settings.alpaca_configured:
         logger.warning("ALPACA_API_KEY / ALPACA_SECRET_KEY not set — broker sync unavailable")
     if not settings.gemini_configured:

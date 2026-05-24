@@ -66,9 +66,11 @@ def get_session_state(session: Session = Depends(get_session)):
 def refresh_radar(session: Session = Depends(get_session)):
     config = ConfigManager(session).get_current()
     from app.services.market_radar_service import MarketRadarService
+    from app.services.session_engine import SessionEngine
 
-    candidates = MarketRadarService(session, config).refresh()
-    return {"status": "ok", "count": len(candidates)}
+    session_state = SessionEngine().detect()
+    candidates = MarketRadarService(session, config).refresh(session_state)
+    return {"status": "ok", "count": len(candidates), "mode": session_state.mode}
 
 
 @router.post("/sync/alpaca")

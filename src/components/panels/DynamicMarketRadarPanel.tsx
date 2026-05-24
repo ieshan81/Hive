@@ -4,12 +4,13 @@ import { Radar } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { RingGauge } from "@/components/ui/RingGauge";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { formatShortTime } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 import type { MarketAsset } from "@/types/dashboard";
 
 interface DynamicMarketRadarPanelProps {
   assets: MarketAsset[];
-  refreshedAt: string;
+  refreshedAt: string | null;
   opportunitiesScanned: number;
   statusMessage?: string | null;
 }
@@ -89,7 +90,7 @@ export function DynamicMarketRadarPanel({
         </div>
       )}
       <footer className="flex items-center justify-between mt-3 pt-2 border-t border-white/5 text-[10px] text-slate-500">
-        <span>Data refreshed {refreshedAt}</span>
+        <span>Data refreshed {refreshedAt ? `${formatShortTime(refreshedAt)} local` : "—"}</span>
         <span>{opportunitiesScanned} opportunities scanned</span>
       </footer>
     </GlassPanel>
