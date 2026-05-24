@@ -29,6 +29,9 @@ from app.database import (
     SymbolCandidate,
     SystemHealth,
     TradeRecord,
+    LessonNode,
+    MemoryEdge,
+    MemoryEvidence,
 )
 from app.services.config_manager import ConfigManager
 from app.services.cycle_persistence import (
@@ -439,6 +442,34 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
     from app.services.alpaca_adapter import AlpacaAdapter
 
     recon = reconciliation_status(session, AlpacaAdapter(session))
+    from app.services.lesson_memory_service import LessonMemoryService
+
+    lesson_rows = list(session.exec(select(LessonNode).order_by(LessonNode.last_seen_at.desc())).all())
+    edge_rows = list(session.exec(select(MemoryEdge)).all())
+    evidence_rows = list(session.exec(select(MemoryEvidence)).all())
+    memory_graph = LessonMemoryService(session, config).build_graph()
+
+    def _lesson_row(r: LessonNode) -> dict:
+        return {
+            "id": r.id,
+            "memory_type": r.memory_type,
+            "title": r.title,
+            "summary": r.summary,
+            "detailed_lesson": r.detailed_lesson,
+            "severity": r.severity,
+            "confidence": r.confidence,
+            "source": r.source,
+            "cycle_run_id": r.cycle_run_id,
+            "signal_id": r.signal_id,
+            "broker_order_id": r.broker_order_id,
+            "symbol": r.symbol,
+            "strategy_name": r.strategy_name,
+            "evidence_json": r.evidence_json,
+            "proposed_action": r.proposed_action,
+            "action_status": r.action_status,
+            "occurrence_count": r.occurrence_count,
+            "created_at": r.created_at.isoformat() + "Z" if r.created_at else None,
+        }
 
     return {
         "activity.json": activity_data,
@@ -473,6 +504,15 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         "system_health.json": [_serialize_row(health)] if health else [],
         "system_summary.md": "\n".join(summary_lines),
         "dashboard_snapshot.json": dashboard,
+        "memory_graph.json": memory_graph,
+        "lesson_nodes.json": [_lesson_row(r) for r in lesson_rows],
+        "memory_edges.json": [_serialize_row(r) for r in edge_rows],
+        "memory_evidence.json": [_serialize_row(r) for r in evidence_rows],
+        "symbol_memory.json": [_lesson_row(r) for r in lesson_rows if r.symbol],
+        "strategy_memory.json": [_lesson_row(r) for r in lesson_rows if r.strategy_name],
+        "execution_memory.json": [_lesson_row(r) for r in lesson_rows if "execution" in r.memory_type or "trade" in r.memory_type],
+        "risk_memory.json": [_lesson_row(r) for r in lesson_rows if "risk" in r.memory_type or "block" in r.memory_type],
+        "operator_notes.json": [_lesson_row(r) for r in lesson_rows if r.memory_type == "operator_note"],
         "bundle_meta.json": {
             "database_fingerprint": database_fingerprint(),
             "exported_at": datetime.utcnow().isoformat() + "Z",

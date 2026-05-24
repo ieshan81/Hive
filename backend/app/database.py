@@ -448,6 +448,60 @@ class PromotionStatus(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class LessonNode(SQLModel, table=True):
+    """Evidence-based lesson memory — canonical store for Hive learning."""
+
+    __tablename__ = "lesson_nodes"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    memory_type: str = Field(index=True)
+    title: str
+    summary: str
+    detailed_lesson: str
+    severity: str = Field(default="MEDIUM", index=True)  # LOW|MEDIUM|HIGH|CRITICAL
+    confidence: float = 0.85
+    source: str = Field(default="deterministic", index=True)
+    cycle_run_id: Optional[str] = Field(default=None, index=True)
+    signal_id: Optional[int] = Field(default=None, index=True)
+    order_id: Optional[int] = Field(default=None, index=True)
+    broker_order_id: Optional[str] = Field(default=None, index=True)
+    symbol: Optional[str] = Field(default=None, index=True)
+    strategy_name: Optional[str] = Field(default=None, index=True)
+    related_entity_type: Optional[str] = None
+    related_entity_id: Optional[str] = None
+    evidence_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    proposed_action: Optional[str] = None
+    action_status: str = Field(default="none", index=True)
+    pattern_key: Optional[str] = Field(default=None, index=True)
+    occurrence_count: int = 1
+    first_seen_at: datetime = Field(default_factory=datetime.utcnow)
+    last_seen_at: datetime = Field(default_factory=datetime.utcnow)
+    tags: Optional[list] = Field(default=None, sa_column=Column(JSON))
+    unsupported_claim: bool = False
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class MemoryEdge(SQLModel, table=True):
+    __tablename__ = "memory_edges"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    source_id: str = Field(index=True)
+    target_id: str = Field(index=True)
+    relation: str = Field(index=True)
+    weight: float = 1.0
+    evidence_count: int = 1
+    lesson_id: Optional[int] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class MemoryEvidence(SQLModel, table=True):
+    __tablename__ = "memory_evidence"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    lesson_id: int = Field(index=True)
+    evidence_type: str
+    payload: dict = Field(sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 engine = create_engine(settings.resolve_database_url(), echo=False)
 
 

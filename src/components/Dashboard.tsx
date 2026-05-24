@@ -22,7 +22,7 @@ export function Dashboard({ data }: DashboardProps) {
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-4">
         <AccountSurvivalPanel data={data.accountSurvival} />
         <AIFundManagerPanel data={data.aiFundManager} />
-        <HiveMemoryGraphPanel memoryGraph={data.memoryGraph} />
+        <HiveMemoryGraphPanel />
       </div>
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-4 items-stretch">
         <LatestCyclePanel data={data.latestCycle ?? { cycleRunId: null, riskBlocked: 0, riskApproved: 0, portfolioSelected: 0, portfolioDeferred: 0, ordersSubmitted: 0, observations: 0 }} />

@@ -132,7 +132,10 @@ class AlpacaAdapter:
         if client is None:
             return []
         try:
+            from sqlalchemy import delete
+
             positions = client.get_all_positions()
+            self.session.exec(delete(PositionSnapshot))
             results = []
             for pos in positions:
                 snap = PositionSnapshot(

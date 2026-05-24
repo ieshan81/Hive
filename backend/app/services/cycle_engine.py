@@ -465,6 +465,23 @@ class CycleEngine:
             summary,
         )
         self.session.commit()
+
+        from app.services.memory_cycle_processor import process_cycle_memories
+
+        truth_msg = None
+        if summary.get("orders_submitted", 0) > 0:
+            truth_msg = f"orders_submitted={summary['orders_submitted']}"
+        try:
+            summary["memory"] = process_cycle_memories(
+                self.session,
+                cycle_run_id,
+                summary,
+                dashboard_truth_message=truth_msg,
+            )
+            self.session.commit()
+        except Exception as exc:
+            summary["memory_error"] = str(exc)
+
         verify_cycle_persistence(self.session, summary)
         self.session.commit()
         return summary

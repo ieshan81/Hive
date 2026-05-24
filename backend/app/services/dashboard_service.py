@@ -156,7 +156,12 @@ def build_dashboard(session: Session) -> dict[str, Any]:
         )
         deferred_early = [d for d in portfolio_decs_early if d.portfolio_status == "portfolio_deferred"]
         approved_no_order_early = [s for s in signals_early if s.status == "approved_no_order"]
-        if approved_no_order_early:
+        if last_cycle.get("orders_submitted", 0) > 0:
+            truth_message = (
+                f"Paper order submitted this cycle ({last_cycle.get('orders_submitted')}) — "
+                "see execution logs and positions"
+            )
+        elif approved_no_order_early:
             meta0 = approved_no_order_early[0].signal_metadata or {}
             code = meta0.get("block_reason_code", "")
             if code == "PAPER_EXECUTION_DISABLED":

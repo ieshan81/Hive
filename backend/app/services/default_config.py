@@ -1,7 +1,7 @@
 """Default risk/config — all thresholds in DB, versioned via ConfigManager."""
 
 DEFAULT_CONFIG = {
-    "config_version": 2,
+    "config_version": 3,
     "max_risk_per_trade": 0.005,
     "max_position_size_pct": 0.25,
     "max_open_positions": 2,
@@ -192,6 +192,17 @@ DEFAULT_CONFIG = {
         "meme_extra_edge_multiplier": 1.25,
         "meme_max_exposure_pct": 8.0,
         "meme_max_spread_pct": 0.004,
+    },
+    "memory": {
+        "enabled": True,
+        "pattern_window_cycles": 20,
+        "min_occurrences_for_pattern": 3,
+        "max_memory_penalty": 0.15,
+        "require_human_approval_for_config_changes": True,
+    },
+    "memory_weights": {
+        "confirmation_bonus": 0.1,
+        "failure_penalty": 0.15,
     },
     "ai_enabled": True,
     "ai_monthly_budget_usd": 5.0,

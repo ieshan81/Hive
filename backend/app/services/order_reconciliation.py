@@ -88,6 +88,41 @@ def reconcile_order(
     alpaca.sync_account()
     alpaca.sync_positions()
     result["positions_synced"] = True
+
+    if status in ("paper_order_filled", "paper_order_partially_filled"):
+        try:
+            from app.services.config_manager import ConfigManager
+            from app.services.memory_triggers import on_paper_order_filled, on_qty_fee_difference
+            from app.database import PositionSnapshot
+            from sqlmodel import select
+
+            config = ConfigManager(session).get_current()
+            cid = execution_log.cycle_run_id or ""
+            on_paper_order_filled(
+                session, config, execution_log=execution_log, cycle_run_id=cid
+            )
+            filled = float(filled_qty or 0)
+            if filled > 0:
+                sym_norm = execution_log.symbol.upper().replace("/", "")
+                rows = session.exec(select(PositionSnapshot)).all()
+                broker_qty = max(
+                    (float(p.qty) for p in rows if p.symbol.upper().replace("/", "") == sym_norm and (p.qty or 0) > 0),
+                    default=0.0,
+                )
+                if broker_qty > 0:
+                    on_qty_fee_difference(
+                        session,
+                        config,
+                        filled_qty=filled,
+                        broker_position_qty=broker_qty,
+                        symbol=execution_log.symbol,
+                        cycle_run_id=cid,
+                        broker_order_id=execution_log.broker_order_id,
+                        avg_entry_price=filled_avg,
+                    )
+        except Exception:
+            pass
+
     return result
 
 

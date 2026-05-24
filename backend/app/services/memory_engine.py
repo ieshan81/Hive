@@ -71,34 +71,7 @@ class MemoryEngine:
         )
 
     def memory_graph_nodes(self) -> list[dict]:
-        memories = self.list_memories(200)
-        type_counts: dict[str, int] = {}
-        for m in memories:
-            type_counts[m.memory_type] = type_counts.get(m.memory_type, 0) + 1
+        from app.services.lesson_memory_service import LessonMemoryService
 
-        colors = {
-            "trade": "#3b82f6",
-            "strategy": "#8b5cf6",
-            "regime": "#06b6d4",
-            "correlation": "#14b8a6",
-            "blocked": "#f97316",
-            "lesson": "#22c55e",
-            "mistake": "#ef4444",
-        }
-        positions = [
-            (72, 28), (28, 42), (78, 58), (22, 68), (68, 78), (38, 22), (48, 82),
-        ]
-        nodes = []
-        for i, (label, count) in enumerate(type_counts.items()):
-            x, y = positions[i % len(positions)]
-            nodes.append(
-                {
-                    "id": label,
-                    "label": label.replace("_", " ").title(),
-                    "count": count,
-                    "color": colors.get(label, "#64748b"),
-                    "x": x,
-                    "y": y,
-                }
-            )
-        return nodes
+        graph = LessonMemoryService(self.session, self.config).build_graph()
+        return graph.get("nodes", [])

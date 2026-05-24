@@ -323,6 +323,112 @@ def promotion_request(target_stage: str = "PRE_LIVE", session: Session = Depends
     return PromotionService(session, config).request_promotion(target_stage)
 
 
+@router.get("/memory/graph")
+def memory_graph(session: Session = Depends(get_session)):
+    from app.services.config_manager import ConfigManager
+    from app.services.lesson_memory_service import LessonMemoryService
+
+    config = ConfigManager(session).get_current()
+    graph = LessonMemoryService(session, config).build_graph()
+    return {"status": "ok", **graph}
+
+
+@router.get("/memory/node/{node_id}")
+def memory_node_detail(node_id: str, session: Session = Depends(get_session)):
+    from app.services.config_manager import ConfigManager
+    from app.services.lesson_memory_service import LessonMemoryService
+
+    config = ConfigManager(session).get_current()
+    detail = LessonMemoryService(session, config).get_lesson(node_id)
+    if not detail:
+        return {"status": "error", "message": "Node not found"}
+    return {"status": "ok", "node": detail}
+
+
+@router.get("/memory/lessons")
+def memory_lessons(
+    symbol: str | None = None,
+    severity: str | None = None,
+    memory_type: str | None = None,
+    cycle_run_id: str | None = None,
+    strategy_name: str | None = None,
+    action_status: str | None = None,
+    limit: int = 100,
+    session: Session = Depends(get_session),
+):
+    from app.services.config_manager import ConfigManager
+    from app.services.lesson_memory_service import LessonMemoryService
+
+    config = ConfigManager(session).get_current()
+    rows = LessonMemoryService(session, config).list_lessons(
+        symbol=symbol,
+        severity=severity,
+        memory_type=memory_type,
+        cycle_run_id=cycle_run_id,
+        strategy_name=strategy_name,
+        action_status=action_status,
+        limit=limit,
+    )
+    return {"status": "ok", "count": len(rows), "lessons": rows}
+
+
+@router.post("/memory/operator-note")
+def memory_operator_note(
+    title: str,
+    summary: str,
+    detailed_lesson: str = "",
+    symbol: str | None = None,
+    severity: str = "MEDIUM",
+    session: Session = Depends(get_session),
+):
+    from app.services.config_manager import ConfigManager
+    from app.services.lesson_memory_service import LessonMemoryService
+
+    config = ConfigManager(session).get_current()
+    row = LessonMemoryService(session, config).upsert_lesson(
+        memory_type="operator_note",
+        title=title,
+        summary=summary,
+        detailed_lesson=detailed_lesson or summary,
+        severity=severity,
+        source="human_approved",
+        symbol=symbol,
+        action_status="approved",
+    )
+    session.commit()
+    return {"status": "ok", "lesson_id": row.id}
+
+
+@router.post("/memory/lesson/{lesson_id}/approve")
+def memory_lesson_approve(lesson_id: int, session: Session = Depends(get_session)):
+    from app.services.config_manager import ConfigManager
+    from app.services.lesson_memory_service import LessonMemoryService
+
+    config = ConfigManager(session).get_current()
+    row = LessonMemoryService(session, config).approve(lesson_id)
+    session.commit()
+    return {"status": "ok" if row else "error", "lesson_id": lesson_id}
+
+
+@router.post("/memory/lesson/{lesson_id}/reject")
+def memory_lesson_reject(lesson_id: int, session: Session = Depends(get_session)):
+    from app.services.config_manager import ConfigManager
+    from app.services.lesson_memory_service import LessonMemoryService
+
+    config = ConfigManager(session).get_current()
+    row = LessonMemoryService(session, config).reject(lesson_id)
+    session.commit()
+    return {"status": "ok" if row else "error", "lesson_id": lesson_id}
+
+
+@router.post("/memory/backfill")
+def memory_backfill(cycle_run_id: str = "8796825e-5f25-4cfa-b0f9-b0141f61859c", session: Session = Depends(get_session)):
+    from app.services.memory_cycle_processor import backfill_doge_cycle_if_present
+
+    count = backfill_doge_cycle_if_present(session, cycle_run_id)
+    return {"status": "ok", "lessons_updated": count, "cycle_run_id": cycle_run_id}
+
+
 @router.get("/ai/config-proposals")
 def ai_config_proposals(session: Session = Depends(get_session)):
     from sqlmodel import select

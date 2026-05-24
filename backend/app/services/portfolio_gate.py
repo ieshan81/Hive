@@ -53,7 +53,14 @@ def _stage_portfolio_value(config: dict, key: str, default: float) -> float:
     return float(cfg_get(config, f"portfolio.{key}", default))
 
 
-def compute_ranking_score(config: dict, cand: ApprovedCandidate, *, memory_penalty: float = 0, cooldown_penalty: float = 0, correlation_penalty: float = 0) -> tuple[float, dict]:
+def compute_ranking_score(
+    config: dict,
+    cand: ApprovedCandidate,
+    *,
+    memory_penalty: float = 0,
+    cooldown_penalty: float = 0,
+    correlation_penalty: float = 0,
+) -> tuple[float, dict]:
     w = cfg_get(config, "ranking", {}) or {}
     meta = cand.meta or {}
     strength = cand.strength or 0
@@ -92,6 +99,9 @@ def compute_ranking_score(config: dict, cand: ApprovedCandidate, *, memory_penal
     score -= float(w.get("w_correlation_penalty", 0)) * correlation_penalty
     if cooldown_penalty:
         score -= cooldown_penalty * 0.1
+    if memory_penalty:
+        score -= memory_penalty
+        components["memory_penalty"] = memory_penalty
 
     for h in ("momentum_1h", "momentum_3h", "momentum_6h", "momentum_12h"):
         if h in meta:
@@ -137,7 +147,20 @@ class PortfolioGate:
         exposure_ratio = current_exposure / equity if equity > 0 else 0
 
         ranked: list[tuple[float, ApprovedCandidate, dict]] = []
+        memory_pen_fn = None
+        try:
+            from app.services.config_manager import ConfigManager
+            from app.services.lesson_memory_service import LessonMemoryService
+
+            mem_cfg = ConfigManager(self.session).get_current()
+            if mem_cfg.get("memory", {}).get("enabled", True):
+                lms = LessonMemoryService(self.session, mem_cfg)
+                memory_pen_fn = lms.symbol_memory_penalty
+        except Exception:
+            pass
+
         for cand in candidates:
+            mem_pen = memory_pen_fn(cand.symbol) if memory_pen_fn else 0.0
             corr_pen, corr_ev = correlation_penalty_for_candidate(
                 self.alpaca,
                 cand.symbol,
@@ -145,7 +168,9 @@ class PortfolioGate:
                 threshold=corr_threshold,
                 lookback_hours=lookback_h,
             )
-            score, comp = compute_ranking_score(self.config, cand, correlation_penalty=corr_pen)
+            score, comp = compute_ranking_score(
+                self.config, cand, correlation_penalty=corr_pen, memory_penalty=mem_pen
+            )
             ranked.append((score, cand, {**comp, "correlation": corr_ev}))
 
         ranked.sort(key=lambda x: x[0], reverse=True)
