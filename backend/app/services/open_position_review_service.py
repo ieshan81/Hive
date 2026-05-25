@@ -41,11 +41,15 @@ class OpenPositionReviewService:
         if tier == "MAJOR_CRYPTO":
             max_hold = int(self.pl_cfg.get("major_crypto_max_hold_hours", 48)) * 60
 
+        norm_sym = symbol.replace("/", "")
         enriched = self.session.exec(
-            select(PositionEnrichedState).where(PositionEnrichedState.symbol == symbol)
+            select(PositionEnrichedState).where(
+                PositionEnrichedState.broker_symbol.in_([symbol, norm_sym, f"{norm_sym}USD"])
+            )
         ).first()
-        strategy = enriched.strategy if enriched else None
-        signal_id = enriched.signal_id if enriched else None
+        state = (enriched.state_json or {}) if enriched else {}
+        strategy = state.get("strategy") or state.get("strategy_id")
+        signal_id = state.get("signal_id")
         intent = self._strategy_intent(strategy, signal_id)
 
         stale = tier == "MEME_SUPPORTED" and intent == "quick_push_pull" and hold_min > max_hold
