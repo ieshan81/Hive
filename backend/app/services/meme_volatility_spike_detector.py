@@ -36,6 +36,23 @@ class MemeVolatilitySpikeDetector:
         bars_1m = self._bars(sym, "1Min", 30)
         bars_5m = self._bars(sym, "5Min", 24)
         bars_15m = self._bars(sym, "15Min", 16)
+        tf_status = {
+            "1Min": bool(bars_1m),
+            "5Min": bool(bars_5m),
+            "15Min": bool(bars_15m),
+        }
+        if not any(tf_status.values()):
+            return {
+                "symbol": sym,
+                "detector_version": "v2",
+                "status": "data_unavailable",
+                "message": "Short-timeframe bar data unavailable — no spike score computed.",
+                "timeframes_used": ["1Min", "5Min", "15Min"],
+                "timeframe_data_available": tf_status,
+                "spike_detected": False,
+                "suggested_action": "observe_only",
+                "confidence": 0.0,
+            }
         quote = self.alpaca.get_quote(normalize_crypto_symbol(sym), "crypto") or {}
 
         price_1m = self._pct_change(bars_1m, 1)
@@ -97,6 +114,7 @@ class MemeVolatilitySpikeDetector:
             "detector_version": "v2",
             "tier": tier,
             "timeframes_used": ["1Min", "5Min", "15Min"],
+            "timeframe_data_available": tf_status,
             "spike_detected": spike_detected,
             "momentum_quality": "strong" if price_5m > 0.02 else "weak" if price_5m < -0.02 else "neutral",
             "manipulation_risk": manipulation,

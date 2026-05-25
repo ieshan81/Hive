@@ -112,7 +112,21 @@ class PaperExecutionService:
     ) -> ExecutionLog:
         quote_sym = normalize_crypto_symbol(cand.symbol)
         quote = self.alpaca.get_quote(quote_sym, "crypto") or {}
-        quote["quote_age_seconds"] = 0
+        from datetime import datetime, timezone
+
+        qts = quote.get("quote_timestamp")
+        if qts:
+            try:
+                ts = datetime.fromisoformat(str(qts).replace("Z", "+00:00"))
+                quote["quote_age_seconds"] = max(
+                    0.0, (datetime.now(timezone.utc) - ts).total_seconds()
+                )
+            except (TypeError, ValueError):
+                quote["quote_age_seconds"] = None
+                quote["quote_age_status"] = "quote_age_unknown"
+        else:
+            quote["quote_age_seconds"] = None
+            quote["quote_age_status"] = "quote_age_unknown"
 
         pf = run_preflight(
             self.session,

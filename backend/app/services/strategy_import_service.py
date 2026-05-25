@@ -10,8 +10,11 @@ from typing import Any, Optional
 
 from sqlmodel import Session, select
 
+from app.config import BACKEND_ROOT
 from app.database import StrategyRegistry
 from app.services.config_manager import ConfigManager
+
+STRATEGY_IMPORT_SANDBOX = (BACKEND_ROOT / "data" / "strategy_import_sandbox").resolve()
 
 FORBIDDEN_AST_NAMES = frozenset(
     {
@@ -147,10 +150,25 @@ class StrategyImportService:
             "message": "Imported to sandbox — backtest_only required before paper",
         }
 
+    def _resolve_sandbox_path(self, path: str) -> Path | None:
+        """Only paths inside approved strategy import sandbox."""
+        STRATEGY_IMPORT_SANDBOX.mkdir(parents=True, exist_ok=True)
+        raw = Path(path)
+        candidate = raw.resolve() if raw.is_absolute() else (STRATEGY_IMPORT_SANDBOX / raw).resolve()
+        try:
+            candidate.relative_to(STRATEGY_IMPORT_SANDBOX)
+        except ValueError:
+            return None
+        return candidate if candidate.exists() and candidate.is_file() else None
+
     def import_file(self, path: str) -> dict[str, Any]:
-        p = Path(path)
-        if not p.exists():
-            return {"status": "error", "message": "file not found"}
+        p = self._resolve_sandbox_path(path)
+        if p is None:
+            return {
+                "status": "error",
+                "message": "path not allowed — use sandbox directory or paste manifest JSON",
+                "sandbox_root": str(STRATEGY_IMPORT_SANDBOX),
+            }
         if p.suffix.lower() in (".json",):
             manifest = json.loads(p.read_text(encoding="utf-8"))
             return self.import_manifest(manifest)

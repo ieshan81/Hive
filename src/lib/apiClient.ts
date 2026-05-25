@@ -39,6 +39,15 @@ export function getApiBaseUrl(options?: { forServer?: boolean }): string {
   return PRODUCTION_BACKEND_DEFAULT;
 }
 
+function operatorHeaders(): Record<string, string> {
+  const token =
+    typeof process !== "undefined"
+      ? process.env.NEXT_PUBLIC_OPERATOR_TOKEN || ""
+      : "";
+  if (!token.trim()) return {};
+  return { "X-Operator-Token": token.trim() };
+}
+
 export function buildApiUrl(path: string, forServer?: boolean): string {
   const base = getApiBaseUrl({ forServer });
   const p = path.startsWith("/") ? path : `/${path}`;
@@ -129,6 +138,7 @@ export async function apiPost<T = unknown>(
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
+        ...operatorHeaders(),
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
       cache: "no-store",

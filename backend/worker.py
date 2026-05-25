@@ -19,7 +19,15 @@ def run_sync_cycle():
 
 
 if __name__ == "__main__":
-    logger.info("Hive worker starting — paper trading only")
+    import os
+    import sys
+
+    if os.environ.get("HIVE_WORKER_EXPLICIT_ENABLE") != "1":
+        logger.error(
+            "Worker refused — set HIVE_WORKER_EXPLICIT_ENABLE=1 to run (not for Railway web deploy)"
+        )
+        sys.exit(1)
+    logger.info("Hive worker starting — paper trading only (explicit enable)")
     while True:
         try:
             run_sync_cycle()

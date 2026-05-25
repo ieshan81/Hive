@@ -10,6 +10,7 @@ from sqlmodel import Session, select
 
 from app.config import settings
 from app.services.broker_safety import is_paper_broker_url
+from app.services.broker_submission_guard import blocked_submission_result, guard_before_submit
 from app.database import AccountSnapshot, BrokerError, PositionSnapshot
 
 from app.services.cycle_context import current_cycle_run_id
@@ -130,31 +131,36 @@ class AlpacaAdapter:
     def sync_positions(self) -> list[PositionSnapshot]:
         client = self._get_trading_client()
         if client is None:
-            return []
+            prior = list(self.session.exec(select(PositionSnapshot)).all())
+            return prior
         try:
+            positions = client.get_all_positions()
+            staged: list[PositionSnapshot] = []
+            for pos in positions:
+                staged.append(
+                    PositionSnapshot(
+                        symbol=pos.symbol,
+                        qty=float(pos.qty),
+                        side=pos.side.value if hasattr(pos.side, "value") else str(pos.side),
+                        avg_entry_price=float(pos.avg_entry_price),
+                        current_price=float(pos.current_price),
+                        market_value=float(pos.market_value),
+                        unrealized_pl=float(pos.unrealized_pl),
+                        unrealized_pl_pct=float(pos.unrealized_plpc) * 100,
+                    )
+                )
             from sqlalchemy import delete
 
-            positions = client.get_all_positions()
             self.session.exec(delete(PositionSnapshot))
-            results = []
-            for pos in positions:
-                snap = PositionSnapshot(
-                    symbol=pos.symbol,
-                    qty=float(pos.qty),
-                    side=pos.side.value if hasattr(pos.side, "value") else str(pos.side),
-                    avg_entry_price=float(pos.avg_entry_price),
-                    current_price=float(pos.current_price),
-                    market_value=float(pos.market_value),
-                    unrealized_pl=float(pos.unrealized_pl),
-                    unrealized_pl_pct=float(pos.unrealized_plpc) * 100,
-                )
+            for snap in staged:
                 self.session.add(snap)
-                results.append(snap)
             self.session.commit()
-            return results
+            return staged
         except Exception as exc:
             self._log_error("sync_positions", str(exc))
-            return []
+            self.session.rollback()
+            prior = list(self.session.exec(select(PositionSnapshot)).all())
+            return prior
 
     def get_tradable_assets(self, asset_class: str = "stock", limit: int = 500) -> list[dict]:
         client = self._get_trading_client()
@@ -251,12 +257,15 @@ class AlpacaAdapter:
             bid, ask = normalize_prices(bid, ask, reference_price)
             spread_pct, spread_display = spread_from_bid_ask(bid, ask)
             mid = (bid + ask) / 2.0
+            ts = getattr(q, "timestamp", None)
+            quote_ts = ts.isoformat() if ts is not None else None
             return {
                 "bid": bid,
                 "ask": ask,
                 "mid": mid,
                 "spread_pct": spread_pct,
                 "spread_display": spread_display,
+                "quote_timestamp": quote_ts,
             }
         except Exception as exc:
             self._log_error("get_latest_crypto_quote", str(exc), {"symbol": symbol})
@@ -279,10 +288,20 @@ class AlpacaAdapter:
 
             quote_symbol = normalize_crypto_symbol(symbol)
             tf_map = {
+                "1Min": TimeFrame(1, TimeFrameUnit.Minute),
+                "5Min": TimeFrame(5, TimeFrameUnit.Minute),
+                "15Min": TimeFrame(15, TimeFrameUnit.Minute),
                 "1Hour": TimeFrame(1, TimeFrameUnit.Hour),
                 "1Day": TimeFrame(1, TimeFrameUnit.Day),
             }
-            tf = tf_map.get(timeframe, TimeFrame(1, TimeFrameUnit.Hour))
+            if timeframe not in tf_map:
+                self._log_error(
+                    "get_crypto_bars",
+                    f"unsupported timeframe {timeframe}",
+                    {"symbol": symbol},
+                )
+                return []
+            tf = tf_map[timeframe]
             end = datetime.utcnow()
             days = lookback_days if lookback_days else max(limit // 24 + 7, limit * 3 // 24)
             start = end - timedelta(days=max(days, 7))
@@ -431,8 +450,9 @@ class AlpacaAdapter:
         client_order_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """Marketable limit IOC — default crypto execution policy."""
-        if not is_paper_broker_url():
-            return {"success": False, "error": "BROKER_NOT_PAPER"}
+        blocked = guard_before_submit()
+        if blocked:
+            return blocked
         client = self._get_trading_client()
         if client is None:
             return {"success": False, "error": "Alpaca not configured"}
@@ -475,6 +495,9 @@ class AlpacaAdapter:
         stop_loss: Optional[float] = None,
         take_profit: Optional[float] = None,
     ) -> dict[str, Any]:
+        blocked = guard_before_submit()
+        if blocked:
+            return blocked
         client = self._get_trading_client()
         if client is None:
             return {"success": False, "error": "Alpaca not configured"}
@@ -512,6 +535,9 @@ class AlpacaAdapter:
             return {"success": False, "error": str(exc)}
 
     def cancel_order(self, order_id: str) -> dict[str, Any]:
+        blocked = guard_before_submit()
+        if blocked:
+            return blocked
         client = self._get_trading_client()
         if client is None:
             return {"success": False, "error": "Alpaca not configured"}

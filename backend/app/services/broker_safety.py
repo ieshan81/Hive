@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from app.config import settings
 from app.services.engine_config import cfg_get, current_promotion_stage
 
@@ -25,8 +27,8 @@ def live_lock_status(config: dict) -> dict:
         "promotion_stage": stage,
         "live_orders_enabled": live_enabled,
         "live_trading_enabled": bool(config.get("live_trading_enabled", False)),
-        "LIVE_TRADING_ARMED": 0,
-        "PROMOTION_GATES_PASSED": 0,
+        "LIVE_TRADING_ARMED": int(os.environ.get("LIVE_TRADING_ARMED", "0") or 0),
+        "PROMOTION_GATES_PASSED": int(os.environ.get("PROMOTION_GATES_PASSED", "0") or 0),
         "live_lock_status": "locked" if not live_enabled and stage == "PAPER" else "restricted",
     }
 

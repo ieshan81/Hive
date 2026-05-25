@@ -24,6 +24,7 @@ from app.services.strategy_memory_validation_service import StrategyMemoryValida
 from app.services.strategy_registry_service import StrategyRegistryService
 from app.services.strategy_scorecard_service import StrategyScorecardService
 from app.services.strategy_validation_gate import StrategyValidationGate
+from app.services.operator_auth import require_operator_token
 
 router = APIRouter(prefix="/api/strategies", tags=["strategy-registry"])
 
@@ -278,11 +279,21 @@ def pause_experiment(strategy_id: str, body: dict = Body(default={}), session: S
 def strategies_imported(session: Session = Depends(get_session)):
     from app.services.strategy_import_service import StrategyImportService
 
-    return {"status": "ok", "strategies": StrategyImportService(session).list_imported()}
+    strategies = StrategyImportService(session).list_imported()
+    return {
+        "status": "ok",
+        "imported_count": len(strategies),
+        "strategies": strategies,
+        "message": "No strategies imported yet." if not strategies else f"{len(strategies)} imported strateg(ies).",
+    }
 
 
 @router.post("/import")
-def strategies_import(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def strategies_import(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     from app.services.strategy_import_service import StrategyImportService
 
     _block_ai_actor(body)

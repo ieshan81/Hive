@@ -388,20 +388,56 @@ class BrokerReconciliationService:
             is not None
         )
 
+    def symbols_with_entry_conflicts(self) -> list[dict[str, Any]]:
+        """All symbols that should block new entries (not flat-historical-only)."""
+        out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for g in self.ghost_position_candidates():
+            sym = g.get("symbol", "?")
+            key = sym.upper()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({"symbol": sym, "classification": g.get("classification"), "reason": "ghost_position"})
+        for pos in self.session.exec(select(PositionSnapshot).where(PositionSnapshot.qty > 0)).all():
+            audit = self.classify_symbol(pos.symbol)
+            sym = audit.get("symbol") or pos.symbol
+            key = sym.upper()
+            if key in seen:
+                continue
+            seen.add(key)
+            cls = audit.get("classification")
+            if cls == "BROKER_FLAT_WITH_HISTORICAL_BUY_ONLY":
+                continue
+            if cls in (
+                "BROKER_AVAILABILITY_CONFLICT",
+                "LOCAL_STALE_POSITION",
+                "BROKER_ACTIVITY_MISMATCH",
+            ) or audit.get("broker_position_open"):
+                out.append({"symbol": sym, "classification": cls, "reason": "broker_conflict"})
+        return out
+
     def training_entry_blockers(self) -> list[str]:
-        doge = self.doge_audit()
-        blockers = []
-        if doge.get("classification") == "BROKER_AVAILABILITY_CONFLICT":
-            blockers.append("reconciliation:doge_availability_conflict")
-        if doge.get("classification") == "LOCAL_STALE_POSITION":
-            blockers.append("reconciliation:local_ghost_position")
-        if doge.get("classification") == "BROKER_ACTIVITY_MISMATCH":
-            blockers.append("reconciliation:broker_activity_mismatch")
-        if self.ghost_position_candidates():
-            blockers.append("reconciliation:ghost_position_candidates")
-        if doge.get("broker_position_open"):
-            blockers.append("open_position_blocks_duplicate_entry")
-        return blockers
+        blockers: list[str] = []
+        for c in self.symbols_with_entry_conflicts():
+            sym = c.get("symbol", "?")
+            cls = c.get("classification")
+            reason = c.get("reason")
+            if reason == "ghost_position":
+                blockers.append(f"reconciliation:ghost:{sym}")
+            elif cls == "BROKER_AVAILABILITY_CONFLICT":
+                blockers.append(f"reconciliation:availability_conflict:{sym}")
+            elif cls == "LOCAL_STALE_POSITION":
+                blockers.append(f"reconciliation:local_stale:{sym}")
+            elif cls == "BROKER_ACTIVITY_MISMATCH":
+                blockers.append(f"reconciliation:activity_mismatch:{sym}")
+            elif cls and "BROKER_FLAT" not in cls:
+                blockers.append(f"reconciliation:{cls}:{sym}")
+        for pos in self.session.exec(select(PositionSnapshot).where(PositionSnapshot.qty > 0)).all():
+            audit = self.classify_symbol(pos.symbol)
+            if audit.get("broker_position_open"):
+                blockers.append(f"open_position_blocks_duplicate_entry:{audit.get('symbol', pos.symbol)}")
+        return list(dict.fromkeys(blockers))
 
     def build_diagnostic_exports(self) -> dict[str, Any]:
         doge = self.doge_audit()

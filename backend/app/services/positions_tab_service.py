@@ -67,6 +67,11 @@ def position_states(session: Session) -> list[dict[str, Any]]:
 
 
 def trades_history(session: Session, limit: int = 50) -> list[dict[str, Any]]:
+    from app.services.broker_reconciliation_service import BrokerReconciliationService
+    from app.services.config_manager import ConfigManager
+    from app.services.user_facing_status import trade_broker_status
+
+    recon = BrokerReconciliationService(session, ConfigManager(session).get_current())
     rows = session.exec(
         select(TradeRecord).order_by(TradeRecord.opened_at.desc()).limit(limit)
     ).all()
@@ -75,6 +80,18 @@ def trades_history(session: Session, limit: int = 50) -> list[dict[str, Any]]:
         mems = session.exec(
             select(LessonNode).where(LessonNode.symbol == t.symbol).limit(5)
         ).all()
+        audit = recon.classify_symbol(t.symbol)
+        broker_flags = trade_broker_status(
+            audit.get("classification"),
+            broker_open=bool(audit.get("broker_position_open")),
+            local_qty=float(audit.get("local_qty") or 0),
+        )
+        outcome = t.status
+        if broker_flags["broker_confirmed_status"] == "historical_only" and (outcome or "").lower() in (
+            "open",
+            "active",
+        ):
+            outcome = "broker_reconciled_flat"
         out.append(
             {
                 "trade_id": t.id,
@@ -90,9 +107,10 @@ def trades_history(session: Session, limit: int = 50) -> list[dict[str, Any]]:
                 "strategy": t.strategy,
                 "reason_opened": None,
                 "reason_closed": None,
-                "outcome": t.status,
+                "outcome": outcome,
                 "return_pct": t.return_pct,
                 "linked_memories": [{"id": m.id, "title": m.title} for m in mems],
+                **broker_flags,
             }
         )
     return out

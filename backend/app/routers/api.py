@@ -23,6 +23,7 @@ from app.services.query_service import (
 from app.services.ai_budget_guard import AIBudgetGuard
 from app.services.ai_lab_service import build_compact_cycle_context
 from app.services.memory_engine import MemoryEngine
+from app.services.operator_auth import require_operator_token
 
 router = APIRouter(prefix="/api", tags=["api"])
 
@@ -61,7 +62,10 @@ def health_check(session: Session = Depends(get_session)):
 
 
 @router.post("/cycle/run")
-def run_cycle(session: Session = Depends(get_session)):
+def run_cycle(
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     from app.services.cycle_engine import CycleEngine
 
     result = CycleEngine(session).run()

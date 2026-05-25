@@ -37,6 +37,7 @@ from app.services.monte_carlo_engine import MonteCarloEngine
 from app.services.backtest_engine import BacktestEngine
 from app.services.session_engine import SessionEngine
 from app.services.strategy_engine import StrategyEngine
+from app.services.order_metrics import order_summary
 
 
 def _empty_state(message: str) -> dict[str, Any]:
@@ -699,6 +700,31 @@ def build_dashboard(session: Session) -> dict[str, Any]:
             "preflightBlockers": paper_status.get("paper_execution_blockers", []),
             "noAiOrderAuthority": True,
         },
+        "orderSummary": order_summary(session),
+        "safetyBanner": _safety_banner(session, config, paper_status),
+    }
+
+
+def _safety_banner(session: Session, config: dict, paper_status: dict) -> dict:
+    from app.services.broker_reconciliation_service import BrokerReconciliationService
+    from app.services.fast_crypto_training_loop import FastCryptoTrainingLoop
+    from app.services.live_lock_tripwire import live_lock_tripwire_status
+
+    recon = BrokerReconciliationService(session, config)
+    ft = FastCryptoTrainingLoop(session, config).status()
+    trip = live_lock_tripwire_status(config)
+    open_n = len(list(session.exec(select(PositionSnapshot).where(PositionSnapshot.qty > 0)).all()))
+    ghosts = recon.ghost_position_candidates()
+    broker_truth = "Synced" if not ghosts else "Needs Review"
+    return {
+        "liveTradingLocked": trip.get("live_lock_status") == "locked",
+        "trainingMode": "ON" if ft.get("training_mode_enabled") else "OFF",
+        "botCanPlaceOrders": "YES" if ft.get("final_can_submit_orders") else "NO",
+        "openPositions": open_n,
+        "brokerTruth": broker_truth,
+        "paperBroker": trip.get("paper_broker", True),
+        "plainMessage": ft.get("plain_message")
+        or "The bot cannot place new paper orders until Training Mode is enabled.",
     }
 
 

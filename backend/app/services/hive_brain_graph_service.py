@@ -305,7 +305,7 @@ class HiveBrainGraphService:
                     "weight_tier": "strong",
                 }
             )
-        self._append_flat_historical_positions(nodes, edges, recon, cid)
+        self._append_flat_historical_positions(nodes, edges, recon, "cluster-broker-truth")
 
     def _append_flat_historical_positions(
         self, nodes: list[dict], edges: list[dict], recon, cid: str

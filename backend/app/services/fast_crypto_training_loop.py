@@ -50,7 +50,12 @@ class FastCryptoTrainingLoop:
             and not any(b.startswith("open_position") for b in recon_blockers)
             and len(recon.ghost_position_candidates()) == 0
         )
-        return {
+        from app.services.user_facing_status import friendly_blockers, wrap_status_payload
+
+        lease_st = self.lease.status()
+        lease_meta = lease_st.get("last_result")
+        stale_lease = bool(lease_meta) and not bool(self.pl.cfg.get("mode_enabled"))
+        payload = {
             "status": "ok",
             "fast_training_loop_enabled": bool(self.ft.get("fast_training_loop_enabled", False)),
             "fast_training_execute_orders": bool(self.ft.get("fast_training_execute_orders", False)),
@@ -71,8 +76,36 @@ class FastCryptoTrainingLoop:
             "lease": self.lease.status(),
             "in_process_loop_supported": False,
             "recommended_trigger": "POST /api/fast-training/run-once",
+            "signals_found": entries_eligible,
+            "orders_permitted": bool(self.pl.cfg.get("mode_enabled")),
+            "final_can_submit_orders": entries_eligible and self._can_submit_orders(),
+            "training_enabled": bool(self.pl.cfg.get("mode_enabled")),
+            "live_locked": live_lock_status(self.config).get("live_lock_status") == "locked",
+            "broker_reconciliation_summary": recon.doge_audit().get("classification"),
+            "current_blockers_user_friendly": friendly_blockers(list(dict.fromkeys(blockers))),
+            "stale_lease_warning": (
+                "Last run metadata may be stale — not current open positions."
+                if stale_lease
+                else None
+            ),
+            "lease_last_result_stale": stale_lease,
             **live_lock_status(self.config),
         }
+        plain = (
+            "The bot found possible paper trades, but Training Mode is OFF — it cannot place orders."
+            if not bool(self.pl.cfg.get("mode_enabled"))
+            else (
+                "Training is on and safety checks passed — operator may run once."
+                if entries_eligible and self._can_submit_orders()
+                else "Training is on but safety blockers prevent new orders."
+            )
+        )
+        return wrap_status_payload(
+            payload,
+            plain_message=plain,
+            user_facing_status="paused" if not bool(self.pl.cfg.get("mode_enabled")) else "ready_to_run_once",
+            dangerous_actions=["enable_training", "run_once", "enable_exit_only"],
+        )
 
     def _can_submit_orders(self) -> bool:
         return (
@@ -291,10 +324,6 @@ class FastCryptoTrainingLoop:
 
         entries_skipped = True
         entry_result: dict[str, Any] = {"status": "skipped", "reason": "entries_blocked"}
-
-        if exit_only and bool(self.pl.cfg.get("mode_enabled")):
-            exit_out = self.training.monitor_exits()
-            phases.append("exit_only_monitor_exits")
 
         if blockers:
             self._block_memory(

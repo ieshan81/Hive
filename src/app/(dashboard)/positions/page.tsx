@@ -127,7 +127,7 @@ export default function PositionsPage() {
             {meta.positions?.error ? (
               <PanelError title="Positions fetch failed" meta={meta.positions} expectedShape='{ positions: [...] }' />
             ) : positions.length === 0 ? (
-              <EmptyState message="No open positions (endpoint OK, count 0)" />
+              <EmptyState message="No open positions — broker holds no assets right now." />
             ) : (
               <div className="space-y-3">
                 {positions.map((pos) => (
@@ -206,14 +206,22 @@ export default function PositionsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {trades.map((t) => (
+                  {trades.map((t) => {
+                    const row = t as TradeHistoryRecord & {
+                      user_status_label?: string;
+                      user_status_message?: string;
+                    };
+                    return (
                     <tr key={String(t.trade_id ?? t.symbol)} className="text-slate-300 border-t border-white/5">
                       <td className="py-1">{t.symbol}</td>
                       <td>{t.side}</td>
-                      <td>{t.outcome ?? t.status}</td>
+                      <td title={row.user_status_message}>
+                        {row.user_status_label ?? t.outcome ?? t.status}
+                      </td>
                       <td>{t.realized_pl ?? "—"}</td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             )}

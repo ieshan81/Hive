@@ -10,6 +10,7 @@ from app.services.ai_learning_memory_service import AILearningMemoryService
 from app.services.broker_safety import broker_base_url, is_paper_broker_url, live_lock_status
 from app.services.config_manager import ConfigManager
 from app.services.hive_brain_graph_service import HiveBrainGraphService
+from app.services.operator_auth import require_operator_token
 from app.services.live_lock_tripwire import live_lock_tripwire_status
 from app.services.memory_consolidation_service import MemoryConsolidationService
 from app.services.engine_config import cfg_get
@@ -66,16 +67,25 @@ def resync_broker_truth(session: Session = Depends(get_session)):
         },
     )
     session.commit()
+    doge = recon.doge_audit()
     return {
         **out,
         "broker_truth_resync": True,
-        "doge_audit": recon.doge_audit(),
+        "message": "Broker positions re-synced. DOGE confirmed history only."
+        if doge.get("classification") == "BROKER_FLAT_WITH_HISTORICAL_BUY_ONLY"
+        else "Broker positions re-synced.",
+        "changed": False,
+        "orders_created": 0,
+        "doge_audit": doge,
         "diagnostic_preview": recon.build_diagnostic_exports(),
     }
 
 
 @router.post("/clear-ghost-rows")
-def clear_ghost_rows(session: Session = Depends(get_session)):
+def clear_ghost_rows(
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     """Remove duplicate stale position rows with zero qty not matching broker."""
     from app.services.alpaca_adapter import AlpacaAdapter
 

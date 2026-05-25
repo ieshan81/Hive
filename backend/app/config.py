@@ -18,10 +18,11 @@ class Settings(BaseSettings):
     alpaca_base_url: str = "https://paper-api.alpaca.markets"
     gemini_api_key: str = ""
     # Model IDs from Google AI — set in Railway/local .env when Google deprecates a version
-    gemini_model: str = "gemini-3.5-flash"
+    gemini_model: str = "gemini-2.0-flash"
     gemini_model_deep: str = ""
     database_url: str = "sqlite:///./hive.db"
     railway_api_key: str = ""
+    operator_secret: str = ""
 
     api_host: str = "0.0.0.0"
     api_port: int = 8000

@@ -167,7 +167,13 @@ class StrategyRegistryService:
                 if strat and "push" in str(strat).lower():
                     meta["quarantine"] = "open_position_exists"
                     return "paper_active", meta
-            if any("DOGE" in (p.symbol or "").upper() for p in open_positions):
+            from app.services.broker_reconciliation_service import BrokerReconciliationService
+
+            doge_audit = BrokerReconciliationService(self.session, self.config).classify_symbol("DOGE/USD")
+            if doge_audit.get("historical_buy_exists") and not doge_audit.get("broker_position_open"):
+                meta["quarantine"] = "historical_doge_record_only"
+                meta["blocker_note"] = "Historical DOGE record — no broker position."
+            elif doge_audit.get("broker_position_open"):
                 meta["quarantine"] = "open_doge_position"
                 return "paper_active", meta
 

@@ -1,4 +1,5 @@
 import { DashboardShell } from "@/components/layout/DashboardShell";
+import { SafetyBanner } from "@/components/layout/SafetyBanner";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopStatusBar } from "@/components/layout/TopStatusBar";
 import { getDashboardData } from "@/lib/dashboard";
@@ -16,6 +17,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
             statusChips={data.statusChips}
             systemStatus={data.systemStatus}
           />
+          <SafetyBanner />
           {children}
         </main>
       </div>

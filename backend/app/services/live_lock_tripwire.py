@@ -17,7 +17,8 @@ def live_lock_tripwire_status(config: dict) -> dict[str, Any]:
     live_flag = bool(config.get("live_trading_enabled", False))
     armed = int(os.environ.get("LIVE_TRADING_ARMED", "0") or 0)
     gates = int(os.environ.get("PROMOTION_GATES_PASSED", "0") or 0)
-    tripwire_ok = paper_url and not live_enabled and not live_flag
+    env_unsafe = armed == 1 or (gates == 1 and not paper_url)
+    tripwire_ok = paper_url and not live_enabled and not live_flag and not env_unsafe
     return {
         "status": "ok",
         "tripwire_ok": tripwire_ok,
@@ -30,12 +31,17 @@ def live_lock_tripwire_status(config: dict) -> dict[str, Any]:
         "broker_mode_confirmed_live": False,
         "api_key_swap_unlocks_live": False,
         "message": "Simple API key swap cannot enable live — all gates required",
+        "env_unsafe": env_unsafe,
         **live_lock_status(config),
     }
 
 
 def assert_live_blocked(config: dict) -> tuple[bool, str]:
     st = live_lock_tripwire_status(config)
+    if st.get("LIVE_TRADING_ARMED"):
+        return False, "LIVE_TRADING_ARMED"
+    if st.get("env_unsafe"):
+        return False, "env_unsafe"
     if st.get("live_orders_enabled") or st.get("live_trading_enabled"):
         return False, "live_flags_set"
     if not st.get("paper_broker"):
