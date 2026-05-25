@@ -20,6 +20,7 @@ from app.routers import (
     settings_brain,
     strategy_proposals,
     strategy_registry,
+    system_meta,
 )
 from app.services.startup import bootstrap_database
 
@@ -54,6 +55,7 @@ app.include_router(confidence.router)
 app.include_router(account_eligibility.router)
 app.include_router(strategy_proposals.router)
 app.include_router(live_promotion.router)
+app.include_router(system_meta.router)
 
 
 @app.on_event("startup")
