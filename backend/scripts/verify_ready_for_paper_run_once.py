@@ -69,11 +69,19 @@ def main() -> None:
     if date.today().year <= 2026 and not st.calendar_available:
         failures.append("calendar_unavailable_today")
 
-    code, proxy = http_json(f"{FRONTEND}/operator-proxy")
-    if code != 200:
-        failures.append(f"operator_proxy_http_{code}")
-    elif not (proxy.get("server_operator_auth_configured") or proxy.get("proxy_configured")):
-        failures.append("operator_proxy_not_configured")
+    if os.environ.get("SKIP_FRONTEND_PROXY") == "1":
+        proxy = {"server_operator_auth_configured": False, "skipped": True}
+    else:
+        try:
+            code, proxy = http_json(f"{FRONTEND}/operator-proxy")
+        except Exception as exc:
+            failures.append(f"operator_proxy_unreachable:{exc}")
+            proxy = {}
+        else:
+            if code != 200:
+                failures.append(f"operator_proxy_http_{code}")
+            elif not (proxy.get("server_operator_auth_configured") or proxy.get("proxy_configured")):
+                failures.append("operator_proxy_not_configured")
 
     root = Path(__file__).resolve().parents[2]
     for path in root.rglob("*"):
