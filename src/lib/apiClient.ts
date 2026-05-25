@@ -1,7 +1,9 @@
 /**
  * Central API client — single source for backend URL and fetch behavior.
- * Next.js: use NEXT_PUBLIC_API_URL (also reads VITE_API_BASE_URL for compatibility).
+ * Operator secrets must never use NEXT_PUBLIC_* — see apiPostOperator + /api/operator-proxy.
  */
+
+import { getSessionOperatorToken } from "@/lib/operatorAuth";
 
 export type ApiFetchResult<T> = {
   ok: boolean;
@@ -39,13 +41,10 @@ export function getApiBaseUrl(options?: { forServer?: boolean }): string {
   return PRODUCTION_BACKEND_DEFAULT;
 }
 
-function operatorHeaders(): Record<string, string> {
-  const token =
-    typeof process !== "undefined"
-      ? process.env.NEXT_PUBLIC_OPERATOR_TOKEN || ""
-      : "";
-  if (!token.trim()) return {};
-  return { "X-Operator-Token": token.trim() };
+function sessionOperatorHeaders(): Record<string, string> {
+  const token = getSessionOperatorToken();
+  if (!token) return {};
+  return { "X-Operator-Token": token };
 }
 
 export function buildApiUrl(path: string, forServer?: boolean): string {
@@ -126,6 +125,7 @@ export async function apiGet<T = unknown>(
   }
 }
 
+/** Safe POST — no operator auth (read-only maintenance like resync). */
 export async function apiPost<T = unknown>(
   path: string,
   body?: unknown,
@@ -138,7 +138,6 @@ export async function apiPost<T = unknown>(
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
-        ...operatorHeaders(),
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
       cache: "no-store",
@@ -169,4 +168,95 @@ export async function apiPost<T = unknown>(
       rawKeys: [],
     };
   }
+}
+
+let serverProxyAvailable: boolean | null = null;
+
+export async function checkServerOperatorProxy(): Promise<boolean> {
+  if (typeof window === "undefined") return Boolean(process.env.OPERATOR_SECRET?.trim());
+  if (serverProxyAvailable !== null) return serverProxyAvailable;
+  try {
+    const res = await fetch("/api/operator-proxy", { cache: "no-store" });
+    const data = (await res.json()) as { server_operator_auth_configured?: boolean };
+    serverProxyAvailable = Boolean(data.server_operator_auth_configured);
+  } catch {
+    serverProxyAvailable = false;
+  }
+  return serverProxyAvailable;
+}
+
+/** Mutating POST via server proxy or operator session token (never NEXT_PUBLIC). */
+export async function apiPostOperator<T = unknown>(
+  backendPath: string,
+  body?: unknown
+): Promise<ApiFetchResult<T> & { authMode?: string }> {
+  const proxyOk = await checkServerOperatorProxy();
+  if (proxyOk) {
+    const res = await fetch("/api/operator-proxy", {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ path: backendPath, body: body ?? {} }),
+      cache: "no-store",
+    });
+    const text = await res.text();
+    let data: T | null = null;
+    try {
+      data = text ? (JSON.parse(text) as T) : null;
+    } catch {
+      data = null;
+    }
+    return {
+      ok: res.ok,
+      status: res.status,
+      url: `/api/operator-proxy → ${backendPath}`,
+      data,
+      error: res.ok ? null : text.slice(0, 300),
+      contentType: "application/json",
+      rawKeys: data && typeof data === "object" ? Object.keys(data as object) : [],
+      authMode: "server_proxy",
+    };
+  }
+  const session = sessionOperatorHeaders();
+  if (!session["X-Operator-Token"]) {
+    return {
+      ok: false,
+      status: 403,
+      url: backendPath,
+      data: null,
+      error:
+        "Operator authorization required. Configure OPERATOR_SECRET on frontend service or enter session token in Settings.",
+      contentType: null,
+      rawKeys: [],
+      authMode: "none",
+    };
+  }
+  const direct = await fetch(buildApiUrl(backendPath), {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...session,
+    },
+    body: JSON.stringify(body ?? {}),
+    cache: "no-store",
+  });
+  const text = await direct.text();
+  let data: T | null = null;
+  if (text) {
+    try {
+      data = JSON.parse(text) as T;
+    } catch {
+      data = null;
+    }
+  }
+  return {
+    ok: direct.ok,
+    status: direct.status,
+    url: backendPath,
+    data,
+    error: direct.ok ? null : text.slice(0, 300),
+    contentType: direct.headers.get("content-type"),
+    rawKeys: data && typeof data === "object" ? Object.keys(data as object) : [],
+    authMode: "session_token",
+  };
 }

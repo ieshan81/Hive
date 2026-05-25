@@ -252,4 +252,21 @@ export interface DashboardData {
     items: PositionRow[];
   };
   riskCageExtras?: Record<string, unknown>;
+  safetyBanner?: {
+    liveTradingLocked?: boolean;
+    trainingMode?: string;
+    botCanPlaceOrders?: string;
+    openPositions?: number;
+    brokerTruth?: string;
+    paperBroker?: boolean;
+    plainMessage?: string;
+  };
+  orderSummary?: {
+    orders_attempted?: number;
+    orders_sent_to_broker?: number;
+    orders_filled?: number;
+    orders_rejected?: number;
+    orders_blocked_preflight?: number;
+    last_order_user_message?: string;
+  };
 }

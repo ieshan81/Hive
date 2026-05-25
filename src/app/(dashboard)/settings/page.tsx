@@ -3,7 +3,7 @@ import { FastTrainingPanel } from "@/components/panels/FastTrainingPanel";
 
 export default function SettingsPage() {
   return (
-    <section className="max-w-2xl space-y-4">
+    <section className="max-w-3xl space-y-4">
       <FastTrainingPanel />
       <SettingsBrainMaintenance />
       <p className="text-xs text-slate-500">

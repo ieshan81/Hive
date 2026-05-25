@@ -43,6 +43,9 @@ export function CandleLabPanel() {
 
   return (
     <GlassPanel title="Candle Lab" icon={<CandlestickChart className="h-4 w-4" />}>
+      <p className="text-[11px] text-amber-300/90 mb-2 font-medium">
+        Analysis only — no trade is placed from this screen.
+      </p>
       <div className="flex gap-2 mb-2">
         <input
           value={symbol}
@@ -68,8 +71,9 @@ export function CandleLabPanel() {
               <li key={i} className="text-[9px] border border-white/5 rounded p-2 bg-white/5">
                 <span className="text-cyan-300 font-semibold">{a.type}</span> @ {a.level}
                 <p className="text-slate-400 mt-0.5">{a.reason}</p>
-                <p className="text-slate-600 font-mono">
-                  tf={a.timeframe} conf={a.confidence} inv={a.invalidation_level} bars={a.source_bars}
+                <p className="text-slate-500 text-[9px]">
+                  Timeframe: {a.timeframe} · Confidence: {a.confidence} · Invalidation:{" "}
+                  {a.invalidation_level} · Source bars: {a.source_bars}
                 </p>
               </li>
             ))}

@@ -1,76 +1,145 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Brain, RefreshCw, Shield } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
-import { apiPost, apiGet } from "@/lib/apiClient";
+import { apiGet, apiPost, apiPostOperator, checkServerOperatorProxy } from "@/lib/apiClient";
+import { OperatorAuthPanel } from "@/components/panels/OperatorAuthPanel";
+
+const DANGEROUS = new Set([
+  "/api/fast-training/disable",
+  "/api/fast-training/exit-only/disable",
+  "/api/settings/clear-ghost-rows",
+  "/api/memory/consolidation/archive-raw",
+]);
 
 export function SettingsBrainMaintenance() {
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [tripwire, setTripwire] = useState<Record<string, unknown> | null>(null);
+  const [proxy, setProxy] = useState(false);
+
+  useEffect(() => {
+    loadTripwire();
+    checkServerOperatorProxy().then(setProxy);
+  }, []);
 
   async function loadTripwire() {
     const r = await apiGet<Record<string, unknown>>("/api/settings/live-lock-tripwire");
     if (r.ok) setTripwire(r.data || null);
   }
 
-  async function act(path: string, label: string) {
+  async function act(path: string, label: string, confirm?: string) {
+    if (confirm && !window.confirm(confirm)) return;
     setBusy(true);
-    const r = await apiPost(path, { actor: "operator" });
-    setMsg(r.ok ? `${label}: ok` : `${label}: ${r.error}`);
+    const useOperator = DANGEROUS.has(path) || path.includes("fast-training") || path.includes("exit-only");
+    const r = useOperator
+      ? await apiPostOperator(path, { actor: "operator" })
+      : await apiPost(path, { actor: "operator" });
+    const detail = (r.data as { message?: string })?.message;
+    setMsg(r.ok ? `${label}: ${detail || "ok"}` : `${label}: ${r.error}`);
     await loadTripwire();
     setBusy(false);
   }
 
+  const tripOk = tripwire?.tripwire_ok === true;
+  const liveLocked = tripwire?.live_lock_status === "locked";
+
   return (
-    <GlassPanel title="Hive Brain Maintenance" icon={<Brain className="h-4 w-4" />}>
-      <p className="text-[10px] text-slate-500 mb-3">
-        Training Capital / Aggressive Learning Mode uses caged paper broker only. Audit logs always record real
-        broker_mode.
-      </p>
-      <div className="flex items-center gap-2 text-xs text-red-300 mb-3">
-        <Shield className="h-3 w-3" />
-        Live trading: LOCKED — cache actions cannot bypass locks
-      </div>
-      {tripwire && (
-        <p className="text-[9px] text-slate-500 font-mono mb-2">
-          paper_broker={String(tripwire.paper_broker)} · live_orders=
-          {String(tripwire.live_orders_enabled)} · tripwire_ok={String(tripwire.tripwire_ok)}
-        </p>
-      )}
-      <div className="flex flex-wrap gap-2">
-        {[
-          ["/api/fast-training/disable", "Disable Fast Training"],
-          ["/api/fast-training/exit-only/disable", "Disable Exit-Only"],
-          ["/api/settings/clear-ui-cache", "Clear UI Cache"],
-          ["/api/settings/resync-broker-truth", "Re-sync Broker Truth"],
-          ["/api/settings/clear-ghost-rows", "Clear Ghost Rows"],
-          ["/api/memory/consolidation/run", "Consolidate Memories"],
-          ["/api/memory/consolidation/archive-raw", "Archive Raw Duplicates"],
-          ["/api/memory/graph/rebuild", "Rebuild Hive Graph"],
-          ["/api/memory/ai-learning/generate", "Generate AI Lessons"],
-          ["/api/settings/export-brain-bundle", "Export Brain Bundle"],
-        ].map(([path, label]) => (
-          <button
-            key={path}
-            type="button"
-            disabled={busy}
-            onClick={() => act(path, label)}
-            className="text-[10px] border border-white/10 text-slate-300 rounded px-2 py-1 hover:border-hive-cyan/40"
-          >
-            {label}
-          </button>
-        ))}
+    <section className="space-y-4 max-w-2xl">
+      <OperatorAuthPanel />
+
+      <GlassPanel title="Read-only status checks" icon={<Shield className="h-4 w-4" />}>
+        <ul className="text-[11px] text-slate-300 space-y-1">
+          <li>Live trading: {liveLocked ? "LOCKED" : "CHECK"}</li>
+          <li>Paper broker: {tripwire?.paper_broker ? "yes" : "no"}</li>
+          <li>Tripwire: {tripOk ? "secure" : "needs review"}</li>
+          <li>Server operator proxy: {proxy ? "configured" : "not configured"}</li>
+        </ul>
         <button
           type="button"
-          className="text-[10px] text-hive-cyan flex items-center gap-1"
+          className="mt-2 text-[10px] text-hive-cyan flex items-center gap-1"
           onClick={() => loadTripwire()}
         >
-          <RefreshCw className="h-3 w-3" /> Tripwire
+          <RefreshCw className="h-3 w-3" /> Refresh tripwire
         </button>
-      </div>
-      {msg && <p className="text-[10px] text-slate-400 mt-2 font-mono">{msg}</p>}
-    </GlassPanel>
+      </GlassPanel>
+
+      <GlassPanel title="Paper training controls" icon={<Brain className="h-4 w-4" />}>
+        <p className="text-[10px] text-slate-500 mb-2">Requires operator authorization.</p>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              act("/api/fast-training/disable", "Disable training", "Disable Training Mode?")
+            }
+            className="text-[10px] border border-white/10 rounded px-2 py-1"
+          >
+            Disable training
+          </button>
+        </div>
+      </GlassPanel>
+
+      <GlassPanel title="Exit-only controls">
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              act(
+                "/api/fast-training/exit-only/disable",
+                "Disable exit-only",
+                "Disable exit-only mode?"
+              )
+            }
+            className="text-[10px] border border-white/10 rounded px-2 py-1"
+          >
+            Disable exit-only
+          </button>
+        </div>
+      </GlassPanel>
+
+      <GlassPanel title="Brain maintenance">
+        <div className="flex flex-wrap gap-2">
+          {[
+            ["/api/settings/clear-ui-cache", "Clear UI cache", undefined],
+            ["/api/settings/resync-broker-truth", "Re-sync broker truth", undefined],
+            ["/api/memory/consolidation/run", "Consolidate memories", undefined],
+            ["/api/memory/graph/rebuild", "Rebuild graph", undefined],
+          ].map(([path, label, confirm]) => (
+            <button
+              key={path}
+              type="button"
+              disabled={busy}
+              onClick={() => act(String(path), String(label), confirm)}
+              className="text-[10px] border border-white/10 rounded px-2 py-1"
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </GlassPanel>
+
+      <GlassPanel title="Danger zone">
+        <p className="text-[10px] text-amber-400/90 mb-2">These change stored rows — confirmation required.</p>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() =>
+            act(
+              "/api/settings/clear-ghost-rows",
+              "Clear ghost rows",
+              "Remove stale zero-qty rows not on broker?"
+            )
+          }
+          className="text-[10px] border border-red-500/30 text-red-300 rounded px-2 py-1"
+        >
+          Clear ghost rows
+        </button>
+      </GlassPanel>
+
+      {msg && <p className="text-[11px] text-slate-400">{msg}</p>}
+    </section>
   );
 }

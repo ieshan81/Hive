@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Zap } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
-import { apiGet, apiPost } from "@/lib/apiClient";
+import { apiGet, apiPostOperator, checkServerOperatorProxy } from "@/lib/apiClient";
+import { hasSessionOperatorToken } from "@/lib/operatorAuth";
 import { friendlyBlocker } from "@/lib/labels";
 
 export function FastTrainingPanel() {
@@ -11,6 +12,7 @@ export function FastTrainingPanel() {
   const [exitOnly, setExitOnly] = useState<Record<string, unknown> | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [canMutate, setCanMutate] = useState(false);
 
   const load = useCallback(async () => {
     const [ft, eo] = await Promise.all([
@@ -23,12 +25,19 @@ export function FastTrainingPanel() {
 
   useEffect(() => {
     load();
+    Promise.all([checkServerOperatorProxy(), Promise.resolve(hasSessionOperatorToken())]).then(
+      ([proxy, session]) => setCanMutate(proxy || session)
+    );
   }, [load]);
 
   async function act(path: string, label: string, confirmMsg?: string) {
+    if (!canMutate) {
+      setMsg("Operator authorization required — configure server proxy or session token in Settings.");
+      return;
+    }
     if (confirmMsg && !window.confirm(confirmMsg)) return;
     setBusy(true);
-    const r = await apiPost(path, { operator: "ui" });
+    const r = await apiPostOperator(path, { operator: "ui" });
     setMsg(r.ok ? `${label}: ok` : `${label}: ${r.error ?? r.status}`);
     await load();
     setBusy(false);
@@ -111,7 +120,8 @@ export function FastTrainingPanel() {
           <button
             key={path}
             type="button"
-            disabled={busy}
+            disabled={busy || !canMutate}
+            title={!canMutate ? "Operator authorization required" : undefined}
             onClick={() => act(String(path), String(label), confirm as string | undefined)}
             className="text-[9px] border border-white/10 rounded px-2 py-1 text-slate-300 hover:border-hive-cyan/40"
           >
