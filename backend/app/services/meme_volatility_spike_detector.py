@@ -15,6 +15,12 @@ from app.services.config_manager import ConfigManager
 MEME_SYMBOLS = frozenset({"DOGE/USD", "DOGEUSD", "SHIB/USD", "SHIBUSD"})
 
 
+def _bar_field(bar: Any, field: str, default: float = 0.0) -> float:
+    if isinstance(bar, dict):
+        return float(bar.get(field, default))
+    return float(getattr(bar, field, default))
+
+
 class MemeVolatilitySpikeDetector:
     def __init__(self, session: Session, config: Optional[dict] = None):
         self.session = session
@@ -185,8 +191,8 @@ class MemeVolatilitySpikeDetector:
     def _pct_change(self, bars: list, lookback: int) -> float:
         if len(bars) < lookback + 1:
             return 0.0
-        c0 = float(getattr(bars[-lookback - 1], "close", bars[-lookback - 1].get("close", 0)) if hasattr(bars[-lookback - 1], "close") else bars[-lookback - 1]["close"])
-        c1 = float(getattr(bars[-1], "close", bars[-1].get("close", 0)) if hasattr(bars[-1], "close") else bars[-1]["close"])
+        c0 = _bar_field(bars[-lookback - 1], "close")
+        c1 = _bar_field(bars[-1], "close")
         if c0 <= 0:
             return 0.0
         return (c1 - c0) / c0
@@ -194,7 +200,7 @@ class MemeVolatilitySpikeDetector:
     def _volume_spike_ratio(self, bars: list) -> float:
         if len(bars) < 5:
             return 1.0
-        vols = [float(getattr(b, "volume", b.get("volume", 0)) if hasattr(b, "volume") else b["volume"]) for b in bars[-10:]]
+        vols = [_bar_field(b, "volume") for b in bars[-10:]]
         avg = sum(vols[:-1]) / max(len(vols) - 1, 1)
         return vols[-1] / avg if avg > 0 else 1.0
 
@@ -202,9 +208,9 @@ class MemeVolatilitySpikeDetector:
         if not bars:
             return 0.0
         b = bars[-1]
-        h = float(getattr(b, "high", b.get("high", 0)) if hasattr(b, "high") else b["high"])
-        l = float(getattr(b, "low", b.get("low", 0)) if hasattr(b, "low") else b["low"])
-        c = float(getattr(b, "close", b.get("close", 0)) if hasattr(b, "close") else b["close"])
+        h = _bar_field(b, "high")
+        l = _bar_field(b, "low")
+        c = _bar_field(b, "close")
         if c <= 0:
             return 0.0
         return (h - l) / c
