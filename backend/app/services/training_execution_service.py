@@ -337,7 +337,10 @@ class TrainingExecutionService:
         alpaca = AlpacaAdapter(self.session)
         account = alpaca.sync_account()
         positions = alpaca.sync_positions()
-        open_orders = alpaca.get_open_orders() or []
+        try:
+            open_orders = alpaca.get_open_orders() or []
+        except Exception:
+            open_orders = []
         open_syms = {str(o.get("symbol") or "") for o in open_orders}
         cand = self.paper.candidate_from_signal(sig, pdec)
         cand.position_qty = qty

@@ -94,7 +94,6 @@ def reconcile_order(
             from app.services.config_manager import ConfigManager
             from app.services.memory_triggers import on_paper_order_filled, on_qty_fee_difference
             from app.database import PositionSnapshot
-            from sqlmodel import select
 
             config = ConfigManager(session).get_current()
             cid = execution_log.cycle_run_id or ""
