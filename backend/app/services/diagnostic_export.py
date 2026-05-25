@@ -585,7 +585,6 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             StrategyValidationResult,
             SystemValidationAudit,
         )
-        from app.database import AIReview
         from app.services.strategy_registry_service import StrategyRegistryService
 
         reg_svc = StrategyRegistryService(session)
