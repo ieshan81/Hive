@@ -19,10 +19,12 @@ function pathAllowed(path: string): boolean {
   return ALLOWED_POST_PREFIXES.some((p) => path === p || path.startsWith(p));
 }
 
+/** Outside /api/* so Next rewrites do not forward this to the backend. */
 export async function GET() {
   return NextResponse.json({
     status: "ok",
     server_operator_auth_configured: Boolean(process.env.OPERATOR_SECRET?.trim()),
+    proxy_configured: Boolean(process.env.OPERATOR_SECRET?.trim()),
     message: process.env.OPERATOR_SECRET?.trim()
       ? "Server-side operator proxy is configured (secret not exposed to browser)."
       : "Set OPERATOR_SECRET on the frontend service for server-side mutating proxy.",

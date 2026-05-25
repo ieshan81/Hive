@@ -678,16 +678,7 @@ def build_dashboard(session: Session) -> dict[str, Any]:
             "cycleRunId": cycle_id,
             "count": len(order_rows),
             "items": [
-                {
-                    "symbol": o.symbol,
-                    "side": o.side,
-                    "qty": o.qty,
-                    "status": o.status,
-                    "brokerOrderId": o.alpaca_order_id,
-                    "clientOrderId": o.broker_client_order_id,
-                    "filledAvgPrice": o.filled_avg_price,
-                    "orderType": o.order_type,
-                }
+                _enrich_dashboard_order(o)
                 for o in order_rows
             ],
         },
@@ -728,12 +719,35 @@ def _safety_banner(session: Session, config: dict, paper_status: dict) -> dict:
     }
 
 
+def _enrich_dashboard_order(o) -> dict:
+    from app.services.order_display import enrich_order_record
+
+    return enrich_order_record(
+        {
+            "symbol": o.symbol,
+            "side": o.side,
+            "qty": o.qty,
+            "status": o.status,
+            "brokerOrderId": o.alpaca_order_id,
+            "clientOrderId": o.broker_client_order_id,
+            "filledAvgPrice": o.filled_avg_price,
+            "orderType": o.order_type,
+        }
+    )
+
+
 def serialize_exec(row: ExecutionLog) -> dict:
-    return {
-        "eventId": row.event_id,
-        "symbol": row.symbol,
-        "status": row.status,
-        "rejectReason": row.reject_reason,
-        "limitPrice": row.limit_price,
-        "tif": row.tif,
-    }
+    from app.services.order_display import enrich_execution_row
+
+    return enrich_execution_row(
+        {
+            "eventId": row.event_id,
+            "symbol": row.symbol,
+            "status": row.status,
+            "rejectReason": row.reject_reason,
+            "limitPrice": row.limit_price,
+            "tif": row.tif,
+            "side": row.side,
+            "order_type": "marketable_limit_ioc",
+        }
+    )

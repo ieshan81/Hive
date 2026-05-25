@@ -1,6 +1,6 @@
 /**
  * Central API client — single source for backend URL and fetch behavior.
- * Operator secrets must never use NEXT_PUBLIC_* — see apiPostOperator + /api/operator-proxy.
+ * Operator secrets must never use NEXT_PUBLIC_* — see apiPostOperator + /operator-proxy.
  */
 
 import { getSessionOperatorToken } from "@/lib/operatorAuth";
@@ -176,7 +176,7 @@ export async function checkServerOperatorProxy(): Promise<boolean> {
   if (typeof window === "undefined") return Boolean(process.env.OPERATOR_SECRET?.trim());
   if (serverProxyAvailable !== null) return serverProxyAvailable;
   try {
-    const res = await fetch("/api/operator-proxy", { cache: "no-store" });
+    const res = await fetch("/operator-proxy", { cache: "no-store" });
     const data = (await res.json()) as { server_operator_auth_configured?: boolean };
     serverProxyAvailable = Boolean(data.server_operator_auth_configured);
   } catch {
@@ -192,7 +192,7 @@ export async function apiPostOperator<T = unknown>(
 ): Promise<ApiFetchResult<T> & { authMode?: string }> {
   const proxyOk = await checkServerOperatorProxy();
   if (proxyOk) {
-    const res = await fetch("/api/operator-proxy", {
+    const res = await fetch("/operator-proxy", {
       method: "POST",
       headers: { Accept: "application/json", "Content-Type": "application/json" },
       body: JSON.stringify({ path: backendPath, body: body ?? {} }),
@@ -208,7 +208,7 @@ export async function apiPostOperator<T = unknown>(
     return {
       ok: res.ok,
       status: res.status,
-      url: `/api/operator-proxy → ${backendPath}`,
+      url: `/operator-proxy → ${backendPath}`,
       data,
       error: res.ok ? null : text.slice(0, 300),
       contentType: "application/json",

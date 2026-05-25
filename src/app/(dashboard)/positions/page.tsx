@@ -12,6 +12,9 @@ import {
   normalizePositionStates,
   normalizeTrades,
 } from "@/lib/apiNormalize";
+import { OrderMetricsBar } from "@/components/ui/OrderMetricsBar";
+import { ExecutionOrdersTable } from "@/components/ui/ExecutionOrdersTable";
+import type { OrderSummaryCounts } from "@/lib/orderDisplay";
 import type { OrderRecord, PanelLoadMeta, Position, PositionState, TradeHistoryRecord } from "@/types/api";
 
 export default function PositionsPage() {
@@ -19,6 +22,7 @@ export default function PositionsPage() {
   const [states, setStates] = useState<PositionState[]>([]);
   const [trades, setTrades] = useState<TradeHistoryRecord[]>([]);
   const [orders, setOrders] = useState<OrderRecord[]>([]);
+  const [orderSummary, setOrderSummary] = useState<OrderSummaryCounts | undefined>();
   const [loading, setLoading] = useState(true);
   const [meta, setMeta] = useState<Record<string, PanelLoadMeta>>({});
 
@@ -27,11 +31,12 @@ export default function PositionsPage() {
     const m: Record<string, PanelLoadMeta> = {};
     const ts = new Date().toISOString();
 
-    const [pRes, sRes, tRes, oRes] = await Promise.all([
+    const [pRes, sRes, tRes, oRes, dashRes] = await Promise.all([
       apiGet("/api/positions"),
       apiGet("/api/positions/state"),
       apiGet("/api/trades/history"),
       apiGet("/api/orders"),
+      apiGet("/api/dashboard"),
     ]);
 
     if (pRes.ok) {
@@ -74,6 +79,12 @@ export default function PositionsPage() {
         httpStatus: tRes.status,
         error: tRes.error || `HTTP ${tRes.status}`,
       };
+    }
+
+    if (dashRes.ok && dashRes.data && typeof dashRes.data === "object") {
+      const d = dashRes.data as Record<string, unknown>;
+      const os = d.orderSummary as OrderSummaryCounts | undefined;
+      setOrderSummary(os);
     }
 
     if (oRes.ok) {
@@ -227,31 +238,20 @@ export default function PositionsPage() {
             )}
           </GlassPanel>
 
-          <GlassPanel title="Orders history">
-            {meta.orders?.error ? (
-              <PanelError title="Orders fetch failed" meta={meta.orders} expectedShape='{ orders: [...] }' />
-            ) : orders.length === 0 ? (
-              <EmptyState message="No orders (endpoint OK, count 0)" />
-            ) : (
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-slate-500">
-                    <th className="text-left py-1">Symbol</th>
-                    <th className="text-left">Status</th>
-                    <th className="text-left">Fill</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {orders.map((o, i) => (
-                    <tr key={String(o.broker_order_id ?? o.client_order_id ?? i)} className="text-slate-300 border-t border-white/5">
-                      <td className="py-1">{o.symbol}</td>
-                      <td>{o.status}</td>
-                      <td>{o.filled_avg_price ?? "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+          <GlassPanel title="Orders & execution history">
+            <OrderMetricsBar summary={orderSummary} compact />
+            <div className="mt-3">
+              {meta.orders?.error ? (
+                <PanelError title="Orders fetch failed" meta={meta.orders} expectedShape='{ orders: [...] }' />
+              ) : orders.length === 0 ? (
+                <EmptyState message="No orders on record (endpoint OK, count 0)" />
+              ) : (
+                <ExecutionOrdersTable
+                  rows={orders as unknown as Record<string, unknown>[]}
+                  mode="order"
+                />
+              )}
+            </div>
           </GlassPanel>
         </>
       )}

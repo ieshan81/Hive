@@ -1,4 +1,5 @@
 import { GlassPanel } from "@/components/ui/GlassPanel";
+import { orderStatusLabel, orderTypeLabel, rejectReasonPlain, formatDecimal } from "@/lib/orderDisplay";
 import type { DashboardData } from "@/types/dashboard";
 
 type ExecutionPolicyData = NonNullable<DashboardData["executionPolicy"]>;
@@ -24,7 +25,7 @@ export function ExecutionPolicyPanel({ data }: { data: ExecutionPolicyData }) {
         </div>
         <div className="flex justify-between">
           <span className="text-zinc-400">Order type</span>
-          <span>{data.orderTypeDefault ?? "marketable_limit_ioc"}</span>
+          <span>{orderTypeLabel(data.orderTypeDefault ?? "marketable_limit_ioc")}</span>
         </div>
         {data.selectedSymbol && (
           <div className="flex justify-between">
@@ -35,8 +36,20 @@ export function ExecutionPolicyPanel({ data }: { data: ExecutionPolicyData }) {
         <p className="text-xs text-zinc-500 pt-2 border-t border-white/10">{data.whyNoOrder}</p>
         {data.latestLog && (
           <p className="text-xs text-zinc-400">
-            Latest: {data.latestLog.symbol} — {data.latestLog.status}
-            {data.latestLog.rejectReason ? ` (${data.latestLog.rejectReason})` : ""}
+            Latest: {data.latestLog.symbol} —{" "}
+            {orderStatusLabel(String((data.latestLog as Record<string, unknown>).status_label ?? data.latestLog.status))}
+            {data.latestLog.rejectReason || (data.latestLog as Record<string, unknown>).reject_reason_plain
+              ? ` — ${rejectReasonPlain(
+                  String(
+                    (data.latestLog as Record<string, unknown>).reject_reason_plain ??
+                      data.latestLog.rejectReason
+                  ),
+                  String(data.latestLog.status)
+                )}`
+              : ""}
+            {data.latestLog.limitPrice != null
+              ? ` · limit ${formatDecimal((data.latestLog as Record<string, unknown>).limit_price_display ?? data.latestLog.limitPrice)}`
+              : ""}
           </p>
         )}
         {(data.paper_execution_blockers as string[] | undefined)?.length ? (

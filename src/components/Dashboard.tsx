@@ -27,12 +27,15 @@ export function Dashboard({ data }: DashboardProps) {
         <HiveMemoryGraphPanel />
       </div>
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-4 items-stretch">
-        <LatestCyclePanel data={data.latestCycle ?? { cycleRunId: null, riskBlocked: 0, riskApproved: 0, portfolioSelected: 0, portfolioDeferred: 0, ordersSubmitted: 0, observations: 0 }} />
+        <LatestCyclePanel
+          data={data.latestCycle ?? { cycleRunId: null, riskBlocked: 0, riskApproved: 0, portfolioSelected: 0, portfolioDeferred: 0, ordersSubmitted: 0, observations: 0 }}
+          orderSummary={data.orderSummary}
+        />
         <ExecutionPolicyPanel data={data.executionPolicy ?? { paperOrdersEnabled: false, liveOrdersEnabled: false, whyNoOrder: "—" }} />
         <PortfolioGatePanel data={data.portfolioGate ?? { rankedCount: 0, selectedCount: 0, deferredCount: 0, topN: 1, decisions: [], truthMessage: "—" }} />
       </div>
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-4 items-stretch">
-        <OrdersPanel data={data.orders ?? { count: 0, items: [] }} />
+        <OrdersPanel data={data.orders ?? { count: 0, items: [] }} orderSummary={data.orderSummary} />
         <PositionsPanel data={data.positionsPanel ?? { count: 0, items: [] }} />
         <StrategyLabPanel strategies={data.strategies} />
       </div>

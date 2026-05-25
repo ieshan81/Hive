@@ -214,26 +214,33 @@ def orders_decisions(session: Session, cycle_run_id: str = "latest") -> list[dic
     logs = session.exec(
         select(ExecutionLog).where(ExecutionLog.cycle_run_id == cid)
     ).all()
-    return [
-        {
-            "symbol": el.symbol,
-            "side": el.side,
-            "order_type": "marketable_limit_ioc",
-            "tif": el.tif,
-            "limit_price": el.limit_price,
-            "requested_qty": el.requested_qty,
-            "requested_notional": el.requested_notional,
-            "filled_qty": el.filled_qty,
-            "filled_avg_price": el.filled_avg_price,
-            "broker_order_id": el.broker_order_id,
-            "client_order_id": el.broker_client_order_id,
-            "status": el.status,
-            "reject_reason": el.reject_reason,
-            "submitted_at": el.submitted_at.isoformat() + "Z" if el.submitted_at else None,
-        }
-        for el in logs
-        if el.status not in ("pending",)
-    ]
+    from app.services.order_display import enrich_execution_row
+
+    out = []
+    for el in logs:
+        if el.status in ("pending",):
+            continue
+        out.append(
+            enrich_execution_row(
+                {
+                    "symbol": el.symbol,
+                    "side": el.side,
+                    "order_type": "marketable_limit_ioc",
+                    "tif": el.tif,
+                    "limit_price": el.limit_price,
+                    "requested_qty": el.requested_qty,
+                    "requested_notional": el.requested_notional,
+                    "filled_qty": el.filled_qty,
+                    "filled_avg_price": el.filled_avg_price,
+                    "broker_order_id": el.broker_order_id,
+                    "client_order_id": el.broker_client_order_id,
+                    "status": el.status,
+                    "reject_reason": el.reject_reason,
+                    "submitted_at": el.submitted_at.isoformat() + "Z" if el.submitted_at else None,
+                }
+            )
+        )
+    return out
 
 
 def lessons_decisions(session: Session, cycle_run_id: str = "latest") -> list[dict[str, Any]]:

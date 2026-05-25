@@ -11,6 +11,7 @@ import {
 } from "@/lib/apiNormalize";
 import type { PanelLoadMeta } from "@/types/api";
 import { PanelError } from "@/components/ui/PanelError";
+import { ExecutionOrdersTable } from "@/components/ui/ExecutionOrdersTable";
 
 export type DrillType = "approved" | "blocked" | "deferred" | "orders" | "lessons";
 
@@ -88,8 +89,10 @@ export function DecisionDrilldownModal({ type, onClose }: Props) {
 
   if (!type) return null;
 
+  const isOrders = type === "orders";
+
   const columns =
-    rows.length > 0
+    !isOrders && rows.length > 0
       ? Object.keys(rows[0]).filter((k) => !k.startsWith("_")).slice(0, 8)
       : ["symbol", "status", "reason"];
 
@@ -120,6 +123,8 @@ export function DecisionDrilldownModal({ type, onClose }: Props) {
               Endpoint succeeded with 0 rows for latest cycle.
               <span className="block font-mono text-[10px] mt-1 text-slate-600">{meta.endpoint}</span>
             </p>
+          ) : isOrders ? (
+            <ExecutionOrdersTable rows={rows} mode="execution" />
           ) : (
             <table className="w-full text-xs">
               <thead>

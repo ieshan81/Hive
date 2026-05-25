@@ -146,7 +146,9 @@ def serialize_portfolio_decision(row: PortfolioDecision) -> dict[str, Any]:
 
 
 def serialize_execution_log(row: ExecutionLog) -> dict[str, Any]:
-    return {
+    from app.services.order_display import enrich_execution_row
+
+    base = {
         "event_id": row.event_id,
         "cycle_run_id": row.cycle_run_id,
         "signal_id": row.signal_id,
@@ -174,6 +176,7 @@ def serialize_execution_log(row: ExecutionLog) -> dict[str, Any]:
         "reject_reason": row.reject_reason,
         "created_at": _iso(row.created_at),
     }
+    return enrich_execution_row(base)
 
 
 def serialize_blocked_trade(row: BlockedTrade) -> dict[str, Any]:
