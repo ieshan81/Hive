@@ -61,6 +61,24 @@ def _serialize_row(row) -> dict[str, Any]:
     return data
 
 
+def _paper_learning_status_export(
+    session: Session, config: dict, apl_svc: Any, apl_sched: Any
+) -> dict[str, Any]:
+    from app.services.paper_learning_truth import paper_learning_display_status
+
+    display = paper_learning_display_status(session, config)
+    sched = apl_sched.status()
+    return {
+        **display,
+        "mode_enabled": display.get("mode_enabled"),
+        "can_place_paper_orders": display.get("can_place_paper_orders"),
+        "scheduler_enabled": bool(sched.get("scheduler_enabled")),
+        "current_mode": display.get("current_mode"),
+        "scheduler": sched,
+        "autonomous_status": apl_svc.status(),
+    }
+
+
 def _is_useful_row(data: dict[str, Any]) -> bool:
     if not data:
         return False
@@ -705,13 +723,15 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             "strategy_eligibility_windows.json": [_serialize_row(r) for r in session.exec(select(StrategyEligibilityWindow)).all()],
             "paper_candidates.json": reg_svc.list_registry(stage="paper_candidate"),
             "strategy_tab_snapshot.json": snap,
-            "paper_learning_status.json": {**pl.status(), "autonomous": apl_svc.status()},
+            "paper_learning_status.json": _paper_learning_status_export(
+                session, cfg_brain, apl_svc, apl_sched
+            ),
             "autonomous_learning_scheduler.json": apl_sched.status(),
             "confidence_level.json": conf_eng.summary(),
             "strategy_confidence.json": conf_eng.by_strategy(),
             "symbol_confidence.json": conf_eng.by_symbol(),
             "account_pair_eligibility.json": elig_svc.summary(),
-            "backtest_lab_results.json": ResearchLabService(session, cfg_brain).propose_backtests_from_memory(limit=10),
+            "backtest_lab_results.json": ResearchLabService(session).propose_backtests_from_memory(limit=10),
             "strategy_proposals.json": prop_svc.list_proposals(limit=30),
             "promotion_readiness.json": promo_svc.checklist(),
             "paper_experiment_config.json": [_serialize_row(r) for r in session.exec(select(PaperExperimentConfig)).all()],

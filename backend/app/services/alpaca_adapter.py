@@ -18,6 +18,22 @@ from app.services.quote_utils import normalize_prices, spread_from_bid_ask
 
 logger = logging.getLogger(__name__)
 
+_SYNC_CACHE: dict[str, Any] = {}
+_ACCOUNT_CACHE_TTL_SEC = 25
+_POSITIONS_CACHE_TTL_SEC = 25
+_RATE_LIMIT_BACKOFF_SEC = 90
+
+
+def _is_rate_limited() -> bool:
+    until = _SYNC_CACHE.get("rate_limited_until")
+    return bool(until and datetime.utcnow() < until)
+
+
+def _mark_rate_limited(exc: Exception | str) -> None:
+    msg = str(exc).lower()
+    if "429" in msg or "rate limit" in msg or "too many" in msg:
+        _SYNC_CACHE["rate_limited_until"] = datetime.utcnow() + timedelta(seconds=_RATE_LIMIT_BACKOFF_SEC)
+
 
 def normalize_crypto_symbol(symbol: str) -> str:
     """Alpaca crypto quotes use BTC/USD; trading assets may be BTCUSD."""
@@ -33,10 +49,51 @@ class AlpacaAdapter:
         self.session = session
         self._client = None
         self._data_client = None
+        self.broker_sync_rate_limited = _is_rate_limited()
 
     @property
     def configured(self) -> bool:
         return settings.alpaca_configured
+
+    def _last_account_snapshot(self) -> Optional[AccountSnapshot]:
+        return self.session.exec(select(AccountSnapshot).order_by(AccountSnapshot.synced_at.desc())).first()
+
+    def sync_account_cached(self, *, force: bool = False) -> Optional[AccountSnapshot]:
+        if _is_rate_limited() and not force:
+            self.broker_sync_rate_limited = True
+            return self._last_account_snapshot()
+        cached_at = _SYNC_CACHE.get("account_cached_at")
+        cached_snap = _SYNC_CACHE.get("account_snapshot")
+        if (
+            not force
+            and cached_at
+            and cached_snap
+            and (datetime.utcnow() - cached_at).total_seconds() < _ACCOUNT_CACHE_TTL_SEC
+        ):
+            return cached_snap
+        snap = self.sync_account()
+        if snap:
+            _SYNC_CACHE["account_cached_at"] = datetime.utcnow()
+            _SYNC_CACHE["account_snapshot"] = snap
+        return snap or self._last_account_snapshot()
+
+    def sync_positions_cached(self, *, force: bool = False) -> list[PositionSnapshot]:
+        if _is_rate_limited() and not force:
+            self.broker_sync_rate_limited = True
+            return list(self.session.exec(select(PositionSnapshot)).all())
+        cached_at = _SYNC_CACHE.get("positions_cached_at")
+        cached = _SYNC_CACHE.get("positions_snapshot")
+        if (
+            not force
+            and cached_at
+            and cached is not None
+            and (datetime.utcnow() - cached_at).total_seconds() < _POSITIONS_CACHE_TTL_SEC
+        ):
+            return cached
+        pos = self.sync_positions()
+        _SYNC_CACHE["positions_cached_at"] = datetime.utcnow()
+        _SYNC_CACHE["positions_snapshot"] = pos
+        return pos
 
     def _log_error(self, operation: str, message: str, details: Optional[dict] = None) -> None:
         cycle_id = current_cycle_run_id.get()
@@ -87,9 +144,12 @@ class AlpacaAdapter:
         return self._data_client
 
     def sync_account(self) -> Optional[AccountSnapshot]:
+        if _is_rate_limited():
+            self.broker_sync_rate_limited = True
+            return self._last_account_snapshot()
         client = self._get_trading_client()
         if client is None:
-            return None
+            return self._last_account_snapshot()
         try:
             account = client.get_account()
             equity = float(account.equity)
@@ -123,12 +183,18 @@ class AlpacaAdapter:
             self.session.add(snap)
             self.session.commit()
             self.session.refresh(snap)
+            self.broker_sync_rate_limited = False
             return snap
         except Exception as exc:
+            _mark_rate_limited(exc)
+            self.broker_sync_rate_limited = _is_rate_limited()
             self._log_error("sync_account", str(exc))
-            return None
+            return self._last_account_snapshot()
 
     def sync_positions(self) -> list[PositionSnapshot]:
+        if _is_rate_limited():
+            self.broker_sync_rate_limited = True
+            return list(self.session.exec(select(PositionSnapshot)).all())
         client = self._get_trading_client()
         if client is None:
             prior = list(self.session.exec(select(PositionSnapshot)).all())
@@ -155,8 +221,11 @@ class AlpacaAdapter:
             for snap in staged:
                 self.session.add(snap)
             self.session.commit()
+            self.broker_sync_rate_limited = False
             return staged
         except Exception as exc:
+            _mark_rate_limited(exc)
+            self.broker_sync_rate_limited = _is_rate_limited()
             self._log_error("sync_positions", str(exc))
             self.session.rollback()
             prior = list(self.session.exec(select(PositionSnapshot)).all())

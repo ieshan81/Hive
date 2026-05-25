@@ -45,8 +45,8 @@ class BrokerReconciliationService:
 
     def sync_broker_snapshots(self) -> list[PositionSnapshot]:
         if self.alpaca.configured:
-            self.alpaca.sync_account()
-            return self.alpaca.sync_positions() or []
+            self.alpaca.sync_account_cached()
+            return self.alpaca.sync_positions_cached() or []
         return list(self.session.exec(select(PositionSnapshot)).all())
 
     def broker_rejects(self, limit: int = 30) -> list[dict[str, Any]]:

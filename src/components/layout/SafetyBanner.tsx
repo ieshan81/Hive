@@ -20,30 +20,37 @@ type BannerData = {
 export function SafetyBanner() {
   const [data, setData] = useState<BannerData | null>(null);
 
+  const load = async () => {
+    const [apl, lock] = await Promise.all([
+      apiGet<Record<string, unknown>>("/api/autonomous-paper-learning/status"),
+      apiGet<Record<string, unknown>>("/api/settings/live-lock-tripwire"),
+    ]);
+    const banner = (apl.data?.safety_banner || apl.data) as BannerData | undefined;
+    setData({
+      liveTradingLocked:
+        lock.data?.live_lock_status === "locked" || Boolean(banner?.liveTradingLocked),
+      paperLearning: banner?.paperLearning ?? (apl.data?.paper_learning_on ? "ON" : "OFF"),
+      trainingMode: banner?.trainingMode ?? (apl.data?.paper_learning_on ? "ON" : "OFF"),
+      confidenceScore: banner?.confidenceScore ?? (apl.data as { confidenceScore?: number })?.confidenceScore,
+      confidenceLabel: banner?.confidenceLabel,
+      currentMode: banner?.currentMode ?? String(apl.data?.current_mode || "watching"),
+      botCanPlaceOrders:
+        banner?.botCanPlaceOrders ??
+        (apl.data?.bot_can_place_paper_orders ? "YES" : "NO"),
+      openPositions: banner?.openPositions ?? Number(apl.data?.open_paper_positions ?? 0),
+      brokerTruth: banner?.brokerTruth ?? "—",
+      paperBroker: Boolean(lock.data?.paper_broker ?? banner?.paperBroker),
+      plainMessage:
+        banner?.plainMessage ||
+        String(apl.data?.plain_message || "The bot is watching only. It cannot place paper orders."),
+    });
+  };
+
   useEffect(() => {
-    (async () => {
-      const [dash, lock] = await Promise.all([
-        apiGet<Record<string, unknown>>("/api/dashboard"),
-        apiGet<Record<string, unknown>>("/api/settings/live-lock-tripwire"),
-      ]);
-      const banner = (dash.data as { safetyBanner?: BannerData })?.safetyBanner;
-      setData({
-        liveTradingLocked:
-          lock.data?.live_lock_status === "locked" || Boolean(banner?.liveTradingLocked),
-        paperLearning: banner?.paperLearning ?? banner?.trainingMode ?? "OFF",
-        trainingMode: banner?.trainingMode ?? "OFF",
-        confidenceScore: banner?.confidenceScore,
-        confidenceLabel: banner?.confidenceLabel,
-        currentMode: banner?.currentMode ?? "watching",
-        botCanPlaceOrders: banner?.botCanPlaceOrders ?? "NO",
-        openPositions: banner?.openPositions ?? 0,
-        brokerTruth: banner?.brokerTruth ?? "—",
-        paperBroker: Boolean(lock.data?.paper_broker ?? banner?.paperBroker),
-        plainMessage:
-          banner?.plainMessage ||
-          "The bot is watching only. It cannot place paper orders.",
-      });
-    })();
+    load();
+    const onRefresh = () => load();
+    window.addEventListener("hive:paper-learning-refresh", onRefresh);
+    return () => window.removeEventListener("hive:paper-learning-refresh", onRefresh);
   }, []);
 
   if (!data) return null;

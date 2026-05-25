@@ -20,6 +20,7 @@ export function AutonomousPaperLearningPanel() {
     ]);
     if (st.ok) setStatus(st.data);
     if (elig.ok) setEligibility(elig.data);
+    window.dispatchEvent(new Event("hive:paper-learning-refresh"));
   }, []);
 
   useEffect(() => {

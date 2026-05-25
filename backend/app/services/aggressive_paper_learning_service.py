@@ -264,13 +264,30 @@ class AggressivePaperLearningService:
             risk_snapshot_json={"codes": codes, "tier": self.symbol_tier(symbol)},
         )
         self.session.add(row)
-        self._write_memory(
-            strategy_id,
-            "experiment_blocked_memory" if decision != "approved" else "experiment_entry_memory",
-            title=f"Experiment {decision}: {strategy_id} {symbol}",
-            summary=reason,
-        )
-        return {"status": "ok", "decision": decision, "approved_notional": approved, "reason": reason}
+        self.session.flush()
+        self.session.refresh(row)
+        if decision != "approved" and reason_code == "account_pair_eligibility":
+            self._write_memory(
+                strategy_id,
+                "account_pair_eligibility_memory",
+                title=f"Pair blocked (eligibility): {symbol}",
+                summary=reason,
+            )
+        else:
+            self._write_memory(
+                strategy_id,
+                "experiment_blocked_memory" if decision != "approved" else "experiment_entry_memory",
+                title=f"Experiment {decision}: {strategy_id} {symbol}",
+                summary=reason,
+            )
+        return {
+            "status": "ok",
+            "decision": decision,
+            "decision_id": row.id,
+            "reason_code": reason_code,
+            "approved_notional": approved,
+            "reason": reason,
+        }
 
     def _preflight_block(self, symbol: str, notional: float, strategy_id: str = "", side: str = "buy") -> Optional[tuple[str, str]]:
         if not is_paper_broker_url():

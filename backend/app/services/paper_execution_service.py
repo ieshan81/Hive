@@ -110,6 +110,27 @@ class PaperExecutionService:
         open_order_symbols: Optional[set[str]] = None,
         signal_row: Optional[StrategySignal] = None,
     ) -> ExecutionLog:
+        from app.services.account_pair_eligibility_service import AccountPairEligibilityService
+
+        elig = AccountPairEligibilityService(self.session, self.config).preflight_block(
+            cand.symbol, "buy", cand.strategy_id or ""
+        )
+        if elig:
+            return self._log(
+                cycle_run_id,
+                cand,
+                status="preflight_blocked",
+                reject_reason=elig[0],
+                limit_price=None,
+                quote={},
+                portfolio_decision_id=portfolio_decision.id if portfolio_decision else None,
+                gates_failed={
+                    "category": elig[0],
+                    "reason": elig[1],
+                    "preflight_stage": "account_pair_eligibility_block",
+                },
+            )
+
         quote_sym = normalize_crypto_symbol(cand.symbol)
         quote = self.alpaca.get_quote(quote_sym, "crypto") or {}
         from datetime import datetime, timezone
@@ -261,8 +282,8 @@ class PaperExecutionService:
         if not sig:
             return {"status": "error", "message": "Signal not found"}
 
-        account = self.alpaca.sync_account()
-        positions = self.alpaca.sync_positions()
+        account = self.alpaca.sync_account_cached()
+        positions = self.alpaca.sync_positions_cached()
         open_syms = {o.get("symbol") for o in self.alpaca.get_open_orders()}
 
         cand = self.candidate_from_signal(sig, dec)

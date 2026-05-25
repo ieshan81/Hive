@@ -57,22 +57,20 @@ class AutonomousPaperLearningService:
         ghosts = recon.ghost_position_candidates()
         ft_st = self.ft.status()
         sched = AutonomousPaperScheduler(self.session, self.config).status()
-        mode_on = bool(self.cfg.get("mode_enabled"))
-        can_place = mode_on and bool(ft_st.get("final_can_submit_orders"))
-        current_mode = "paused"
-        if not mode_on:
-            current_mode = "watching"
-        elif sched.get("scheduler_enabled") and not sched.get("paused"):
-            current_mode = "paper_learning"
-        elif mode_on:
-            current_mode = "paper_learning"
+        from app.services.paper_learning_truth import paper_learning_display_status
 
+        display = paper_learning_display_status(self.session, self.config)
+        mode_on = bool(display.get("mode_enabled"))
+        can_place = bool(display.get("can_place_paper_orders"))
+        current_mode = display.get("current_mode") or "watching"
         return {
             "status": "ok",
             "ui_label": "Autonomous Paper Learning",
             "mode_enabled": mode_on,
             "paper_learning_on": mode_on,
+            "can_place_paper_orders": can_place,
             "scheduler": sched,
+            "safety_banner": display,
             "session": session_state.to_dict(),
             "bot_can_place_paper_orders": can_place,
             "open_paper_positions": len(
@@ -80,13 +78,9 @@ class AutonomousPaperLearningService:
             ),
             "ghost_position_candidates": ghosts,
             "broker_truth_synced": len(ghosts) == 0,
-            "blockers": ft_st.get("blockers") or [],
+            "blockers": display.get("blockers") or ft_st.get("blockers") or [],
             "current_mode": current_mode,
-            "plain_message": (
-                "The bot may place small paper trades under strict safety limits. Live trading remains locked."
-                if mode_on
-                else "The bot is watching only. It cannot place paper orders."
-            ),
+            "plain_message": display.get("plainMessage") or display.get("plain_message"),
             "caps": {
                 "max_paper_trades_per_day": self.cfg.get("max_paper_trades_per_day"),
                 "max_paper_notional_per_trade_usd": self.cfg.get("max_paper_notional_per_trade_usd"),
@@ -209,6 +203,7 @@ class AutonomousPaperLearningService:
         orders_before = self._order_count()
         result = self.ft.run_once(actor=operator)
         orders_after = self._order_count()
+        entries = result.get("entries") or {}
         out = {
             **result,
             "holder_id": holder,
@@ -217,6 +212,12 @@ class AutonomousPaperLearningService:
             "orders_created": max(0, orders_after - orders_before),
             "cycle_type": "autonomous_paper_learning",
         }
+        if entries.get("action") == "no_trade" or entries.get("reason") == "no_account_eligible_symbols":
+            out["status"] = "ok"
+            out["action"] = "no_trade"
+            out["reason"] = entries.get("reason") or "no_account_eligible_symbols"
+            out["message"] = entries.get("message") or "No account-eligible symbols for paper buy."
+            out["orders_submitted"] = False
         self.lease.release(holder, out)
         self._audit("autonomous_run_one_cycle", operator, {"new_orders": out["orders_created"]})
         self.session.flush()

@@ -209,8 +209,8 @@ class TrainingExecutionService:
             self._training_memory("training_blocked_memory", dec, [elig_block[1]])
             return {"status": "blocked", "reason": elig_block[0], "message": elig_block[1]}
 
-        account = alpaca.sync_account()
-        positions = alpaca.sync_positions()
+        account = alpaca.sync_account_cached()
+        positions = alpaca.sync_positions_cached()
         open_syms = {o.get("symbol") for o in alpaca.get_open_orders()}
         cand = self.paper.candidate_from_signal(sig, pdec)
         log = self.paper.submit_candidate(
@@ -346,8 +346,8 @@ class TrainingExecutionService:
         self.session.add(pdec)
         self.session.flush()
         alpaca = AlpacaAdapter(self.session)
-        account = alpaca.sync_account()
-        positions = alpaca.sync_positions()
+        account = alpaca.sync_account_cached()
+        positions = alpaca.sync_positions_cached()
         try:
             open_orders = alpaca.get_open_orders() or []
         except Exception:
@@ -394,14 +394,26 @@ class TrainingExecutionService:
         scan = self.pl.scan_experiment_eligibility()
         decisions = []
         from app.database import StrategyRegistry
+        from app.services.account_pair_eligibility_service import AccountPairEligibilityService
+
+        elig_svc = AccountPairEligibilityService(self.session, self.config)
+        tried_any_symbol = False
 
         for row in scan.get("eligible", [])[:3]:
             reg = self.session.exec(
                 select(StrategyRegistry).where(StrategyRegistry.strategy_id == row.get("strategy_id"))
             ).first()
             symbols = (reg.symbols if reg else None) or ["BTC/USD"]
-            sym = symbols[0] if isinstance(symbols, list) and symbols else "BTC/USD"
+            if not isinstance(symbols, list):
+                symbols = [str(symbols)]
+            tradeable = elig_svc.filter_tradeable_symbols(symbols, strategy_id=row.get("strategy_id", ""))
+            if not tradeable:
+                continue
+            sym = tradeable[0]
+            tried_any_symbol = True
             ev = self.pl.evaluate(row["strategy_id"], sym, side="buy")
+            if ev.get("reason_code") == "account_pair_eligibility":
+                continue
             if ev.get("decision") == "approved":
                 dec_row = self.session.exec(
                     select(PaperExperimentDecision)
@@ -412,6 +424,30 @@ class TrainingExecutionService:
                     ex = self.execute_approved_decision(dec_row.id)
                     decisions.append({"evaluate": ev, "execute": ex})
                     break
+
+        if not decisions:
+            if scan.get("eligible") and not tried_any_symbol:
+                return {
+                    "status": "ok",
+                    "action": "no_trade",
+                    "reason": "no_account_eligible_symbols",
+                    "message": "No account-eligible symbols for paper buy in current balances.",
+                    "monitor": monitor,
+                    "decisions": [],
+                    "broker_mode": "paper",
+                    "live_trading_locked": True,
+                    "orders_submitted": False,
+                }
+            return {
+                "status": "ok",
+                "action": "no_trade",
+                "reason": "no_approved_candidate",
+                "monitor": monitor,
+                "decisions": [],
+                "broker_mode": "paper",
+                "live_trading_locked": True,
+                "orders_submitted": False,
+            }
 
         return {
             "status": "ok",

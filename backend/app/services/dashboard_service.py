@@ -104,8 +104,8 @@ def build_dashboard(session: Session) -> dict[str, Any]:
     # Sync if configured
     account: AccountSnapshot | None = None
     if alpaca.configured:
-        account = alpaca.sync_account()
-        alpaca.sync_positions()
+        account = alpaca.sync_account_cached()
+        alpaca.sync_positions_cached()
         health.alpaca_connected = account is not None
         health.last_account_sync = datetime.utcnow() if account else None
     else:
@@ -722,45 +722,9 @@ def build_dashboard(session: Session) -> dict[str, Any]:
 
 
 def _safety_banner(session: Session, config: dict, paper_status: dict) -> dict:
-    from app.services.autonomous_paper_learning_service import AutonomousPaperLearningService
-    from app.services.broker_reconciliation_service import BrokerReconciliationService
-    from app.services.confidence_engine import ConfidenceEngine
-    from app.services.fast_crypto_training_loop import FastCryptoTrainingLoop
-    from app.services.live_lock_tripwire import live_lock_tripwire_status
+    from app.services.paper_learning_truth import paper_learning_display_status
 
-    recon = BrokerReconciliationService(session, config)
-    ft = FastCryptoTrainingLoop(session, config).status()
-    apl = AutonomousPaperLearningService(session, config).status()
-    conf = ConfidenceEngine(session, config).summary()
-    trip = live_lock_tripwire_status(config)
-    open_n = len(list(session.exec(select(PositionSnapshot).where(PositionSnapshot.qty > 0)).all()))
-    ghosts = recon.ghost_position_candidates()
-    broker_truth = "Synced" if not ghosts else "Needs Review"
-    paper_on = bool(apl.get("paper_learning_on") or ft.get("training_mode_enabled"))
-    can_place = bool(apl.get("bot_can_place_paper_orders") or ft.get("final_can_submit_orders"))
-    current_mode = apl.get("current_mode") or ("paper_learning" if paper_on else "watching")
-    if not paper_on:
-        current_mode = "paused" if apl.get("scheduler", {}).get("paused") else "watching"
-    plain = (
-        "The bot may place small paper trades under strict safety limits. Live trading remains locked."
-        if paper_on and can_place
-        else "The bot is watching only. It cannot place paper orders."
-        if not paper_on
-        else "Paper learning is on but preflight blockers prevent new orders right now."
-    )
-    return {
-        "liveTradingLocked": trip.get("live_lock_status") == "locked",
-        "paperLearning": "ON" if paper_on else "OFF",
-        "trainingMode": "ON" if paper_on else "OFF",
-        "confidenceScore": conf.get("overall"),
-        "confidenceLabel": conf.get("overall_label"),
-        "currentMode": current_mode,
-        "botCanPlaceOrders": "YES" if can_place else "NO",
-        "openPositions": open_n,
-        "brokerTruth": broker_truth,
-        "paperBroker": trip.get("paper_broker", True),
-        "plainMessage": plain,
-    }
+    return paper_learning_display_status(session, config)
 
 
 def _enrich_dashboard_order(o) -> dict:
