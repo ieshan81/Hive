@@ -235,6 +235,9 @@ def build_dashboard(session: Session) -> dict[str, Any]:
             "whatILearned": ai_learning_payload.get("what_i_learned", []),
             "whatIWillAvoid": ai_learning_payload.get("what_i_will_avoid", []),
             "whatIWillTestNext": ai_learning_payload.get("what_i_will_test_next", []),
+            "whatChangedBecauseOfMemory": ai_learning_payload.get("what_changed_because_of_memory", []),
+            "currentTrainingPosture": ai_learning_payload.get("current_training_posture", {}),
+            "currentOpenPositionConcern": ai_learning_payload.get("current_open_position_concern", []),
             "stats": {
                 "decisionsToday": 0,
                 "approved": approved_count,
@@ -324,16 +327,16 @@ def build_dashboard(session: Session) -> dict[str, Any]:
                 "stats": _cycle_decision_stats(session, cycle_id, memory),
             }
 
-    for key in ("whatILearned", "whatIWillAvoid", "whatIWillTestNext"):
+    for key, src_key in (
+        ("whatILearned", "what_i_learned"),
+        ("whatIWillAvoid", "what_i_will_avoid"),
+        ("whatIWillTestNext", "what_i_will_test_next"),
+        ("whatChangedBecauseOfMemory", "what_changed_because_of_memory"),
+        ("currentTrainingPosture", "current_training_posture"),
+        ("currentOpenPositionConcern", "current_open_position_concern"),
+    ):
         if key not in ai_fund_manager:
-            ai_fund_manager[key] = ai_learning_payload.get(
-                {
-                    "whatILearned": "what_i_learned",
-                    "whatIWillAvoid": "what_i_will_avoid",
-                    "whatIWillTestNext": "what_i_will_test_next",
-                }[key],
-                [],
-            )
+            ai_fund_manager[key] = ai_learning_payload.get(src_key, [] if key != "currentTrainingPosture" else {})
 
     # Memory graph
     nodes = memory.memory_graph_nodes()

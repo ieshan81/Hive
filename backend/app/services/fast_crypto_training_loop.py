@@ -264,17 +264,24 @@ class FastCryptoTrainingLoop:
         for sr in stale_reviews:
             OpenPositionReviewService(self.session, self.config).review_position(sr.get("symbol", ""))
 
+        exit_only = bool(self.ft.get("exit_only_enabled", False))
         blockers = self._entry_blockers(pf)
+        if exit_only:
+            blockers.append("exit_only_mode_blocks_entries")
         if bool(self.ft.get("fast_training_require_exit_monitor")) and not exit_ready:
             blockers.append("exit_monitor_unavailable")
         if stale_reviews:
             blockers.append("stale_open_position_blocks_entry")
         open_positions = reviews.get("reviews") or []
-        if open_positions and self._can_submit_orders():
+        if open_positions and (self._can_submit_orders() or exit_only):
             blockers.append("open_position_blocks_duplicate_entry")
 
         entries_skipped = True
         entry_result: dict[str, Any] = {"status": "skipped", "reason": "entries_blocked"}
+
+        if exit_only and bool(self.pl.cfg.get("mode_enabled")):
+            exit_out = self.training.monitor_exits()
+            phases.append("exit_only_monitor_exits")
 
         if blockers:
             self._block_memory(
@@ -284,17 +291,21 @@ class FastCryptoTrainingLoop:
                     "actor": actor,
                     "phases": phases,
                     "stale_count": len(stale_reviews),
+                    "exit_only": exit_only,
                 },
             )
             return {
-                "status": "blocked",
-                "message": "Fast training blocked — no entries; memory recorded",
+                "status": "blocked" if not exit_only else "exit_only",
+                "message": "Fast training blocked — no entries; memory recorded"
+                if not exit_only
+                else "Exit-only run — exits monitored, entries blocked",
                 "blockers": blockers,
                 "phases": phases,
                 "open_position_reviews": reviews,
                 "exit_monitor": exit_out,
                 "stale_reviews": stale_reviews,
                 "entries": entry_result,
+                "exit_only_enabled": exit_only,
                 "training_mode_enabled": bool(self.pl.cfg.get("mode_enabled")),
                 "fast_training_loop_enabled": bool(self.ft.get("fast_training_loop_enabled")),
                 "orders_submitted": False,

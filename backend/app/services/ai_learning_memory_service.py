@@ -126,10 +126,30 @@ class AILearningMemoryService:
                 test_next.append(line)
             else:
                 learned.append(line)
+        from app.services.fast_crypto_training_loop import FastCryptoTrainingLoop
+        from app.services.fast_training_exit_only_service import FastTrainingExitOnlyService
+        from app.services.open_position_review_service import OpenPositionReviewService
+
+        ft = FastCryptoTrainingLoop(self.session, self.config).status()
+        exit_only = FastTrainingExitOnlyService(self.session, self.config).status()
+        reviews = OpenPositionReviewService(self.session, self.config).review_all()
+        concerns = [
+            f"{r.get('display_symbol')}: {r.get('action')} ({r.get('reason')}) hold={r.get('true_hold_minutes')}m"
+            for r in reviews.get("reviews", [])
+        ]
         return {
             "what_i_learned": learned[:limit],
             "what_i_will_avoid": avoid[:limit],
             "what_i_will_test_next": test_next[:limit],
+            "what_changed_because_of_memory": learned[:3],
+            "current_training_posture": {
+                "mode_enabled": ft.get("mode_enabled"),
+                "fast_training_loop_enabled": ft.get("fast_training_loop_enabled"),
+                "exit_only_enabled": exit_only.get("exit_only_enabled"),
+                "can_submit_orders": ft.get("can_submit_orders"),
+                "blockers": ft.get("blockers", []),
+            },
+            "current_open_position_concern": concerns[:limit],
         }
 
     def _from_outcome_memories(self) -> int:

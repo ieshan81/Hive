@@ -630,8 +630,14 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         ai_svc = AILearningMemoryService(session, cfg_brain)
         train_svc = TrainingExecutionService(session, cfg_brain)
         from app.services.fast_crypto_training_loop import FastCryptoTrainingLoop
+        from app.services.fast_training_exit_only_service import FastTrainingExitOnlyService
+        from app.services.technical_candle_analysis_service import TechnicalCandleAnalysisService
+        from app.services.strategy_import_service import StrategyImportService
 
         ft_loop = FastCryptoTrainingLoop(session, cfg_brain)
+        exit_only_svc = FastTrainingExitOnlyService(session, cfg_brain)
+        candle_svc = TechnicalCandleAnalysisService(session, cfg_brain)
+        import_svc = StrategyImportService(session, cfg_brain)
         pos_review = OpenPositionReviewService(session, cfg_brain).review_all()
         meme_recent = MemeVolatilitySpikeDetector(session, cfg_brain).recent(15)
         from app.services.strategy_memory_validation_service import StrategyMemoryValidationService
@@ -695,6 +701,12 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
                 "lease": ft_loop.lease.status(),
                 "in_process_loop_supported": False,
             },
+            "fast_training_exit_only_status.json": exit_only_svc.status(),
+            "candle_lab_status.json": candle_svc.status(),
+            "candle_lab_analysis.json": candle_svc.analyze("DOGE/USD", timeframe="5Min"),
+            "strategy_import_status.json": import_svc.status(),
+            "imported_strategies.json": import_svc.list_imported(),
+            "meme_spike_v2_status.json": MemeVolatilitySpikeDetector(session, cfg_brain).status(),
             "fast_training_decisions.json": [
                 _serialize_row(r)
                 for r in session.exec(

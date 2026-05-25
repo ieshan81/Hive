@@ -55,18 +55,24 @@ class OpenPositionReviewService:
 
         true_hold = float(hold.get("true_hold_minutes") or 0)
         stale = intent == "quick_push_pull" and true_hold > effective_max
-        if tier == "MEME_SUPPORTED" and intent == "quick_push_pull" and true_hold > effective_max:
+        if tier == "MEME_SUPPORTED" and true_hold >= effective_max:
+            stale = True
+        if intent == "quick_push_pull" and true_hold > effective_max:
             stale = True
 
         action = "hold"
         reason = "within_hold_window"
         stale_status = "active"
-        if stale:
+        if stale or true_hold >= effective_max:
             action = "exit_recommended"
-            reason = f"exceeded_quick_push_max_hold_{effective_max}m"
+            reason = f"exceeded_max_hold_{effective_max}m"
             stale_status = "stale"
             self._stale_memory(symbol, strategy, true_hold, effective_max, pos)
-        elif true_hold > effective_max * 0.8 and tier == "MEME_SUPPORTED" and intent == "quick_push_pull":
+        elif true_hold >= effective_max * 0.9:
+            action = "exit_recommended"
+            reason = "at_or_near_max_hold"
+            stale_status = "warning"
+        elif true_hold > effective_max * 0.8:
             action = "tighten_stop"
             reason = "approaching_max_hold"
             stale_status = "warning"

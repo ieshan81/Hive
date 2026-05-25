@@ -41,6 +41,8 @@ export function SettingsBrainMaintenance() {
       )}
       <div className="flex flex-wrap gap-2">
         {[
+          ["/api/fast-training/disable", "Disable Fast Training"],
+          ["/api/fast-training/exit-only/disable", "Disable Exit-Only"],
           ["/api/settings/clear-ui-cache", "Clear UI Cache"],
           ["/api/settings/resync-broker-truth", "Re-sync Broker Truth"],
           ["/api/settings/clear-ghost-rows", "Clear Ghost Rows"],

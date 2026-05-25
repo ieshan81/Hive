@@ -272,3 +272,33 @@ def pause_experiment(strategy_id: str, body: dict = Body(default={}), session: S
     )
     session.commit()
     return out
+
+
+@router.get("/imported")
+def strategies_imported(session: Session = Depends(get_session)):
+    from app.services.strategy_import_service import StrategyImportService
+
+    return {"status": "ok", "strategies": StrategyImportService(session).list_imported()}
+
+
+@router.post("/import")
+def strategies_import(body: dict = Body(default={}), session: Session = Depends(get_session)):
+    from app.services.strategy_import_service import StrategyImportService
+
+    _block_ai_actor(body)
+    svc = StrategyImportService(session)
+    if body.get("manifest"):
+        out = svc.import_manifest(body["manifest"], body.get("python_source"))
+    elif body.get("path"):
+        out = svc.import_file(body["path"])
+    else:
+        out = {"status": "error", "message": "manifest or path required"}
+    session.commit()
+    return out
+
+
+@router.get("/import/status")
+def strategies_import_status(session: Session = Depends(get_session)):
+    from app.services.strategy_import_service import StrategyImportService
+
+    return StrategyImportService(session).status()

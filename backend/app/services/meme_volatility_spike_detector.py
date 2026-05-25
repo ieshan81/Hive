@@ -29,11 +29,12 @@ class MemeVolatilitySpikeDetector:
         tier = self._tier(sym)
         bars_1m = self._bars(sym, "1Min", 30)
         bars_5m = self._bars(sym, "5Min", 24)
+        bars_15m = self._bars(sym, "15Min", 16)
         quote = self.alpaca.get_quote(normalize_crypto_symbol(sym), "crypto") or {}
 
         price_1m = self._pct_change(bars_1m, 1)
         price_5m = self._pct_change(bars_5m, 1)
-        price_15m = self._pct_change(bars_5m, 3)
+        price_15m = self._pct_change(bars_15m, 1) if bars_15m else self._pct_change(bars_5m, 3)
         vol_spike = self._volume_spike_ratio(bars_5m)
         spread_pct = quote.get("spread_pct") or 0.0
         wick = self._wick_size(bars_1m)
@@ -64,9 +65,32 @@ class MemeVolatilitySpikeDetector:
         else:
             action = "tiny_training_entry"
 
+        from app.services.lesson_memory_service import LessonMemoryService
+
+        if action == "block":
+            import json
+
+            LessonMemoryService(self.session, self.config).upsert_lesson(
+                memory_type="meme_spike_block_memory",
+                title=f"Meme spike block: {sym}",
+                summary=f"Spike v2 blocked entry: {', '.join(reason_codes)}",
+                detailed_lesson=json.dumps(
+                    {
+                        "manipulation": manipulation,
+                        "price_change_15m": price_15m,
+                        "reason_codes": reason_codes,
+                    }
+                ),
+                symbol=sym,
+                source="meme_spike_v2",
+                pattern_key=f"spike_v2|block|{sym}|{datetime.utcnow().date()}",
+            )
+
         out = {
             "symbol": sym,
+            "detector_version": "v2",
             "tier": tier,
+            "timeframes_used": ["1Min", "5Min", "15Min"],
             "spike_detected": spike_detected,
             "momentum_quality": "strong" if price_5m > 0.02 else "weak" if price_5m < -0.02 else "neutral",
             "manipulation_risk": manipulation,
@@ -126,9 +150,11 @@ class MemeVolatilitySpikeDetector:
         ]
         return {
             "status": "ok",
+            "detector_version": "v2",
             "meme_symbols": list(MEME_SYMBOLS),
             "open_meme_positions": len(open_meme),
             "block_pump_dump_risk": bool(self.cfg.get("block_pump_dump_risk", True)),
+            "timeframes": ["1Min", "5Min", "15Min"],
         }
 
     def _tier(self, symbol: str) -> str:

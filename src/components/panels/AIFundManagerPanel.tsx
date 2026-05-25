@@ -59,6 +59,50 @@ export function AIFundManagerPanel({ data }: AIFundManagerPanelProps) {
               <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Reason Summary</p>
               <p className="text-xs leading-relaxed text-slate-300">{data.reasonSummary}</p>
             </section>
+            {(data.whatILearned?.length || data.whatIWillAvoid?.length) && (
+              <section className="mb-3 space-y-2 text-[10px]">
+                {data.whatILearned && data.whatILearned.length > 0 && (
+                  <div>
+                    <p className="text-cyan-400 font-semibold mb-0.5">What I learned</p>
+                    <ul className="text-slate-400 list-disc pl-4">
+                      {data.whatILearned.slice(0, 4).map((l, i) => (
+                        <li key={i}>{l}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {data.whatIWillAvoid && data.whatIWillAvoid.length > 0 && (
+                  <div>
+                    <p className="text-amber-400 font-semibold mb-0.5">What I will avoid</p>
+                    <ul className="text-slate-400 list-disc pl-4">
+                      {data.whatIWillAvoid.slice(0, 4).map((l, i) => (
+                        <li key={i}>{l}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {data.whatIWillTestNext && data.whatIWillTestNext.length > 0 && (
+                  <div>
+                    <p className="text-violet-400 font-semibold mb-0.5">What I will test next</p>
+                    <ul className="text-slate-400 list-disc pl-4">
+                      {data.whatIWillTestNext.slice(0, 3).map((l, i) => (
+                        <li key={i}>{l}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {data.currentOpenPositionConcern && data.currentOpenPositionConcern.length > 0 && (
+                  <div>
+                    <p className="text-red-300 font-semibold mb-0.5">Open position concern</p>
+                    <ul className="text-slate-400 list-disc pl-4">
+                      {data.currentOpenPositionConcern.map((l, i) => (
+                        <li key={i}>{l}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </section>
+            )}
             <section className="flex items-center gap-2 mb-4 rounded-lg bg-emerald-500/5 border border-emerald-500/20 px-3 py-2">
               <CheckCircle2 className="h-4 w-4 text-emerald-400 flex-shrink-0" />
               <span className="text-xs text-emerald-400">

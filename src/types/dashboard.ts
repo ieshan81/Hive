@@ -65,6 +65,9 @@ export interface AIFundManagerData {
   whatILearned?: string[];
   whatIWillAvoid?: string[];
   whatIWillTestNext?: string[];
+  whatChangedBecauseOfMemory?: string[];
+  currentTrainingPosture?: Record<string, unknown>;
+  currentOpenPositionConcern?: string[];
   stats: {
     decisionsToday: number;
     approved: number;

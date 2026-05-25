@@ -291,6 +291,7 @@ DEFAULT_CONFIG = {
         "push_pull_max_hold_minutes": 30,
     },
     "fast_training": {
+        "exit_only_enabled": False,
         "fast_training_loop_enabled": False,
         "fast_training_cycle_seconds": 20,
         "fast_training_max_scan_symbols": 40,

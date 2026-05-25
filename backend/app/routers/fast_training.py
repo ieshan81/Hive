@@ -7,6 +7,7 @@ from sqlmodel import Session
 
 from app.database import get_session
 from app.services.fast_crypto_training_loop import FastCryptoTrainingLoop
+from app.services.fast_training_exit_only_service import FastTrainingExitOnlyService
 
 router = APIRouter(prefix="/api/fast-training", tags=["fast-training"])
 
@@ -52,6 +53,41 @@ def fast_training_disable(
 @router.post("/monitor-exits")
 def fast_training_monitor_exits(session: Session = Depends(get_session)):
     out = FastCryptoTrainingLoop(session).monitor_exits()
+    session.commit()
+    return out
+
+
+@router.get("/exit-only/status")
+def fast_training_exit_only_status(session: Session = Depends(get_session)):
+    return FastTrainingExitOnlyService(session).status()
+
+
+@router.post("/exit-only/enable")
+def fast_training_exit_only_enable(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+):
+    out = FastTrainingExitOnlyService(session).enable(str(body.get("operator") or "operator"))
+    session.commit()
+    return out
+
+
+@router.post("/exit-only/disable")
+def fast_training_exit_only_disable(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+):
+    out = FastTrainingExitOnlyService(session).disable(str(body.get("operator") or "operator"))
+    session.commit()
+    return out
+
+
+@router.post("/exit-only/run")
+def fast_training_exit_only_run(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+):
+    out = FastTrainingExitOnlyService(session).run_exits(actor=str(body.get("actor") or "operator"))
     session.commit()
     return out
 
