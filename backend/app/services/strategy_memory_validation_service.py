@@ -17,6 +17,24 @@ class StrategyMemoryValidationService:
         self.config = config
         self.rcfg = config.get("research") or {}
 
+    def sync_link_status_to_lessons(self) -> dict[str, int]:
+        """Align lesson_nodes.system_validation_* with strategy_memory_links (autonomous gate)."""
+        synced = 0
+        for link in self.session.exec(select(StrategyMemoryLink)).all():
+            lesson = self.session.get(LessonNode, link.memory_id)
+            if not lesson or link.memory_status not in ("validated", "rejected"):
+                continue
+            target = link.memory_status
+            if getattr(lesson, "system_validation_status", "pending") == target:
+                continue
+            lesson.system_validation_status = target
+            lesson.system_validated_at = link.validated_at or datetime.utcnow()
+            lesson.system_validator_rule = link.validator_rule
+            lesson.can_influence_ranking = bool(link.can_influence_ranking) if target == "validated" else False
+            self.session.add(lesson)
+            synced += 1
+        return {"synced": synced}
+
     def validate_all_pending(self) -> dict[str, Any]:
         links = list(
             self.session.exec(

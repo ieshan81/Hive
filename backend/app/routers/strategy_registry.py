@@ -224,7 +224,9 @@ def rebalance(body: dict = Body(default={}), session: Session = Depends(get_sess
 @router.post("/memories/validate")
 def validate_memories(session: Session = Depends(get_session)):
     cfg = ConfigManager(session).get_current()
-    out = StrategyMemoryValidationService(session, cfg).validate_all_pending()
+    svc = StrategyMemoryValidationService(session, cfg)
+    out = svc.validate_all_pending()
+    out["synced"] = svc.sync_link_status_to_lessons()
     session.commit()
     return out
 

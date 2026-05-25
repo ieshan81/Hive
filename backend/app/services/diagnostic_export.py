@@ -605,6 +605,9 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         graph = LessonMemoryService(session, ConfigManager(session).get_current()).build_graph(
             graph_default=True, limit=80
         )
+        from app.services.strategy_memory_validation_service import StrategyMemoryValidationService
+
+        StrategyMemoryValidationService(session, ConfigManager(session).get_current()).sync_link_status_to_lessons()
         mph = memory_validation_mismatches(session)
         strategy_registry_exports = {
             "strategy_registry.json": [_serialize_row(r) for r in session.exec(select(StrategyRegistry)).all()],
