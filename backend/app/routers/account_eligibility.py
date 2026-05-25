@@ -12,6 +12,6 @@ router = APIRouter(prefix="/api/account-pair-eligibility", tags=["account-eligib
 
 @router.get("")
 def account_pair_eligibility(session: Session = Depends(get_session)):
-    from app.services.account_pair_eligibility_service import AccountPairEligibilityService
+    from app.services.safe_responses import safe_account_pair_eligibility
 
-    return AccountPairEligibilityService(session).summary()
+    return safe_account_pair_eligibility(session)

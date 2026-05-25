@@ -26,13 +26,23 @@ const CARDS: DimCard[] = [
 export function ConfidenceLevelPanel() {
   const [summary, setSummary] = useState<Record<string, unknown> | null>(null);
   const [byStrategy, setByStrategy] = useState<Record<string, unknown>[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const [s, st] = await Promise.all([
       apiGet<Record<string, unknown>>("/api/confidence/summary"),
       apiGet<{ strategies?: Record<string, unknown>[] }>("/api/confidence/by-strategy"),
     ]);
-    if (s.ok) setSummary(s.data);
+    if (s.ok && s.data) {
+      setSummary(s.data);
+      if (s.data.status === "degraded") {
+        setLoadError(String(s.data.message || "Confidence data temporarily degraded."));
+      } else {
+        setLoadError(null);
+      }
+    } else {
+      setLoadError(s.error || `Confidence API failed (${s.status})`);
+    }
     if (st.ok) setByStrategy(st.data?.strategies || []);
   }, []);
 
@@ -43,6 +53,9 @@ export function ConfidenceLevelPanel() {
   const dims = (summary?.dimensions as Record<string, { score?: number; label?: string; evidence?: string[] }>) || {};
 
   function scoreFor(card: DimCard): { score: number; label: string; evidence: string[] } {
+    if (summary?.status === "degraded" && summary?.overall == null) {
+      return { score: 0, label: "Degraded", evidence: [loadError || "Unavailable"] };
+    }
     if (card.key === "overall") {
       return {
         score: Number(summary?.overall ?? 0),
@@ -71,6 +84,12 @@ export function ConfidenceLevelPanel() {
         Evidence-based scores for learning — not permission to enable live trading. Live unlock requires operator
         checklist only.
       </p>
+
+      {loadError && (
+        <div className="mb-3 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[10px] text-amber-200">
+          {loadError}
+        </div>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
         {CARDS.map((card) => {

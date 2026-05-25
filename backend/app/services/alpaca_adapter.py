@@ -59,22 +59,20 @@ class AlpacaAdapter:
         return self.session.exec(select(AccountSnapshot).order_by(AccountSnapshot.synced_at.desc())).first()
 
     def sync_account_cached(self, *, force: bool = False) -> Optional[AccountSnapshot]:
+        """Return account snapshot bound to this request session — never a detached ORM from global cache."""
         if _is_rate_limited() and not force:
             self.broker_sync_rate_limited = True
             return self._last_account_snapshot()
         cached_at = _SYNC_CACHE.get("account_cached_at")
-        cached_snap = _SYNC_CACHE.get("account_snapshot")
         if (
             not force
             and cached_at
-            and cached_snap
             and (datetime.utcnow() - cached_at).total_seconds() < _ACCOUNT_CACHE_TTL_SEC
         ):
-            return cached_snap
+            return self._last_account_snapshot()
         snap = self.sync_account()
         if snap:
             _SYNC_CACHE["account_cached_at"] = datetime.utcnow()
-            _SYNC_CACHE["account_snapshot"] = snap
         return snap or self._last_account_snapshot()
 
     def sync_positions_cached(self, *, force: bool = False) -> list[PositionSnapshot]:
@@ -82,17 +80,14 @@ class AlpacaAdapter:
             self.broker_sync_rate_limited = True
             return list(self.session.exec(select(PositionSnapshot)).all())
         cached_at = _SYNC_CACHE.get("positions_cached_at")
-        cached = _SYNC_CACHE.get("positions_snapshot")
         if (
             not force
             and cached_at
-            and cached is not None
             and (datetime.utcnow() - cached_at).total_seconds() < _POSITIONS_CACHE_TTL_SEC
         ):
-            return cached
+            return list(self.session.exec(select(PositionSnapshot)).all())
         pos = self.sync_positions()
         _SYNC_CACHE["positions_cached_at"] = datetime.utcnow()
-        _SYNC_CACHE["positions_snapshot"] = pos
         return pos
 
     def _log_error(self, operation: str, message: str, details: Optional[dict] = None) -> None:
@@ -107,7 +102,10 @@ class AlpacaAdapter:
             cycle_run_id=cycle_id,
         )
         self.session.add(row)
-        self.session.commit()
+        try:
+            self.session.flush()
+        except Exception:
+            self.session.rollback()
         logger.error("Alpaca %s: %s", operation, message)
 
     def _get_trading_client(self):

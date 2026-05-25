@@ -10,6 +10,7 @@ export function AutonomousPaperLearningPanel() {
   const [status, setStatus] = useState<Record<string, unknown> | null>(null);
   const [eligibility, setEligibility] = useState<Record<string, unknown> | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [eligError, setEligError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [canMutate, setCanMutate] = useState(false);
 
@@ -19,7 +20,16 @@ export function AutonomousPaperLearningPanel() {
       apiGet<Record<string, unknown>>("/api/account-pair-eligibility"),
     ]);
     if (st.ok) setStatus(st.data);
-    if (elig.ok) setEligibility(elig.data);
+    if (elig.ok && elig.data) {
+      setEligibility(elig.data);
+      if (elig.data.status === "degraded") {
+        setEligError(String(elig.data.plain_message || elig.data.message || "Eligibility degraded."));
+      } else {
+        setEligError(null);
+      }
+    } else {
+      setEligError(elig.error || `Eligibility API failed (${elig.status})`);
+    }
     window.dispatchEvent(new Event("hive:paper-learning-refresh"));
   }, []);
 
@@ -72,6 +82,12 @@ export function AutonomousPaperLearningPanel() {
           <div className="font-semibold truncate">{String(sched.next_planned_at_utc || "—")}</div>
         </div>
       </div>
+
+      {eligError && (
+        <div className="mb-3 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[10px] text-amber-200">
+          {eligError}
+        </div>
+      )}
 
       {blockers.length > 0 && (
         <ul className="text-[9px] text-amber-300/90 mb-2 list-disc pl-4">

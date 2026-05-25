@@ -30,7 +30,14 @@ def paper_learning_display_status(session: Session, config: Optional[dict] = Non
         blockers = list(dict.fromkeys(blockers + ["broker_sync_rate_limited"]))
         can_place = False
 
-    conf = ConfidenceEngine(session, cfg).summary()
+    try:
+        from app.services.safe_responses import safe_confidence_summary
+
+        conf = safe_confidence_summary(session, cfg)
+        if conf.get("status") == "degraded":
+            conf = {"overall": None, "overall_label": "Unavailable"}
+    except Exception:
+        conf = {"overall": None, "overall_label": "Unavailable"}
     trip = live_lock_tripwire_status(cfg)
     recon = BrokerReconciliationService(session, cfg)
     ghosts = recon.ghost_position_candidates()

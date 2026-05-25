@@ -85,5 +85,5 @@ export async function getDashboardData(): Promise<DashboardData> {
 }
 
 export function getDiagnosticBundleUrl(): string {
-  return buildApiUrl("/api/diagnostic-bundle/download", true);
+  return buildApiUrl("/api/diagnostic-bundle/download", false);
 }

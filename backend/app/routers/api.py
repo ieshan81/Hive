@@ -30,7 +30,9 @@ router = APIRouter(prefix="/api", tags=["api"])
 
 @router.get("/dashboard")
 def get_dashboard(session: Session = Depends(get_session)):
-    return build_dashboard(session)
+    from app.services.safe_responses import safe_build_dashboard
+
+    return safe_build_dashboard(session)
 
 
 @router.get("/health")
@@ -1039,12 +1041,16 @@ def sync_alpaca(session: Session = Depends(get_session)):
 
 @router.get("/diagnostic-bundle")
 def get_diagnostic_bundle(session: Session = Depends(get_session)):
-    return export_diagnostic_bundle(session)
+    from app.services.diagnostic_export import export_diagnostic_bundle_safe
+
+    return export_diagnostic_bundle_safe(session)
 
 
 @router.get("/diagnostic-bundle/download")
 def download_diagnostic_bundle(session: Session = Depends(get_session)):
-    data = bundle_as_zip_bytes(session)
+    from app.services.diagnostic_export import bundle_as_zip_bytes_safe
+
+    data = bundle_as_zip_bytes_safe(session)
     return Response(
         content=data,
         media_type="application/zip",

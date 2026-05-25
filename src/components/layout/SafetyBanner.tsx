@@ -19,12 +19,18 @@ type BannerData = {
 
 export function SafetyBanner() {
   const [data, setData] = useState<BannerData | null>(null);
+  const [degraded, setDegraded] = useState<string | null>(null);
 
   const load = async () => {
     const [apl, lock] = await Promise.all([
       apiGet<Record<string, unknown>>("/api/autonomous-paper-learning/status"),
       apiGet<Record<string, unknown>>("/api/settings/live-lock-tripwire"),
     ]);
+    if (!apl.ok) {
+      setDegraded(apl.error || `Autonomous status unavailable (${apl.status})`);
+    } else {
+      setDegraded(null);
+    }
     const banner = (apl.data?.safety_banner || apl.data) as BannerData | undefined;
     setData({
       liveTradingLocked:
@@ -84,6 +90,9 @@ export function SafetyBanner() {
         <span>Paper broker: {data.paperBroker ? "yes" : "no"}</span>
       </div>
       <p className="mt-1 text-slate-400">{data.plainMessage}</p>
+      {degraded && (
+        <p className="mt-1 text-amber-300/90 text-[10px]">Status degraded: {degraded}</p>
+      )}
     </div>
   );
 }

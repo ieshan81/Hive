@@ -445,7 +445,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         ]
     )
 
-    from app.services.dashboard_service import build_dashboard
+    from app.services.safe_responses import lightweight_dashboard_snapshot
     from app.services.attention_radar_service import AttentionRadarService
     from app.services.cooldown_service import CooldownService
     from app.services.kill_switch_service import KillSwitchService
@@ -453,7 +453,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
     from app.services.paper_execution_service import PaperExecutionService
     from app.services.order_reconciliation import reconciliation_status
 
-    dashboard = build_dashboard(session)
+    dashboard = lightweight_dashboard_snapshot(session)
     attention = AttentionRadarService(session).scan(limit=25)
     config = config_mgr.get_current()
     cooldowns = CooldownService(session, config).list_all()
@@ -462,7 +462,10 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
     execution_policy = PaperExecutionService(session).status()
     from app.services.alpaca_adapter import AlpacaAdapter
 
-    recon = reconciliation_status(session, AlpacaAdapter(session))
+    try:
+        recon = reconciliation_status(session, AlpacaAdapter(session))
+    except Exception as recon_exc:
+        recon = {"status": "degraded", "error": type(recon_exc).__name__, "message": str(recon_exc)[:200]}
     from app.services.lesson_memory_service import LessonMemoryService
 
     lesson_rows = list(session.exec(select(LessonNode).order_by(LessonNode.last_seen_at.desc())).all())
@@ -591,7 +594,9 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         pass
 
     strategy_registry_exports: dict = {}
+    export_errors: list[dict[str, Any]] = []
     try:
+        from app.services.export_safe import safe_export_section
         from app.database import (
             StrategyAllocation,
             StrategyConflict,
@@ -722,17 +727,45 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             "strategy_eligibility_windows.json": [_serialize_row(r) for r in session.exec(select(StrategyEligibilityWindow)).all()],
             "paper_candidates.json": reg_svc.list_registry(stage="paper_candidate"),
             "strategy_tab_snapshot.json": snap,
-            "paper_learning_status.json": _paper_learning_status_export(
-                session, cfg_brain, apl_svc, apl_sched
+            "paper_learning_status.json": safe_export_section(
+                "paper_learning_status.json",
+                lambda: _paper_learning_status_export(session, cfg_brain, apl_svc, apl_sched),
+                export_errors,
             ),
-            "autonomous_learning_scheduler.json": apl_sched.status(),
-            "confidence_level.json": conf_eng.summary(),
-            "strategy_confidence.json": conf_eng.by_strategy(),
-            "symbol_confidence.json": conf_eng.by_symbol(),
-            "account_pair_eligibility.json": elig_svc.summary(),
-            "backtest_lab_results.json": ResearchLabService(session).propose_backtests_from_memory(limit=10),
-            "strategy_proposals.json": prop_svc.list_proposals(limit=30),
-            "promotion_readiness.json": promo_svc.checklist(),
+            "autonomous_learning_scheduler.json": safe_export_section(
+                "autonomous_learning_scheduler.json", apl_sched.status, export_errors
+            ),
+            "confidence_level.json": safe_export_section(
+                "confidence_level.json",
+                lambda: __import__(
+                    "app.services.safe_responses", fromlist=["safe_confidence_summary"]
+                ).safe_confidence_summary(session, cfg_brain),
+                export_errors,
+            ),
+            "strategy_confidence.json": safe_export_section(
+                "strategy_confidence.json", conf_eng.by_strategy, export_errors
+            ),
+            "symbol_confidence.json": safe_export_section(
+                "symbol_confidence.json", conf_eng.by_symbol, export_errors
+            ),
+            "account_pair_eligibility.json": safe_export_section(
+                "account_pair_eligibility.json",
+                lambda: __import__(
+                    "app.services.safe_responses", fromlist=["safe_account_pair_eligibility"]
+                ).safe_account_pair_eligibility(session, cfg_brain),
+                export_errors,
+            ),
+            "backtest_lab_results.json": safe_export_section(
+                "backtest_lab_results.json",
+                lambda: ResearchLabService(session).propose_backtests_from_memory(limit=10),
+                export_errors,
+            ),
+            "strategy_proposals.json": safe_export_section(
+                "strategy_proposals.json", lambda: prop_svc.list_proposals(limit=30), export_errors
+            ),
+            "promotion_readiness.json": safe_export_section(
+                "promotion_readiness.json", promo_svc.checklist, export_errors
+            ),
             "paper_experiment_config.json": [_serialize_row(r) for r in session.exec(select(PaperExperimentConfig)).all()],
             "paper_experiment_decisions.json": [_serialize_row(r) for r in session.exec(select(PaperExperimentDecision)).all()],
             "paper_experiment_outcomes.json": [_serialize_row(r) for r in session.exec(select(PaperExperimentOutcome)).all()],
@@ -822,9 +855,24 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
                 "consolidation": cons_svc.status(),
                 "ai_learning_count": len(ai_svc.list_ai_learning(100)),
             },
+            "diagnostic_export_errors.json": export_errors,
         }
     except Exception as exc:
-        strategy_registry_exports = {"strategy_registry_error.json": {"error": str(exc)}}
+        import traceback
+
+        export_errors.append(
+            {
+                "section": "strategy_registry_block",
+                "error_type": type(exc).__name__,
+                "message": str(exc)[:500],
+                "traceback_summary": traceback.format_exc()[-2000:],
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+            }
+        )
+        strategy_registry_exports = {
+            "strategy_registry_error.json": {"error": str(exc)},
+            "diagnostic_export_errors.json": export_errors,
+        }
         try:
             from app.services.hive_brain_graph_service import HiveBrainGraphService
             from app.services.position_hold_time_service import audit_all_open_positions
@@ -919,24 +967,132 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
     }
 
 
-def bundle_as_zip_bytes(session: Session) -> bytes:
+def _emergency_bundle(session: Session, errors: list[dict[str, Any]], root_error: Optional[str] = None) -> dict[str, Any]:
+    from app.services.live_lock_tripwire import live_lock_tripwire_status
+    from app.config import settings
+
+    if root_error:
+        errors.insert(
+            0,
+            {
+                "section": "export_root",
+                "error_type": "ExportError",
+                "message": root_error[:500],
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+            },
+        )
+    trip = {}
+    try:
+        trip = live_lock_tripwire_status(ConfigManager(session).get_current())
+    except Exception as exc:
+        trip = {"error": type(exc).__name__, "message": str(exc)[:200]}
+    return {
+        "bundle_meta.json": {
+            "status": "emergency",
+            "exported_at": datetime.utcnow().isoformat() + "Z",
+            "note": "Partial export — see diagnostic_export_errors.json",
+        },
+        "diagnostic_export_errors.json": errors,
+        "health_snapshot.json": {
+            "alpaca_configured": settings.alpaca_configured,
+            "gemini_configured": settings.gemini_configured,
+            "database_configured": settings.database_configured,
+        },
+        "live_lock_tripwire_status.json": trip,
+    }
+
+
+def export_diagnostic_bundle_safe(session: Session) -> dict[str, Any]:
+    errors: list[dict[str, Any]] = []
+    try:
+        bundle = export_diagnostic_bundle(session)
+        bundle["diagnostic_export_errors.json"] = errors + bundle.get("diagnostic_export_errors.json", [])
+        if errors:
+            meta = bundle.get("bundle_meta.json") or {}
+            if isinstance(meta, dict):
+                meta["partial"] = True
+                meta["error_count"] = len(errors)
+                bundle["bundle_meta.json"] = meta
+        return bundle
+    except Exception as exc:
+        import traceback
+
+        errors.append(
+            {
+                "section": "export_root",
+                "error_type": type(exc).__name__,
+                "message": str(exc)[:500],
+                "traceback_summary": traceback.format_exc()[-3000:],
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+            }
+        )
+        return _emergency_bundle(session, errors, str(exc))
+
+
+def bundle_as_zip_bytes_safe(session: Session) -> bytes:
     import io
     import zipfile
 
-    bundle = export_diagnostic_bundle(session)
+    from app.services.export_safe import json_safe
+
+    errors: list[dict[str, Any]] = []
+    try:
+        bundle = export_diagnostic_bundle(session)
+    except Exception as exc:
+        import traceback
+
+        errors.append(
+            {
+                "section": "export_root",
+                "error_type": type(exc).__name__,
+                "message": str(exc)[:500],
+                "traceback_summary": traceback.format_exc()[-3000:],
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+            }
+        )
+        bundle = _emergency_bundle(session, errors, str(exc))
+
+    bundle["diagnostic_export_errors.json"] = list(bundle.get("diagnostic_export_errors.json") or []) + errors
+    if errors and isinstance(bundle.get("bundle_meta.json"), dict):
+        bundle["bundle_meta.json"]["partial"] = True
+        bundle["bundle_meta.json"]["error_count"] = len(bundle["diagnostic_export_errors.json"])
+
     ai_bundle = bundle.pop("ai_bundle", None)
     research_bundle = bundle.pop("research_bundle", None)
     buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for name, content in bundle.items():
-            if name.endswith(".md"):
-                zf.writestr(name, content)
-            else:
-                zf.writestr(name, json.dumps(content, indent=2, default=str))
-        if ai_bundle:
-            for name, content in ai_bundle.items():
-                zf.writestr(f"ai_bundle/{name}", json.dumps(content, indent=2, default=str))
-        if research_bundle:
-            for name, content in research_bundle.items():
-                zf.writestr(f"research_bundle/{name}", json.dumps(content, indent=2, default=str))
-    return buf.getvalue()
+    try:
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for name, content in bundle.items():
+                if name.endswith(".md"):
+                    zf.writestr(name, str(content))
+                else:
+                    zf.writestr(name, json.dumps(json_safe(content), indent=2))
+            if ai_bundle:
+                for name, content in ai_bundle.items():
+                    zf.writestr(f"ai_bundle/{name}", json.dumps(json_safe(content), indent=2))
+            if research_bundle:
+                for name, content in research_bundle.items():
+                    zf.writestr(f"research_bundle/{name}", json.dumps(json_safe(content), indent=2))
+        return buf.getvalue()
+    except Exception as zip_exc:
+        import traceback
+
+        errors.append(
+            {
+                "section": "zip_encode",
+                "error_type": type(zip_exc).__name__,
+                "message": str(zip_exc)[:500],
+                "traceback_summary": traceback.format_exc()[-2000:],
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+            }
+        )
+        emergency = _emergency_bundle(session, errors, str(zip_exc))
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for name, content in emergency.items():
+                zf.writestr(name, json.dumps(json_safe(content), indent=2))
+        return buf.getvalue()
+
+
+def bundle_as_zip_bytes(session: Session) -> bytes:
+    return bundle_as_zip_bytes_safe(session)
