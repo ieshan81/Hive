@@ -15,6 +15,9 @@ from app.services.open_position_review_service import OpenPositionReviewService
 def _serialize_execution(row: ExecutionLog) -> dict[str, Any]:
     gf = row.gates_failed_json or {}
     gp = row.gates_passed_json or {}
+    ev = gf.get("evidence") if isinstance(gf.get("evidence"), dict) else {}
+    if not ev and isinstance(gp, dict):
+        ev = gp.get("evidence") if isinstance(gp.get("evidence"), dict) else {}
     stage = "internal_preflight_block"
     if row.status in ("paper_order_submitted", "paper_order_filled", "paper_order_partially_filled"):
         stage = "caged_order_submitted"
@@ -22,6 +25,7 @@ def _serialize_execution(row: ExecutionLog) -> dict[str, Any]:
         stage = "broker_rejection"
     elif gf.get("preflight_stage"):
         stage = gf.get("preflight_stage")
+    exempt = ev.get("notional_exemption") or gf.get("notional_exemption")
     return {
         "id": row.id,
         "cycle_run_id": row.cycle_run_id,
@@ -34,11 +38,8 @@ def _serialize_execution(row: ExecutionLog) -> dict[str, Any]:
         "requested_qty": row.requested_qty,
         "requested_notional": row.requested_notional,
         "preflight_stage": stage,
-        "notional_exemption": (gp.get("evidence") or gf.get("evidence") or {}).get("notional_exemption")
-        if isinstance(gp.get("evidence"), dict)
-        else gf.get("evidence", {}).get("notional_exemption")
-        if isinstance(gf.get("evidence"), dict)
-        else None,
+        "notional_exemption": exempt,
+        "internal_preflight_passed": bool(gp.get("preflight")) if isinstance(gp, dict) else None,
         "gates_failed": gf,
         "gates_passed": gp,
         "submitted_at": row.submitted_at.isoformat() + "Z" if row.submitted_at else None,

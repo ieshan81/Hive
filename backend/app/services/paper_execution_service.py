@@ -168,7 +168,12 @@ class PaperExecutionService:
             quote=quote,
             portfolio_decision_id=portfolio_decision.id if portfolio_decision else None,
             broker_client_order_id=pf.client_order_id,
-            gates_passed={"preflight": True, "risk": True, "portfolio": True},
+            gates_passed={
+                "preflight": True,
+                "risk": True,
+                "portfolio": True,
+                "evidence": pf.evidence,
+            },
         )
         self.session.flush()
 
