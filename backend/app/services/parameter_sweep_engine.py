@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import itertools
 import uuid
-from typing import Any
+from typing import Any, Optional
 
 from sqlmodel import Session
 
 from app.database import ParameterSetResult
-from app.services.engine_config import cfg_get
 from app.services.research_backtest_engine import ResearchBacktestEngine
+from app.services.research_batch_analyzer import ResearchBatchAnalyzer
+from app.services.research_memory_service import ResearchMemoryService
 
 
 def _grid_from_spec(spec: dict) -> list[dict]:
@@ -40,14 +41,29 @@ class ParameterSweepEngine:
         strategy_id: str,
         symbols: list[str],
         param_grid: dict[str, list],
+        *,
+        lookback_days: Optional[int] = None,
+        date_warning: Optional[str] = None,
+        coverage_summary: Optional[dict] = None,
     ) -> dict[str, Any]:
         batch_id = str(uuid.uuid4())
+        prefix = batch_id[:8]
         grid = _grid_from_spec(param_grid)[: self.max_combo]
+        mem = ResearchMemoryService(self.session, self.config)
         results: list[dict] = []
         for i, params in enumerate(grid):
-            ps_id = f"{batch_id[:8]}-ps{i}"
-            out = self.bt.run(strategy_id, symbols, parameters=params, parameter_set_id=ps_id)
+            ps_id = f"{prefix}-ps{i}"
+            out = self.bt.run(
+                strategy_id,
+                symbols,
+                parameters=params,
+                parameter_set_id=ps_id,
+                lookback_days=lookback_days,
+            )
+            if out.get("run_id"):
+                mem.from_backtest_run(out["run_id"])
             metrics = out.get("metrics") or {}
+            mdd_pct = (metrics.get("max_drawdown") or 0) * 100
             row = ParameterSetResult(
                 parameter_set_id=ps_id,
                 run_id=out.get("run_id", batch_id),
@@ -59,7 +75,7 @@ class ParameterSweepEngine:
                 avg_loss=metrics.get("avg_loss"),
                 expectancy=metrics.get("expectancy"),
                 profit_factor=metrics.get("profit_factor"),
-                max_drawdown_pct=(metrics.get("max_drawdown") or 0) * 100,
+                max_drawdown_pct=mdd_pct,
                 estimated_fees_pct=(metrics.get("cost_model") or {}).get("fee_pct"),
                 estimated_slippage_pct=(metrics.get("cost_model") or {}).get("slippage_pct"),
                 status=out.get("status", "completed"),
@@ -74,6 +90,22 @@ class ParameterSweepEngine:
                     "num_trades": metrics.get("num_trades", 0),
                     "expectancy": metrics.get("expectancy"),
                     "profit_factor": metrics.get("profit_factor"),
+                    "max_drawdown_pct": mdd_pct,
+                    "win_rate": metrics.get("win_rate"),
                 }
             )
-        return {"status": "ok", "batch_id": batch_id, "combinations": len(results), "results": results}
+        self.session.flush()
+        analysis = ResearchBatchAnalyzer(self.session, self.config).analyze_sweep(
+            batch_id,
+            strategy_id,
+            results,
+            date_warning=date_warning,
+            coverage_summary=coverage_summary,
+        )
+        return {
+            "status": "ok",
+            "batch_id": batch_id,
+            "combinations": len(results),
+            "results": results,
+            "batch_analysis": analysis,
+        }

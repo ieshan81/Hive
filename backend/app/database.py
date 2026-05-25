@@ -536,6 +536,13 @@ class HistoricalDataCoverage(SQLModel, table=True):
     timeframe: str = Field(index=True)
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    requested_start_date: Optional[str] = None
+    requested_end_date: Optional[str] = None
+    actual_start_date: Optional[str] = None
+    actual_end_date: Optional[str] = None
+    data_is_recent: bool = True
+    data_staleness_days: Optional[int] = None
+    date_warning: Optional[str] = None
     rows_count: int = 0
     source: str = "alpaca"
     gaps_detected: bool = False
@@ -771,6 +778,24 @@ def _migrate_columns() -> None:
             ]:
                 if col not in ln_cols:
                     ddl = f"ALTER TABLE lesson_nodes ADD COLUMN {col} {typ}"
+                    if default is not None:
+                        ddl += f" DEFAULT {default}"
+                    conn.execute(text(ddl))
+
+    if insp.has_table("historical_data_coverage"):
+        cov_cols = {c["name"] for c in insp.get_columns("historical_data_coverage")}
+        with engine.begin() as conn:
+            for col, typ, default in [
+                ("requested_start_date", "VARCHAR", None),
+                ("requested_end_date", "VARCHAR", None),
+                ("actual_start_date", "VARCHAR", None),
+                ("actual_end_date", "VARCHAR", None),
+                ("data_is_recent", "BOOLEAN", "true"),
+                ("data_staleness_days", "INTEGER", None),
+                ("date_warning", "VARCHAR", None),
+            ]:
+                if col not in cov_cols:
+                    ddl = f"ALTER TABLE historical_data_coverage ADD COLUMN {col} {typ}"
                     if default is not None:
                         ddl += f" DEFAULT {default}"
                     conn.execute(text(ddl))

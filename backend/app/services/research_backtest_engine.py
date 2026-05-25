@@ -34,19 +34,43 @@ def _run_crypto_push_pull(
 ) -> tuple[list[float], list[str]]:
     warnings: list[str] = []
     cpp = config.get("crypto_push_pull") or {}
-    thresh = float(params.get("momentum_threshold_1h", cpp.get("momentum_threshold_1h", 0.004)))
+    base_thresh = float(params.get("momentum_threshold_1h", cpp.get("momentum_threshold_1h", 0.004)))
+    edge_mult = float(params.get("edge_multiplier", 1.0))
+    thresh = base_thresh * edge_mult
     lookback = int(params.get("lookback_bars", 1))
+    max_hold = int(params.get("max_hold_bars", 0))
+    if max_hold <= 0 and params.get("max_hold_hours") is not None:
+        max_hold = max(1, int(params.get("max_hold_hours", 24)))
+    if max_hold <= 0:
+        max_hold = 999
+    spread_cap = float(
+        params.get("spread_cap_pct", params.get("max_spread_pct", params.get("spread_cap", 999)))
+    )
+    atr_mult = float(params.get("atr_multiplier", params.get("atr_stop_multiplier", 1.0)))
     returns: list[float] = []
-    for i in range(max(lookback + 1, 13), len(bars) - 1):
+    for i in range(max(lookback + 1, 14), len(bars) - 1):
         c0 = bars[i]["close"]
         c_prev = bars[i - lookback]["close"]
         if c_prev <= 0:
             continue
         m = (c0 - c_prev) / c_prev
-        if m > thresh:
-            nxt = bars[i + 1]["close"]
-            gross = (nxt - c0) / c0
-            returns.append(apply_trade_return(gross, symbol, config))
+        if m <= thresh:
+            continue
+        bar_range_pct = (bars[i]["high"] - bars[i]["low"]) / c0 * 100 if c0 else 0
+        if bar_range_pct > spread_cap:
+            continue
+        entry = c0
+        exit_idx = min(i + max_hold, len(bars) - 1)
+        atr_window = bars[max(0, i - 14) : i]
+        atr = sum(b["high"] - b["low"] for b in atr_window) / max(len(atr_window), 1)
+        stop = entry - atr_mult * atr if atr_mult > 0 else 0
+        exit_price = bars[exit_idx]["close"]
+        for j in range(i + 1, exit_idx + 1):
+            if stop > 0 and bars[j]["low"] < stop:
+                exit_price = stop
+                break
+        gross = (exit_price - entry) / entry
+        returns.append(apply_trade_return(gross, symbol, config))
     if not returns:
         warnings.append("No trades triggered with current parameters on available bars")
     return returns, warnings
@@ -165,6 +189,7 @@ class ResearchBacktestEngine:
         *,
         parameters: Optional[dict] = None,
         parameter_set_id: Optional[str] = None,
+        lookback_days: Optional[int] = None,
     ) -> dict[str, Any]:
         run_id = str(uuid.uuid4())
         params = parameters or {}
@@ -173,7 +198,9 @@ class ResearchBacktestEngine:
         all_warnings: list[str] = []
         date_start = None
         date_end = None
+        date_meta: dict[str, Any] = {}
         estimated_spread = True
+        lb = lookback_days or int(self.research_cfg.get("default_lookback_days", 90))
 
         runner = STRATEGY_RUNNERS.get(strategy_id)
         if strategy_id == "meme_attention_watch":
@@ -214,10 +241,13 @@ class ResearchBacktestEngine:
 
         min_bars = int(self.research_cfg.get("min_bars_for_backtest", 50))
         for sym in symbols:
-            bars, meta = self.hist.get_bars(sym, min_rows=min_bars)
+            bars, meta = self.hist.get_bars(sym, min_rows=min_bars, lookback_days=lb)
             if meta.get("error"):
                 all_warnings.append(f"{sym}: {meta['error']}")
                 continue
+            if meta.get("date_warning"):
+                all_warnings.append(f"{sym}: {meta['date_warning']}")
+            date_meta = {**date_meta, **{k: meta[k] for k in meta if k.startswith(("requested_", "actual_", "data_", "date_"))}}
             if bars:
                 date_start = date_start or str(bars[0]["timestamp"])[:10]
                 date_end = str(bars[-1]["timestamp"])[:10]
@@ -246,6 +276,7 @@ class ResearchBacktestEngine:
             "total_return_pct": sum(all_returns) * 100,
             "cost_model": cost,
             "parameters": params,
+            "date_coverage": date_meta,
         }
         conf = _confidence_label(stats["num_trades"], self.research_cfg)
         row = self._save_run(

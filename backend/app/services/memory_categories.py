@@ -47,8 +47,10 @@ RESEARCH_MEMORY_TYPES = frozenset(
         "backtest_failure_pattern",
         "walk_forward_failure",
         "walk_forward_success",
+        "insufficient_walk_forward_data",
         "strategy_overfit_warning",
         "parameter_sensitivity_warning",
+        "parameter_sweep_no_variation",
         "regime_dependency_pattern",
         "symbol_backtest_pattern",
         "cost_drag_pattern",
@@ -57,6 +59,9 @@ RESEARCH_MEMORY_TYPES = frozenset(
         "exit_rule_performance_pattern",
         "rejected_strategy_memory",
         "promoted_strategy_candidate",
+        "do_not_promote_recommendation",
+        "sample_size_warning",
+        "repeated_losing_parameter_family",
     }
 )
 

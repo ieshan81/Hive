@@ -26,6 +26,7 @@ export function ResearchLabPanel() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [lastAction, setLastAction] = useState<string | null>(null);
+  const [batchSummary, setBatchSummary] = useState<Record<string, unknown> | null>(null);
   const [meta, setMeta] = useState<PanelLoadMeta>({ source: "empty", lastUpdated: new Date().toISOString() });
 
   const [strategyId, setStrategyId] = useState("crypto_push_pull");
@@ -77,13 +78,19 @@ export function ResearchLabPanel() {
 
   async function runBatch() {
     setBusy(true);
-    const res = await apiPost("/api/lab/backtest/batch-run", {
+    const res = await apiPost<Record<string, unknown>>("/api/lab/backtest/batch-run", {
       strategy_family: strategyId,
       symbols: symbols.split(",").map((s) => s.trim()).filter(Boolean),
       timeframe: "1h",
       lookback_days: 90,
     });
-    setLastAction(res.ok ? "Batch sweep completed" : res.error || "batch failed");
+    if (res.ok && res.data) {
+      setBatchSummary(res.data);
+      setLastAction("Batch sweep completed");
+    } else {
+      setBatchSummary(null);
+      setLastAction(res.error || "batch failed");
+    }
     await load();
     setBusy(false);
   }
@@ -130,6 +137,14 @@ export function ResearchLabPanel() {
   }
 
   const mc = status?.monte_carlo;
+  const batchAnalysis =
+    batchSummary?.batch_analysis && typeof batchSummary.batch_analysis === "object"
+      ? (batchSummary.batch_analysis as Record<string, unknown>)
+      : null;
+  const paramVariationWarning =
+    typeof batchAnalysis?.parameter_variation_warning === "string"
+      ? batchAnalysis.parameter_variation_warning
+      : null;
 
   return (
     <section className="space-y-4">
@@ -157,6 +172,34 @@ export function ResearchLabPanel() {
         </p>
       )}
       {lastAction && <p className="text-[10px] text-slate-500 font-mono">{lastAction}</p>}
+
+      {batchSummary && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-950/30 px-3 py-2 text-xs space-y-1">
+          {Boolean(batchSummary.batch_failed_after_costs) && (
+            <p className="text-amber-300 font-medium">Latest batch failed after costs</p>
+          )}
+          {batchSummary.promote_allowed === false && (
+            <p className="text-red-300">Do not promote — metrics below research gates</p>
+          )}
+          {typeof batchSummary.coverage === "object" && batchSummary.coverage !== null && (
+            <p className="text-slate-400">
+              Data range used:{" "}
+              {Object.values(batchSummary.coverage as Record<string, Record<string, string>>)
+                .map((c) => `${c.actual_start_date ?? "?"} to ${c.actual_end_date ?? "?"}`)
+                .join("; ") || "—"}
+            </p>
+          )}
+          {typeof batchSummary.date_warning === "string" && batchSummary.date_warning && (
+            <p className="text-amber-400">Requested 90 days but actual data is older — {batchSummary.date_warning}</p>
+          )}
+          {paramVariationWarning && (
+              <p className="text-violet-300">
+                Parameter sweep produced repeated identical results — inspect edge_multiplier, max_hold, ATR, spread
+                caps.
+              </p>
+            )}
+        </div>
+      )}
 
       <GlassPanel title="Strategy definitions">
         <ul className="text-[10px] text-slate-400 max-h-24 overflow-y-auto space-y-0.5">
@@ -262,8 +305,8 @@ export function ResearchLabPanel() {
                 <th className="text-left py-1">Symbol</th>
                 <th>TF</th>
                 <th>Rows</th>
-                <th>Start</th>
-                <th>End</th>
+                <th>Actual range</th>
+                <th>Stale</th>
                 <th>Gaps</th>
               </tr>
             </thead>
@@ -273,8 +316,13 @@ export function ResearchLabPanel() {
                   <td className="py-1">{String(c.symbol)}</td>
                   <td>{String(c.timeframe)}</td>
                   <td>{String(c.rows_count)}</td>
-                  <td>{String(c.start_date ?? "—")}</td>
-                  <td>{String(c.end_date ?? "—")}</td>
+                  <td>
+                    {String(c.actual_start_date ?? c.start_date ?? "—")} →{" "}
+                    {String(c.actual_end_date ?? c.end_date ?? "—")}
+                  </td>
+                  <td className={c.data_is_recent === false ? "text-amber-400" : ""}>
+                    {c.data_staleness_days != null ? `${String(c.data_staleness_days)}d` : "—"}
+                  </td>
                   <td>{c.gaps_detected ? "yes" : "no"}</td>
                 </tr>
               ))}
@@ -302,9 +350,23 @@ export function ResearchLabPanel() {
         <GlassPanel title="Strategy leaderboard">
           <ul className="text-xs space-y-1 max-h-48 overflow-y-auto">
             {leaderboard.map((row) => (
-              <li key={String(row.parameter_set_id)} className="flex justify-between text-slate-300">
-                <span>{String(row.strategy_id)}</span>
-                <span className="text-emerald-400">E {String(row.expectancy)}</span>
+              <li key={String(row.parameter_set_id)} className="border-b border-white/5 pb-1 text-slate-300">
+                <div className="flex justify-between">
+                  <span>{String(row.strategy_id)}</span>
+                  <span className={row.promote_allowed ? "text-emerald-400" : "text-red-400"}>
+                    E {String(row.expectancy)}
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-500">
+                  {String(row.recommended_action)} · promote {row.promote_allowed ? "yes" : "no"}
+                  {row.rejection_reason ? ` · ${String(row.rejection_reason)}` : ""}
+                </p>
+                {typeof row.data_warning === "string" && row.data_warning ? (
+                  <p className="text-[10px] text-amber-500">{row.data_warning}</p>
+                ) : null}
+                {typeof row.parameter_variation_warning === "string" && row.parameter_variation_warning ? (
+                  <p className="text-[10px] text-violet-400">{row.parameter_variation_warning}</p>
+                ) : null}
               </li>
             ))}
             {!leaderboard.length && <li className="text-slate-500">Need parameter sweeps with 5+ trades</li>}

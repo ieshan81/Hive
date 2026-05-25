@@ -22,6 +22,7 @@ from app.services.monte_carlo_engine import MonteCarloEngine
 from app.services.parameter_sweep_engine import ParameterSweepEngine
 from app.services.research_backtest_engine import ResearchBacktestEngine
 from app.services.research_memory_service import ResearchMemoryService
+from app.services.research_performance import evaluate_metrics
 from app.services.strategy_library import get_strategy, list_strategies, seed_strategy_library
 from app.services.walk_forward_engine import WalkForwardEngine
 
@@ -110,20 +111,57 @@ class ResearchLabService:
         symbols = body.get("symbols") or ["DOGE/USD", "BTC/USD", "ETH/USD"]
         timeframe = body.get("timeframe", "1h")
         lookback_days = int(body.get("lookback_days", 90))
+        alpaca_tf = "1Hour" if timeframe in ("1h", "1H") else timeframe
 
         hist = HistoricalDataService(self.session, self.config)
         fetch_errors = []
+        coverage_warnings: list[str] = []
+        coverage_summary: dict[str, Any] = {}
         for sym in symbols:
-            fr = hist.fetch_and_store(sym, timeframe=timeframe if timeframe != "1h" else "1Hour", limit=min(500, lookback_days * 24))
+            fr = hist.fetch_and_store(
+                sym,
+                timeframe=alpaca_tf,
+                limit=min(500, lookback_days * 24),
+                lookback_days=lookback_days,
+            )
             if fr.get("status") != "ok":
                 fetch_errors.append(f"{sym}: {fr.get('message')}")
+            elif fr.get("date_warning"):
+                coverage_warnings.append(f"{sym}: {fr['date_warning']}")
+            coverage_summary[sym] = {
+                k: fr.get(k)
+                for k in (
+                    "requested_start_date",
+                    "requested_end_date",
+                    "actual_start_date",
+                    "actual_end_date",
+                    "data_is_recent",
+                    "data_staleness_days",
+                    "date_warning",
+                )
+            }
 
         strat = get_strategy(self.session, strategy_id)
         grid = body.get("parameter_grid") or (strat.parameters_json if strat else {})
+        date_warning = "; ".join(coverage_warnings) if coverage_warnings else None
         sweep = ParameterSweepEngine(self.session, self.config)
-        out = sweep.sweep(strategy_id, symbols, grid)
+        out = sweep.sweep(
+            strategy_id,
+            symbols,
+            grid,
+            lookback_days=lookback_days,
+            date_warning=date_warning,
+            coverage_summary=coverage_summary,
+        )
         out["fetch_errors"] = fetch_errors
         out["strategy_id"] = strategy_id
+        out["lookback_days"] = lookback_days
+        out["date_warning"] = date_warning
+        out["coverage"] = coverage_summary
+        analysis = out.get("batch_analysis") or {}
+        out["recommended_action"] = (analysis.get("batch_evaluation") or {}).get("recommended_action", "do_not_promote")
+        out["promote_allowed"] = (analysis.get("batch_evaluation") or {}).get("promote_allowed", False)
+        out["batch_failed_after_costs"] = analysis.get("rejected", False)
         return out
 
     def fetch_historical_data(self, body: dict) -> dict[str, Any]:
@@ -138,7 +176,9 @@ class ResearchLabService:
         for sym in symbols:
             for tf in timeframes:
                 alpaca_tf = tf_map.get(tf, tf)
-                r = hist.fetch_and_store(sym, timeframe=alpaca_tf, limit=limit)
+                r = hist.fetch_and_store(
+                    sym, timeframe=alpaca_tf, limit=limit, lookback_days=lookback_days
+                )
                 results.append(r)
                 if r.get("status") != "ok":
                     errors.append({"symbol": sym, "timeframe": tf, "message": r.get("message")})
@@ -213,18 +253,58 @@ class ResearchLabService:
             .order_by(ParameterSetResult.expectancy.desc())
             .limit(25)
         ).all()
-        return [
-            {
-                "strategy_id": r.strategy_id,
-                "parameter_set_id": r.parameter_set_id,
+        sig_counts: dict[str, int] = {}
+        for r in rows:
+            sig = "|".join(
+                str(x)
+                for x in (
+                    r.expectancy,
+                    r.profit_factor,
+                    r.num_trades,
+                    r.max_drawdown_pct,
+                    r.win_rate,
+                )
+            )
+            sig_counts[sig] = sig_counts.get(sig, 0) + 1
+        sweep_warning = any(c >= 5 for c in sig_counts.values())
+
+        hist = HistoricalDataService(self.session, self.config)
+        cov_list = hist.list_coverage()
+        date_warning = next((c.get("date_warning") for c in cov_list if c.get("date_warning")), None)
+
+        out = []
+        for r in rows:
+            metrics = {
                 "expectancy": r.expectancy,
                 "profit_factor": r.profit_factor,
-                "win_rate": r.win_rate,
-                "num_trades": r.num_trades,
                 "max_drawdown_pct": r.max_drawdown_pct,
+                "num_trades": r.num_trades,
             }
-            for r in rows
-        ]
+            ev = evaluate_metrics(metrics, self.config)
+            out.append(
+                {
+                    "strategy_id": r.strategy_id,
+                    "parameter_set_id": r.parameter_set_id,
+                    "expectancy": r.expectancy,
+                    "profit_factor": r.profit_factor,
+                    "win_rate": r.win_rate,
+                    "num_trades": r.num_trades,
+                    "max_drawdown_pct": r.max_drawdown_pct,
+                    "recommended_action": ev["recommended_action"],
+                    "promote_allowed": ev["promote_allowed"],
+                    "rejection_reason": ev["rejection_reason"],
+                    "confidence": metrics.get("confidence") or (
+                        "low" if (r.num_trades or 0) < 20 else "medium"
+                    ),
+                    "data_warning": date_warning,
+                    "parameter_variation_warning": (
+                        "Parameter sweep may not be influencing strategy logic."
+                        if sweep_warning
+                        else None
+                    ),
+                }
+            )
+        return out
 
     def promote_to_paper_candidate(self, strategy_id: str, body: dict) -> dict[str, Any]:
         """AI/operator propose only — human_approved required for paper_enabled."""

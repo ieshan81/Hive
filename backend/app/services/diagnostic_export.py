@@ -534,6 +534,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         StrategyDefinition,
         WalkForwardResult,
     )
+    from app.services.memory_categories import RESEARCH_MEMORY_TYPES
 
     try:
         frontend_endpoint_status = build_frontend_endpoint_status(session)
@@ -557,7 +558,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         "research_memories.json": [
             _lesson_row(r)
             for r in lesson_rows
-            if getattr(r, "category", "") in ("backtest_memory", "strategy_research_memory", "walk_forward_memory")
+            if getattr(r, "memory_type", "") in RESEARCH_MEMORY_TYPES
         ],
         "research_errors.json": [_serialize_row(r) for r in session.exec(select(HistoricalDataError)).all()],
         "strategy_definitions.json": [_serialize_row(r) for r in session.exec(select(StrategyDefinition)).all()],

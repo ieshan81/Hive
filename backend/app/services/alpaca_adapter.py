@@ -262,7 +262,14 @@ class AlpacaAdapter:
             self._log_error("get_latest_crypto_quote", str(exc), {"symbol": symbol})
             return None
 
-    def get_crypto_bars(self, symbol: str, timeframe: str = "1Hour", limit: int = 50) -> list[dict]:
+    def get_crypto_bars(
+        self,
+        symbol: str,
+        timeframe: str = "1Hour",
+        limit: int = 50,
+        *,
+        lookback_days: Optional[int] = None,
+    ) -> list[dict]:
         if not self.configured:
             return []
         try:
@@ -277,7 +284,8 @@ class AlpacaAdapter:
             }
             tf = tf_map.get(timeframe, TimeFrame(1, TimeFrameUnit.Hour))
             end = datetime.utcnow()
-            start = end - timedelta(days=limit * 3)
+            days = lookback_days if lookback_days else max(limit // 24 + 7, limit * 3 // 24)
+            start = end - timedelta(days=max(days, 7))
             client = CryptoHistoricalDataClient(settings.alpaca_api_key, settings.alpaca_secret_key)
             req = CryptoBarsRequest(symbol_or_symbols=quote_symbol, timeframe=tf, start=start, end=end, limit=limit)
             bars = client.get_crypto_bars(req)
