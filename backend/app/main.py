@@ -5,7 +5,22 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import init_db
-from app.routers import api, candle_lab, fast_training, hive_brain, market_meme, memory_brain, paper_learning, settings_brain, strategy_registry
+from app.routers import (
+    account_eligibility,
+    api,
+    autonomous_paper_learning,
+    candle_lab,
+    confidence,
+    fast_training,
+    hive_brain,
+    live_promotion,
+    market_meme,
+    memory_brain,
+    paper_learning,
+    settings_brain,
+    strategy_proposals,
+    strategy_registry,
+)
 from app.services.startup import bootstrap_database
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -34,6 +49,11 @@ app.include_router(fast_training.router)
 app.include_router(candle_lab.router)
 app.include_router(market_meme.router)
 app.include_router(settings_brain.router)
+app.include_router(autonomous_paper_learning.router)
+app.include_router(confidence.router)
+app.include_router(account_eligibility.router)
+app.include_router(strategy_proposals.router)
+app.include_router(live_promotion.router)
 
 
 @app.on_event("startup")

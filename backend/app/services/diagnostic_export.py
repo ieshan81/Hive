@@ -661,6 +661,20 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
 
         recon_exports = BrokerReconciliationService(session, cfg_brain).build_diagnostic_exports()
         ft_loop = FastCryptoTrainingLoop(session, cfg_brain)
+        from app.services.autonomous_paper_learning_service import AutonomousPaperLearningService
+        from app.services.autonomous_paper_scheduler import AutonomousPaperScheduler
+        from app.services.confidence_engine import ConfidenceEngine
+        from app.services.account_pair_eligibility_service import AccountPairEligibilityService
+        from app.services.strategy_proposal_service import StrategyProposalService
+        from app.services.promotion_readiness_service import PromotionReadinessService
+        from app.services.research_lab_service import ResearchLabService
+
+        apl_svc = AutonomousPaperLearningService(session, cfg_brain)
+        apl_sched = AutonomousPaperScheduler(session, cfg_brain)
+        conf_eng = ConfidenceEngine(session, cfg_brain)
+        elig_svc = AccountPairEligibilityService(session, cfg_brain)
+        prop_svc = StrategyProposalService(session, cfg_brain)
+        promo_svc = PromotionReadinessService(session, cfg_brain)
         exit_only_svc = FastTrainingExitOnlyService(session, cfg_brain)
         exit_diag = build_exit_diagnostic_exports(session, cfg_brain)
         candle_svc = TechnicalCandleAnalysisService(session, cfg_brain)
@@ -691,7 +705,15 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             "strategy_eligibility_windows.json": [_serialize_row(r) for r in session.exec(select(StrategyEligibilityWindow)).all()],
             "paper_candidates.json": reg_svc.list_registry(stage="paper_candidate"),
             "strategy_tab_snapshot.json": snap,
-            "paper_learning_status.json": pl.status(),
+            "paper_learning_status.json": {**pl.status(), "autonomous": apl_svc.status()},
+            "autonomous_learning_scheduler.json": apl_sched.status(),
+            "confidence_level.json": conf_eng.summary(),
+            "strategy_confidence.json": conf_eng.by_strategy(),
+            "symbol_confidence.json": conf_eng.by_symbol(),
+            "account_pair_eligibility.json": elig_svc.summary(),
+            "backtest_lab_results.json": ResearchLabService(session, cfg_brain).propose_backtests_from_memory(limit=10),
+            "strategy_proposals.json": prop_svc.list_proposals(limit=30),
+            "promotion_readiness.json": promo_svc.checklist(),
             "paper_experiment_config.json": [_serialize_row(r) for r in session.exec(select(PaperExperimentConfig)).all()],
             "paper_experiment_decisions.json": [_serialize_row(r) for r in session.exec(select(PaperExperimentDecision)).all()],
             "paper_experiment_outcomes.json": [_serialize_row(r) for r in session.exec(select(PaperExperimentOutcome)).all()],

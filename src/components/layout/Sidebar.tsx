@@ -15,6 +15,10 @@ import {
   Settings,
   Shield,
   Hexagon,
+  BookOpen,
+  Gauge,
+  GitPullRequest,
+  ArrowUpCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -24,6 +28,10 @@ const navItems = [
   { href: "/positions", label: "Positions", icon: Wallet },
   { href: "/strategies", label: "Strategies", icon: FlaskConical },
   { href: "/market-radar", label: "Market Radar", icon: Radar },
+  { href: "/paper-learning", label: "Paper Learning", icon: BookOpen },
+  { href: "/confidence", label: "Confidence", icon: Gauge },
+  { href: "/proposals", label: "Proposals", icon: GitPullRequest },
+  { href: "/live-promotion", label: "Live Promotion", icon: ArrowUpCircle },
   { href: "/risk-cage", label: "Risk Cage", icon: Lock },
   { href: "/backtesting", label: "Backtesting", icon: LineChart },
   { href: "/performance", label: "Performance", icon: TrendingUp },

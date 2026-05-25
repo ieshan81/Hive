@@ -198,6 +198,17 @@ class TrainingExecutionService:
         self.session.add(pdec)
         self.session.flush()
 
+        from app.services.account_pair_eligibility_service import AccountPairEligibilityService
+
+        elig_block = AccountPairEligibilityService(self.session, self.config).preflight_block(
+            dec.symbol, dec.side or "buy", dec.strategy_id or ""
+        )
+        if elig_block:
+            dec.execution_status = "blocked_eligibility"
+            self.session.add(dec)
+            self._training_memory("training_blocked_memory", dec, [elig_block[1]])
+            return {"status": "blocked", "reason": elig_block[0], "message": elig_block[1]}
+
         account = alpaca.sync_account()
         positions = alpaca.sync_positions()
         open_syms = {o.get("symbol") for o in alpaca.get_open_orders()}

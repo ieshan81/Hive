@@ -3,12 +3,13 @@
 import { useEffect, useState } from "react";
 import { apiGet } from "@/lib/apiClient";
 
-const DEFAULT_PLAIN =
-  "The bot found possible paper trades, but Training Mode is OFF — it cannot place orders.";
-
 type BannerData = {
   liveTradingLocked?: boolean;
+  paperLearning?: string;
   trainingMode?: string;
+  confidenceScore?: number;
+  confidenceLabel?: string;
+  currentMode?: string;
   botCanPlaceOrders?: string;
   openPositions?: number;
   brokerTruth?: string;
@@ -29,23 +30,47 @@ export function SafetyBanner() {
       setData({
         liveTradingLocked:
           lock.data?.live_lock_status === "locked" || Boolean(banner?.liveTradingLocked),
+        paperLearning: banner?.paperLearning ?? banner?.trainingMode ?? "OFF",
         trainingMode: banner?.trainingMode ?? "OFF",
+        confidenceScore: banner?.confidenceScore,
+        confidenceLabel: banner?.confidenceLabel,
+        currentMode: banner?.currentMode ?? "watching",
         botCanPlaceOrders: banner?.botCanPlaceOrders ?? "NO",
         openPositions: banner?.openPositions ?? 0,
         brokerTruth: banner?.brokerTruth ?? "—",
         paperBroker: Boolean(lock.data?.paper_broker ?? banner?.paperBroker),
-        plainMessage: banner?.plainMessage || DEFAULT_PLAIN,
+        plainMessage:
+          banner?.plainMessage ||
+          "The bot is watching only. It cannot place paper orders.",
       });
     })();
   }, []);
 
   if (!data) return null;
 
+  const modeLabel =
+    data.currentMode === "paper_learning"
+      ? "Paper Learning"
+      : data.currentMode === "paused"
+        ? "Paused"
+        : data.currentMode === "backtesting"
+          ? "Backtesting"
+          : data.currentMode === "locked"
+            ? "Locked"
+            : "Watching";
+
   return (
     <div className="mb-4 rounded-lg border border-cyan-500/20 bg-slate-900/80 px-4 py-3 text-[11px] text-slate-200">
       <div className="flex flex-wrap gap-x-6 gap-y-1 font-medium">
         <span>Live Trading: {data.liveTradingLocked ? "LOCKED" : "CHECK"}</span>
-        <span>Training Mode: {data.trainingMode ?? "OFF"}</span>
+        <span>Paper Learning: {data.paperLearning ?? "OFF"}</span>
+        <span>Current Mode: {modeLabel}</span>
+        <span>
+          Confidence:{" "}
+          {data.confidenceScore != null
+            ? `${Math.round(data.confidenceScore)} (${data.confidenceLabel || ""})`
+            : "—"}
+        </span>
         <span>Bot can place orders now: {data.botCanPlaceOrders ?? "NO"}</span>
         <span>Open Positions: {data.openPositions ?? 0}</span>
         <span>Broker Truth: {data.brokerTruth ?? "—"}</span>

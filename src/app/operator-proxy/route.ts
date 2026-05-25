@@ -9,6 +9,9 @@ const BACKEND_URL = (
 
 const ALLOWED_POST_PREFIXES = [
   "/api/fast-training/",
+  "/api/autonomous-paper-learning/",
+  "/api/strategy-proposals/",
+  "/api/live-promotion/",
   "/api/cycle/run",
   "/api/settings/clear-ghost-rows",
   "/api/strategies/import",

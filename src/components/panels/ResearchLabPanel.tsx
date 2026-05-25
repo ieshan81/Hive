@@ -27,6 +27,7 @@ export function ResearchLabPanel() {
   const [busy, setBusy] = useState(false);
   const [lastAction, setLastAction] = useState<string | null>(null);
   const [batchSummary, setBatchSummary] = useState<Record<string, unknown> | null>(null);
+  const [memoryProposals, setMemoryProposals] = useState<Record<string, unknown>[]>([]);
   const [meta, setMeta] = useState<PanelLoadMeta>({ source: "empty", lastUpdated: new Date().toISOString() });
 
   const [strategyId, setStrategyId] = useState("crypto_push_pull");
@@ -34,7 +35,7 @@ export function ResearchLabPanel() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [st, cov, r, lb, rej, mem, strat, defs] = await Promise.all([
+    const [st, cov, r, lb, rej, mem, strat, defs, memProp] = await Promise.all([
       apiGet<LabStatus>("/api/lab/status"),
       apiGet<{ coverage?: Record<string, unknown>[] }>("/api/lab/historical-coverage"),
       apiGet<{ runs?: Record<string, unknown>[] }>("/api/lab/backtest/runs"),
@@ -43,6 +44,7 @@ export function ResearchLabPanel() {
       apiGet<{ memories?: Record<string, unknown>[] }>("/api/lab/research-memories"),
       apiGet<{ strategies?: Record<string, unknown>[] }>("/api/lab/strategies"),
       apiGet<{ strategies?: Record<string, unknown>[] }>("/api/lab/strategy-definitions"),
+      apiGet<{ proposals?: Record<string, unknown>[] }>("/api/lab/memory-proposals"),
     ]);
     if (st.ok) setStatus(st.data as LabStatus);
     setCoverage(cov.data?.coverage || []);
@@ -52,6 +54,7 @@ export function ResearchLabPanel() {
     setMemories(mem.data?.memories || []);
     setStrategies(strat.data?.strategies || []);
     setStrategyDefs(defs.data?.strategies || strat.data?.strategies || []);
+    setMemoryProposals(memProp.data?.proposals || []);
     setMeta({
       source: st.ok ? "live_api" : "empty",
       lastUpdated: new Date().toISOString(),
@@ -172,6 +175,29 @@ export function ResearchLabPanel() {
         </p>
       )}
       {lastAction && <p className="text-[10px] text-slate-500 font-mono">{lastAction}</p>}
+
+      {memoryProposals.length > 0 && (
+        <GlassPanel title="Proposed from memory" icon={<FlaskConical className="h-4 w-4" />}>
+          <p className="text-[10px] text-slate-500 mb-2">Ranked backtest ideas from lessons and rejects — research only.</p>
+          <ul className="text-[10px] space-y-2 max-h-40 overflow-y-auto">
+            {memoryProposals.map((p, i) => (
+              <li key={i} className="border border-white/10 rounded p-2">
+                <span className="text-violet-300">{String(p.strategy_id)}</span> ·{" "}
+                {Array.isArray(p.symbols) ? (p.symbols as string[]).join(", ") : ""}
+                <p className="text-slate-400 mt-0.5">{String(p.reason)}</p>
+              </li>
+            ))}
+          </ul>
+          <button
+            type="button"
+            disabled={busy}
+            className="mt-2 text-[10px] text-hive-cyan border border-hive-cyan/30 rounded px-2 py-1"
+            onClick={runBatch}
+          >
+            Run batch on first proposal symbols
+          </button>
+        </GlassPanel>
+      )}
 
       {batchSummary && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-950/30 px-3 py-2 text-xs space-y-1">

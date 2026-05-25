@@ -981,6 +981,24 @@ class PaperExperimentOutcome(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class StrategyChangeProposal(SQLModel, table=True):
+    __tablename__ = "strategy_change_proposals"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    proposal_type: str = Field(index=True)
+    strategy_id: str = Field(index=True)
+    patch_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    reason: str
+    memory_evidence_ids: Optional[list] = Field(default=None, sa_column=Column(JSON))
+    backtest_run_id: Optional[str] = None
+    risk_note: Optional[str] = None
+    status: str = Field(default="proposed", index=True)
+    requires_operator_approval: bool = True
+    expected_risk: Optional[str] = None
+    proposed_by: str = "confidence_engine"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class FastTrainingLease(SQLModel, table=True):
     """Singleton-style lease row to prevent overlapping fast-training runs."""
 

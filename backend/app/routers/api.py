@@ -990,6 +990,11 @@ def lab_memory(limit: int = 50, session: Session = Depends(get_session)):
     return {"status": "ok", "memories": ResearchLabService(session).research_memories(limit)}
 
 
+@router.get("/lab/memory-proposals")
+def lab_memory_proposals(limit: int = 5, session: Session = Depends(get_session)):
+    return ResearchLabService(session).propose_backtests_from_memory(limit=limit)
+
+
 @router.post("/memory/import/legacy-ai-bundle")
 def memory_import_legacy(body: dict = Body(default={}), session: Session = Depends(get_session)):
     out = ResearchLabService(session).import_legacy_bundle(body)

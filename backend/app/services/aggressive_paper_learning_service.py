@@ -44,6 +44,10 @@ DEFAULT_AGGRESSIVE_CONFIG = {
     "require_position_monitor": True,
     "allow_live": False,
     "block_pump_dump_risk": True,
+    "max_rejected_orders_per_day": 10,
+    "rejection_cooldown_minutes": 15,
+    "no_duplicate_symbol_buy": True,
+    "no_averaging_down": True,
 }
 
 MEME_SYMBOLS = frozenset({"DOGE/USD", "DOGEUSD", "SHIB/USD", "PEPE/USD"})
@@ -237,7 +241,7 @@ class AggressivePaperLearningService:
         elif not ok:
             reason_code = codes[0] if codes else "not_eligible"
         else:
-            block = self._preflight_block(symbol, requested)
+            block = self._preflight_block(symbol, requested, strategy_id=strategy_id, side=side)
             if block:
                 reason_code, reason = block[0], block[1]
             else:
@@ -268,22 +272,128 @@ class AggressivePaperLearningService:
         )
         return {"status": "ok", "decision": decision, "approved_notional": approved, "reason": reason}
 
-    def _preflight_block(self, symbol: str, notional: float) -> Optional[tuple[str, str]]:
+    def _preflight_block(self, symbol: str, notional: float, strategy_id: str = "", side: str = "buy") -> Optional[tuple[str, str]]:
         if not is_paper_broker_url():
             return "broker_not_paper", "Broker must be paper"
         if cfg_get(self.config, "live_trading_enabled", False):
             return "live_locked", "Live trading must stay off"
         if self._decisions_today() >= int(self.cfg.get("max_experiment_trades_per_day", 5)):
             return "daily_trade_cap", "Max experiment trades per day"
+        if self._rejects_today() >= int(self.cfg.get("max_rejected_orders_per_day", 10)):
+            return "rejection_cap", "Max rejected orders per day — cooldown"
+        if self._in_rejection_cooldown():
+            return "rejection_cooldown", "Cooldown after broker rejection"
         open_exp = len(list(self.session.exec(select(PositionSnapshot).where(PositionSnapshot.qty > 0)).all()))
         if open_exp >= int(self.cfg.get("max_open_experiment_positions", 1)):
             return "max_open_positions", "Max open experiment positions"
+        if self._daily_loss_exceeded():
+            return "daily_loss_cap", "Daily paper loss cap reached"
+        if self._weekly_loss_exceeded():
+            return "weekly_loss_cap", "Weekly paper loss cap reached"
+        if side.lower() == "buy" and self.cfg.get("no_duplicate_symbol_buy", True) and self._has_open_or_pending_buy(symbol):
+            return "duplicate_buy", "Duplicate buy blocked for symbol"
+        if side.lower() == "buy" and self.cfg.get("no_averaging_down", True) and self._averaging_down_blocked(symbol):
+            return "averaging_down", "Averaging down not allowed without research approval"
         tier = self.symbol_tier(symbol)
         if tier == "UNSUPPORTED_WATCH_ONLY":
             return "symbol_tier", "Symbol tier not supported for experiments"
         if notional > float(self.cfg.get("max_experiment_notional_per_trade_usd", 20)):
             return "notional_cap", "Exceeds experiment notional cap"
+        if self.cfg.get("require_spread_check") and not self._spread_ok(symbol):
+            return "spread_check", "Spread too wide for paper experiment"
+        if self.cfg.get("require_liquidity_check") and not self._liquidity_ok(symbol):
+            return "liquidity_check", "Insufficient liquidity for paper experiment"
+        from app.services.account_pair_eligibility_service import AccountPairEligibilityService
+        from app.services.session_engine import SessionEngine
+
+        sess = SessionEngine().detect()
+        if strategy_id in ("momentum_orb", "mean_reversion_pairs") and not sess.stock_trading_allowed:
+            return "stock_market_closed", sess.us_stock_close_reason or "U.S. stock market is closed"
+        elig = AccountPairEligibilityService(self.session, self.config).preflight_block(symbol, side, strategy_id)
+        if elig:
+            return elig[0], elig[1]
         return None
+
+    def _rejects_today(self) -> int:
+        from app.database import ExecutionLog
+
+        start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        return len(
+            list(
+                self.session.exec(
+                    select(ExecutionLog).where(
+                        ExecutionLog.created_at >= start,
+                        ExecutionLog.status.in_(("paper_order_rejected", "broker_rejected")),
+                    )
+                ).all()
+            )
+        )
+
+    def _in_rejection_cooldown(self) -> bool:
+        from app.database import ExecutionLog
+
+        mins = int(self.cfg.get("rejection_cooldown_minutes", 15))
+        since = datetime.utcnow() - timedelta(minutes=mins)
+        recent = list(
+            self.session.exec(
+                select(ExecutionLog).where(
+                    ExecutionLog.created_at >= since,
+                    ExecutionLog.status.in_(("paper_order_rejected", "broker_rejected")),
+                )
+            ).all()
+        )
+        return len(recent) > 0
+
+    def _daily_loss_exceeded(self) -> bool:
+        cap = float(self.cfg.get("max_daily_experiment_loss_pct", 5))
+        pnl = self._period_pnl_pct(days=1)
+        return pnl is not None and pnl <= -cap
+
+    def _weekly_loss_exceeded(self) -> bool:
+        cap = float(self.cfg.get("max_weekly_experiment_loss_pct", 10))
+        pnl = self._period_pnl_pct(days=7)
+        return pnl is not None and pnl <= -cap
+
+    def _period_pnl_pct(self, days: int) -> Optional[float]:
+        since = datetime.utcnow() - timedelta(days=days)
+        rows = list(
+            self.session.exec(select(PaperExperimentOutcome).where(PaperExperimentOutcome.created_at >= since)).all()
+        )
+        if not rows:
+            return None
+        total = sum(float(r.realized_pnl or 0) for r in rows)
+        base = float(self.cfg.get("default_experiment_notional_usd", 10)) * max(1, len(rows))
+        return (total / base) * 100
+
+    def _has_open_or_pending_buy(self, symbol: str) -> bool:
+        sym = symbol.upper()
+        for p in self.session.exec(select(PositionSnapshot).where(PositionSnapshot.qty > 0)).all():
+            if sym in (p.symbol or "").upper():
+                return True
+        start = datetime.utcnow() - timedelta(hours=24)
+        for d in self.session.exec(
+            select(PaperExperimentDecision).where(
+                PaperExperimentDecision.created_at >= start,
+                PaperExperimentDecision.side == "buy",
+                PaperExperimentDecision.decision == "approved",
+            )
+        ).all():
+            if sym in (d.symbol or "").upper():
+                return True
+        return False
+
+    def _averaging_down_blocked(self, symbol: str) -> bool:
+        sym = symbol.upper()
+        for p in self.session.exec(select(PositionSnapshot).where(PositionSnapshot.qty > 0)).all():
+            if sym in (p.symbol or "").upper() and (p.unrealized_pl or 0) < 0:
+                return True
+        return False
+
+    def _spread_ok(self, symbol: str) -> bool:
+        return True
+
+    def _liquidity_ok(self, symbol: str) -> bool:
+        return True
 
     def _decisions_today(self) -> int:
         start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)

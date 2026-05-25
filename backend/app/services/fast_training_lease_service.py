@@ -11,19 +11,28 @@ from sqlmodel import Session
 from app.database import FastTrainingLease
 
 LEASE_KEY = "fast_training_run"
+AUTONOMOUS_LEASE_KEY = "autonomous_paper_learning"
 DEFAULT_TTL_SECONDS = 120
 
 
 class FastTrainingLeaseService:
-    def __init__(self, session: Session, *, use_db_lease: bool = True, ttl_seconds: int = DEFAULT_TTL_SECONDS):
+    def __init__(
+        self,
+        session: Session,
+        *,
+        lease_key: str = LEASE_KEY,
+        use_db_lease: bool = True,
+        ttl_seconds: int = DEFAULT_TTL_SECONDS,
+    ):
         self.session = session
+        self.lease_key = lease_key
         self.use_db_lease = use_db_lease
         self.ttl_seconds = ttl_seconds
 
     def _row(self) -> FastTrainingLease:
-        row = self.session.get(FastTrainingLease, LEASE_KEY)
+        row = self.session.get(FastTrainingLease, self.lease_key)
         if not row:
-            row = FastTrainingLease(lease_key=LEASE_KEY)
+            row = FastTrainingLease(lease_key=self.lease_key)
             self.session.add(row)
             self.session.flush()
         return row

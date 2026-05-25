@@ -48,6 +48,12 @@ def main() -> None:
     _, ft = http_json(f"{BACKEND}/api/fast-training/status")
     if ft.get("training_mode_enabled"):
         failures.append("training_already_on")
+    _, apl = http_json(f"{BACKEND}/api/autonomous-paper-learning/status")
+    if apl.get("paper_learning_on") or apl.get("mode_enabled"):
+        failures.append("autonomous_paper_learning_on")
+    sched = apl.get("scheduler") or {}
+    if sched.get("scheduler_enabled") and not sched.get("paused"):
+        failures.append("autonomous_scheduler_running")
     _, eo = http_json(f"{BACKEND}/api/fast-training/exit-only/status")
     if eo.get("exit_only_enabled"):
         failures.append("exit_only_on")

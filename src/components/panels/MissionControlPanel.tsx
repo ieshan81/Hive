@@ -13,7 +13,11 @@ type OrderSummary = {
 
 type SafetyBanner = {
   liveTradingLocked?: boolean;
+  paperLearning?: string;
   trainingMode?: string;
+  confidenceScore?: number;
+  confidenceLabel?: string;
+  currentMode?: string;
   botCanPlaceOrders?: string;
   openPositions?: number;
   brokerTruth?: string;
@@ -27,11 +31,24 @@ export function MissionControlPanel({
 }) {
   const sb = data.safetyBanner;
   const os = data.orderSummary;
-  const trainingOff = sb?.trainingMode === "OFF" || sb?.botCanPlaceOrders === "NO";
+  const paperOff = (sb?.paperLearning ?? sb?.trainingMode) === "OFF";
+  const trainingOff = paperOff || sb?.botCanPlaceOrders === "NO";
   const botStatus = trainingOff ? "PAUSED" : sb?.botCanPlaceOrders === "YES" ? "READY" : "WATCHING";
+  const modeLabel =
+    sb?.currentMode === "paper_learning"
+      ? "Paper Learning"
+      : sb?.currentMode === "paused"
+        ? "Paused"
+        : "Watching";
 
   const cards = [
     { title: "Safety status", value: sb?.liveTradingLocked ? "Live locked" : "Check live lock", sub: "Paper training only" },
+    { title: "Mode", value: modeLabel, sub: `Paper learning ${sb?.paperLearning ?? sb?.trainingMode ?? "OFF"}` },
+    {
+      title: "Confidence",
+      value: sb?.confidenceScore != null ? String(Math.round(sb.confidenceScore)) : "—",
+      sub: sb?.confidenceLabel || "Evidence only — not live permission",
+    },
     { title: "Bot status", value: botStatus, sub: sb?.plainMessage || "—" },
     { title: "Broker truth", value: sb?.brokerTruth || "—", sub: "Synced with Alpaca paper" },
     { title: "Open positions", value: String(sb?.openPositions ?? 0), sub: "Broker-confirmed only" },

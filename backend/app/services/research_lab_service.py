@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from sqlmodel import Session, select
@@ -372,3 +372,52 @@ class ResearchLabService:
             "human_approved": r.human_approved,
             "proposed_by": r.proposed_by,
         }
+
+    def propose_backtests_from_memory(self, limit: int = 5) -> dict[str, Any]:
+        """Rank backtest ideas from recent lessons and execution failures — research only."""
+        from app.database import ExecutionLog, LessonNode
+
+        since = datetime.utcnow() - timedelta(days=7)
+        lessons = list(
+            self.session.exec(select(LessonNode).where(LessonNode.created_at >= since)).all()
+        )
+        rejects = list(
+            self.session.exec(
+                select(ExecutionLog).where(
+                    ExecutionLog.created_at >= since,
+                    ExecutionLog.status.in_(("paper_order_rejected", "preflight_blocked")),
+                )
+            ).all()
+        )
+        proposals: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for log in rejects:
+            key = f"{log.symbol}|reject"
+            if key in seen or not log.symbol:
+                continue
+            seen.add(key)
+            proposals.append(
+                {
+                    "strategy_id": "crypto_push_pull",
+                    "symbols": [log.symbol],
+                    "reason": f"Broker/preflight reject on {log.symbol} — validate gates in backtest.",
+                    "source": "memory_proposal",
+                    "memory_evidence": log.reject_reason,
+                }
+            )
+        for lesson in lessons:
+            sym = lesson.symbol or "BTC/USD"
+            key = f"{sym}|{lesson.memory_type}"
+            if key in seen:
+                continue
+            seen.add(key)
+            proposals.append(
+                {
+                    "strategy_id": lesson.strategy_name or "crypto_push_pull",
+                    "symbols": [sym],
+                    "reason": (lesson.title or lesson.summary or "Lesson-driven backtest")[:200],
+                    "source": "memory_proposal",
+                    "memory_evidence": lesson.summary,
+                }
+            )
+        return {"status": "ok", "proposals": proposals[:limit], "research_submits_orders": False}

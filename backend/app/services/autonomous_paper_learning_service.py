@@ -1,0 +1,250 @@
+"""Autonomous Paper Learning — orchestrates paper-only learning cycles (not live)."""
+
+from __future__ import annotations
+
+from typing import Any, Optional
+
+from sqlmodel import Session, select
+
+from app.database import OrderRecord, PositionSnapshot, SettingsActionAudit
+from app.services.aggressive_paper_learning_service import AggressivePaperLearningService
+from app.services.broker_reconciliation_service import BrokerReconciliationService
+from app.services.broker_safety import is_paper_broker_url, live_lock_status
+from app.services.config_manager import ConfigManager, _deep_merge
+from app.services.engine_config import cfg_get
+from app.services.fast_crypto_training_loop import FastCryptoTrainingLoop
+from app.services.fast_training_lease_service import AUTONOMOUS_LEASE_KEY, FastTrainingLeaseService
+from app.services.live_lock_tripwire import live_lock_tripwire_status
+from app.services.paper_execution_service import PaperExecutionService
+from app.services.research_lab_service import ResearchLabService
+from app.services.session_engine import SessionEngine
+
+
+class AutonomousPaperLearningService:
+    def __init__(self, session: Session, config: Optional[dict] = None):
+        self.session = session
+        self.config = config or ConfigManager(session).get_current()
+        self.cfg = dict(self.config.get("autonomous_paper_learning") or {})
+        self.pl = AggressivePaperLearningService(session)
+        self.ft = FastCryptoTrainingLoop(session, self.config)
+        self.lease = FastTrainingLeaseService(
+            session,
+            lease_key=AUTONOMOUS_LEASE_KEY,
+            use_db_lease=bool(cfg_get(self.config, "fast_training.use_db_lease", True)),
+        )
+
+    def _audit(self, action: str, operator: str, details: dict) -> None:
+        self.session.add(
+            SettingsActionAudit(
+                action=action,
+                actor=operator,
+                broker_mode="paper" if is_paper_broker_url() else "unknown",
+                paper_broker=is_paper_broker_url(),
+                live_trading_locked=live_lock_status(self.config).get("live_lock_status") == "locked",
+                live_orders_enabled=bool(cfg_get(self.config, "execution.live_orders_enabled", False)),
+                details_json={**details, **live_lock_tripwire_status(self.config)},
+            )
+        )
+
+    def _order_count(self) -> int:
+        return len(list(self.session.exec(select(OrderRecord)).all()))
+
+    def status(self) -> dict[str, Any]:
+        from app.services.autonomous_paper_scheduler import AutonomousPaperScheduler
+
+        session_state = SessionEngine().detect()
+        recon = BrokerReconciliationService(self.session, self.config)
+        ghosts = recon.ghost_position_candidates()
+        ft_st = self.ft.status()
+        sched = AutonomousPaperScheduler(self.session, self.config).status()
+        mode_on = bool(self.cfg.get("mode_enabled"))
+        can_place = mode_on and bool(ft_st.get("final_can_submit_orders"))
+        current_mode = "paused"
+        if not mode_on:
+            current_mode = "watching"
+        elif sched.get("scheduler_enabled") and not sched.get("paused"):
+            current_mode = "paper_learning"
+        elif mode_on:
+            current_mode = "paper_learning"
+
+        return {
+            "status": "ok",
+            "ui_label": "Autonomous Paper Learning",
+            "mode_enabled": mode_on,
+            "paper_learning_on": mode_on,
+            "scheduler": sched,
+            "session": session_state.to_dict(),
+            "bot_can_place_paper_orders": can_place,
+            "open_paper_positions": len(
+                list(self.session.exec(select(PositionSnapshot).where(PositionSnapshot.qty > 0)).all())
+            ),
+            "ghost_position_candidates": ghosts,
+            "broker_truth_synced": len(ghosts) == 0,
+            "blockers": ft_st.get("blockers") or [],
+            "current_mode": current_mode,
+            "plain_message": (
+                "The bot may place small paper trades under strict safety limits. Live trading remains locked."
+                if mode_on
+                else "The bot is watching only. It cannot place paper orders."
+            ),
+            "caps": {
+                "max_paper_trades_per_day": self.cfg.get("max_paper_trades_per_day"),
+                "max_paper_notional_per_trade_usd": self.cfg.get("max_paper_notional_per_trade_usd"),
+                "max_open_paper_positions": self.cfg.get("max_open_paper_positions"),
+            },
+            **live_lock_status(self.config),
+        }
+
+    def _refuse(self, reason: str, operator: str) -> dict[str, Any]:
+        self._audit("autonomous_paper_refused", operator, {"reason": reason})
+        return {"status": "refused", "reason": reason, **self.status()}
+
+    def enable(self, operator: str = "operator") -> dict[str, Any]:
+        lock = live_lock_status(self.config)
+        if lock.get("live_lock_status") != "locked":
+            return self._refuse("live_lock_not_locked", operator)
+        if not is_paper_broker_url():
+            return self._refuse("broker_not_paper", operator)
+        if bool(self.config.get("live_trading_enabled", False)):
+            return self._refuse("live_trading_flag_set", operator)
+        if not bool(cfg_get(self.config, "execution.paper_orders_enabled", False)):
+            return self._refuse("paper_orders_disabled", operator)
+        if BrokerReconciliationService(self.session, self.config).ghost_position_candidates():
+            return self._refuse("ghost_position_candidates_need_review", operator)
+
+        ft_out = self.ft.enable(operator)
+        if ft_out.get("status") not in ("ok",):
+            return self._refuse(ft_out.get("reason") or ft_out.get("message", "fast_training_enable_failed"), operator)
+
+        cfg_mgr = ConfigManager(self.session)
+        cur = cfg_mgr.get_current()
+        merged = _deep_merge(
+            cur,
+            {
+                "autonomous_paper_learning": {
+                    **(cur.get("autonomous_paper_learning") or {}),
+                    "mode_enabled": True,
+                },
+                "live_trading_enabled": False,
+                "execution": {
+                    **(cur.get("execution") or {}),
+                    "live_orders_enabled": False,
+                    "paper_orders_enabled": True,
+                },
+            },
+        )
+        cfg_mgr._activate(merged, operator, "autonomous_paper_learning_enable")
+        self.config = cfg_mgr.get_current()
+        self.cfg = dict(self.config.get("autonomous_paper_learning") or {})
+        self._audit("autonomous_paper_enable", operator, {"mode_enabled": True})
+        self.session.flush()
+        return {"status": "ok", "message": "Autonomous Paper Learning enabled", **self.status()}
+
+    def pause(self, operator: str = "operator") -> dict[str, Any]:
+        from app.services.autonomous_paper_scheduler import AutonomousPaperScheduler
+
+        AutonomousPaperScheduler(self.session, self.config).pause(operator)
+        cfg_mgr = ConfigManager(self.session)
+        cur = cfg_mgr.get_current()
+        merged = _deep_merge(
+            cur,
+            {"autonomous_paper_learning": {**(cur.get("autonomous_paper_learning") or {}), "mode_enabled": False}},
+        )
+        cfg_mgr._activate(merged, operator, "autonomous_paper_pause")
+        self.ft.disable(operator)
+        self.config = cfg_mgr.get_current()
+        self.cfg = dict(self.config.get("autonomous_paper_learning") or {})
+        self._audit("autonomous_paper_pause", operator, {})
+        self.session.flush()
+        return {"status": "ok", "message": "Autonomous Paper Learning paused", **self.status()}
+
+    def disable_all_paper_trading(self, operator: str = "operator") -> dict[str, Any]:
+        from app.services.autonomous_paper_scheduler import AutonomousPaperScheduler
+
+        AutonomousPaperScheduler(self.session, self.config).pause(operator)
+        self.ft.disable(operator)
+        self.pl.disable(operator)
+        cfg_mgr = ConfigManager(self.session)
+        cur = cfg_mgr.get_current()
+        merged = _deep_merge(
+            cur,
+            {
+                "autonomous_paper_learning": {
+                    **(cur.get("autonomous_paper_learning") or {}),
+                    "mode_enabled": False,
+                    "scheduler_enabled": False,
+                },
+                "fast_training": {
+                    **(cur.get("fast_training") or {}),
+                    "fast_training_loop_enabled": False,
+                    "fast_training_execute_orders": False,
+                },
+                "execution": {
+                    **(cur.get("execution") or {}),
+                    "paper_orders_enabled": False,
+                    "live_orders_enabled": False,
+                },
+            },
+        )
+        cfg_mgr._activate(merged, operator, "disable_all_paper_trading")
+        self.config = cfg_mgr.get_current()
+        self.cfg = dict(self.config.get("autonomous_paper_learning") or {})
+        self._audit("disable_all_paper_trading", operator, {})
+        self.session.flush()
+        return {"status": "ok", "message": "All paper trading disabled", **self.status()}
+
+    def run_one_cycle(self, *, operator: str = "operator") -> dict[str, Any]:
+        if not bool(self.cfg.get("mode_enabled")):
+            return {"status": "blocked", "reason": "autonomous_paper_learning_disabled", "orders_created": 0}
+
+        ok, holder = self.lease.acquire()
+        if not ok:
+            return {
+                "status": "blocked",
+                "reason": "lease_held",
+                "holder_id": holder,
+                "orders_created": 0,
+            }
+
+        orders_before = self._order_count()
+        result = self.ft.run_once(actor=operator)
+        orders_after = self._order_count()
+        out = {
+            **result,
+            "holder_id": holder,
+            "orders_before": orders_before,
+            "orders_after": orders_after,
+            "orders_created": max(0, orders_after - orders_before),
+            "cycle_type": "autonomous_paper_learning",
+        }
+        self.lease.release(holder, out)
+        self._audit("autonomous_run_one_cycle", operator, {"new_orders": out["orders_created"]})
+        self.session.flush()
+        return out
+
+    def run_backtest_lab_now(self, *, operator: str = "operator", limit: int = 3) -> dict[str, Any]:
+        lab = ResearchLabService(self.session)
+        proposed = lab.propose_backtests_from_memory(limit=limit)
+        ran = []
+        for job in proposed.get("proposals", [])[:limit]:
+            if job.get("strategy_id"):
+                try:
+                    ran.append(
+                        lab.run_backtest(
+                            {
+                                "strategy_id": job["strategy_id"],
+                                "symbols": job.get("symbols") or ["BTC/USD"],
+                            }
+                        )
+                    )
+                except Exception as exc:
+                    ran.append({"status": "error", "strategy_id": job["strategy_id"], "message": str(exc)[:200]})
+        self._audit("autonomous_backtest_lab", operator, {"proposed": len(proposed.get("proposals", [])), "ran": len(ran)})
+        self.session.flush()
+        return {
+            "status": "ok",
+            "message": "Backtest lab run (research only, no orders)",
+            "proposed": proposed,
+            "runs": ran,
+            "orders_created": 0,
+        }
