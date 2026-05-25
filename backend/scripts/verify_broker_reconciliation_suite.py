@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PY = sys.executable
 SCRIPTS = [
     "verify_broker_flat_historical_buy_not_active_position.py",
+    "verify_flat_historical_not_ghost_candidate.py",
     "verify_local_ghost_position_blocks_entries.py",
     "verify_no_fake_sell_fill_on_broker_reject.py",
     "verify_broker_reject_memory_created.py",

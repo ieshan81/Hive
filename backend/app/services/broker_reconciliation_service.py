@@ -103,10 +103,6 @@ class BrokerReconciliationService:
                         "synced_at": row.synced_at.isoformat() + "Z" if row.synced_at else None,
                     }
                 )
-        local_buy_no_broker = self._local_buy_broker_flat_candidates()
-        for c in local_buy_no_broker:
-            if not any(g["symbol"] == c["symbol"] for g in ghosts):
-                ghosts.append(c)
         return ghosts
 
     def _local_buy_broker_flat_candidates(self) -> list[dict[str, Any]]:
@@ -245,6 +241,7 @@ class BrokerReconciliationService:
             "historical_buy_order_id": historical_buy.id if historical_buy else None,
             "historical_broker_order_id": historical_buy.alpaca_order_id if historical_buy else None,
             "accepted_sell_exists": self._accepted_sell_exists(display),
+            "fake_sell_fill": False,
             "last_exit_reject_reason": last_exit_reject.reject_reason if last_exit_reject else None,
             "last_exit_preflight_stage": (last_exit_reject.gates_failed_json or {}).get("preflight_stage")
             if last_exit_reject

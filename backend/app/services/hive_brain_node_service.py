@@ -147,6 +147,11 @@ class HiveBrainNodeService:
                         "available_qty": recon.get("available_qty"),
                         "local_qty": recon.get("local_qty"),
                         "historical_buy_exists": recon.get("historical_buy_exists"),
+                        "accepted_sell_exists": recon.get("accepted_sell_exists"),
+                        "fake_sell_fill": bool(recon.get("fake_sell_fill", False)),
+                        "local_active_position": bool(
+                            (recon.get("local_qty") or 0) > 0 or recon.get("broker_position_open")
+                        ),
                         "historical_broker_order_id": recon.get("historical_broker_order_id"),
                         "last_exit_reject_reason": recon.get("last_exit_reject_reason"),
                         "last_exit_broker_message": recon.get("last_exit_broker_message"),

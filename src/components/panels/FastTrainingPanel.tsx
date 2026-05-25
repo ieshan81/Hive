@@ -44,12 +44,12 @@ export function FastTrainingPanel() {
           {String(status.entries_eligible)} entries_allowed={String(status.entries_allowed)}
         </p>
       )}
-      {status?.broker_reconciliation && (
+      {status?.broker_reconciliation != null ? (
         <p className="text-[9px] font-mono text-amber-400/90 mb-2">
           DOGE: {String((status.broker_reconciliation as Record<string, unknown>).classification)} ·{" "}
           {String((status.broker_reconciliation as Record<string, unknown>).reconciliation_state)}
         </p>
-      )}
+      ) : null}
       {exitOnly && (
         <p className="text-[9px] font-mono text-cyan-400/80 mb-2">
           exit_only={String(exitOnly.exit_only_enabled)} open={String(exitOnly.open_positions)} entries=

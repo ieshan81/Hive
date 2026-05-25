@@ -618,13 +618,33 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         brain_graph = HiveBrainGraphService(session, cfg_brain).build_full()
         hold_audit = audit_all_open_positions(session)
         hc_scan = hardcoded_scan()
-        sample_node = None
-        for n in brain_graph.get("nodes", []):
-            if n.get("type") == "position":
-                from app.services.hive_brain_node_service import HiveBrainNodeService
+        from app.services.hive_brain_node_service import HiveBrainNodeService
+        from app.services.broker_reconciliation_service import BrokerReconciliationService
 
-                sample_node = HiveBrainNodeService(session, cfg_brain).get_node(n["id"])
-                break
+        brain_node_svc = HiveBrainNodeService(session, cfg_brain)
+        sample_node = brain_node_svc.get_node("position-DOGEUSD")
+        if sample_node.get("status") != "ok":
+            sample_node = None
+            for n in brain_graph.get("nodes", []):
+                if n.get("type") in ("position", "historical", "anomaly") and str(n.get("id", "")).startswith(
+                    "position-"
+                ):
+                    sample_node = brain_node_svc.get_node(n["id"])
+                    if sample_node.get("status") == "ok":
+                        break
+        if sample_node and sample_node.get("status") == "ok":
+            from app.database import OrderRecord
+
+            recon_svc = BrokerReconciliationService(session, cfg_brain)
+            doge_keys = ("DOGE", "DOGEUSD", "DOGE/USD")
+            sample_node["linked_orders"] = [
+                _serialize_row(o)
+                for o in session.exec(select(OrderRecord)).all()
+                if any(k in (o.symbol or "").upper() for k in doge_keys)
+            ]
+            sample_node["linked_rejects"] = [
+                r for r in recon_svc.broker_rejects(20) if "DOGE" in (r.get("symbol") or "").upper()
+            ]
         graph = brain_graph
         cons_svc = MemoryConsolidationService(session, cfg_brain)
         ai_svc = AILearningMemoryService(session, cfg_brain)
