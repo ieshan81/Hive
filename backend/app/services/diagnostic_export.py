@@ -695,6 +695,19 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
                 "lease": ft_loop.lease.status(),
                 "in_process_loop_supported": False,
             },
+            "fast_training_decisions.json": [
+                _serialize_row(r)
+                for r in session.exec(
+                    select(PaperExperimentDecision)
+                    .order_by(PaperExperimentDecision.created_at.desc())
+                    .limit(50)
+                ).all()
+            ],
+            "fast_training_orders.json": {
+                "orders": [_serialize_row(r) for r in session.exec(select(OrderRecord)).all()],
+                "training_blockers": ft_loop.status().get("blockers", []),
+                "can_submit_orders": ft_loop.status().get("can_submit_orders", False),
+            },
             "training_outcomes.json": [_serialize_row(r) for r in session.exec(select(PaperExperimentOutcome)).all()],
             "training_memories.json": train_svc.list_training_memories(40),
             "meme_spike_evaluations.json": meme_recent,

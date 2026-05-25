@@ -8,10 +8,11 @@ from typing import Any, Optional
 
 from sqlmodel import Session, select, func
 
-from app.database import OrderRecord, SystemValidationAudit
+from app.database import OrderRecord, PaperExperimentDecision, SettingsActionAudit, SystemValidationAudit
 from app.services.aggressive_paper_learning_service import AggressivePaperLearningService
-from app.services.broker_safety import is_paper_broker_url, live_lock_status
-from app.services.config_manager import ConfigManager
+from app.services.broker_safety import broker_base_url, is_paper_broker_url, live_lock_status
+from app.services.config_manager import ConfigManager, _deep_merge
+from app.services.paper_execution_service import PaperExecutionService
 from app.services.engine_config import cfg_get
 from app.services.fast_training_lease_service import FastTrainingLeaseService
 from app.services.lesson_memory_service import LessonMemoryService
@@ -86,6 +87,127 @@ class FastCryptoTrainingLoop:
             blockers.extend(pf.get("blockers") or [])
         return list(dict.fromkeys(blockers))
 
+    def _settings_audit(self, action: str, operator: str, details: dict) -> None:
+        self.session.add(
+            SettingsActionAudit(
+                action=action,
+                actor=operator,
+                broker_mode="paper" if is_paper_broker_url() else "unknown",
+                paper_broker=is_paper_broker_url(),
+                live_trading_locked=not bool(cfg_get(self.config, "execution.live_orders_enabled", False)),
+                live_orders_enabled=bool(cfg_get(self.config, "execution.live_orders_enabled", False)),
+                details_json={**details, "broker_base_url": broker_base_url(), **live_lock_status(self.config)},
+            )
+        )
+
+    def _refuse_enable(self, reason: str, operator: str) -> dict[str, Any]:
+        self._settings_audit(
+            "fast_training_enable_refused",
+            operator,
+            {"reason": reason},
+        )
+        return {"status": "refused", "reason": reason, **self.status()}
+
+    def enable(self, operator: str = "operator") -> dict[str, Any]:
+        lock = live_lock_status(self.config)
+        if lock.get("live_lock_status") != "locked":
+            return self._refuse_enable("live_lock_not_locked", operator)
+        if not is_paper_broker_url():
+            return self._refuse_enable("broker_not_paper", operator)
+        if bool(self.config.get("live_trading_enabled", False)):
+            return self._refuse_enable("live_trading_flag_set", operator)
+        if not bool(cfg_get(self.config, "execution.paper_orders_enabled", False)):
+            return self._refuse_enable("paper_orders_disabled", operator)
+        if not bool(self.pl.cfg.get("require_position_monitor", True)):
+            return self._refuse_enable("exit_monitor_not_ready", operator)
+        pe = PaperExecutionService(self.session, self.config).status()
+        if not pe.get("paper_execution_ready"):
+            return self._refuse_enable(
+                f"paper_execution_unavailable:{pe.get('paper_execution_blockers')}",
+                operator,
+            )
+
+        pl_out = self.pl.enable(operator)
+        if pl_out.get("status") == "error":
+            return self._refuse_enable(pl_out.get("message", "paper_learning_enable_failed"), operator)
+
+        self.pl.update_config(
+            {
+                "max_experiment_trades_per_day": 1,
+                "max_experiment_trades_per_strategy_per_day": 1,
+                "max_open_experiment_positions": 1,
+                "max_experiment_notional_per_trade_usd": 10,
+                "default_experiment_notional_usd": 5,
+            }
+        )
+
+        cfg_mgr = ConfigManager(self.session)
+        cur = cfg_mgr.get_current()
+        merged = _deep_merge(
+            cur,
+            {
+                "fast_training": {
+                    **(cur.get("fast_training") or {}),
+                    "fast_training_loop_enabled": True,
+                    "fast_training_execute_orders": True,
+                    "fast_training_max_notional_usd": 10,
+                    "fast_training_default_notional_usd": 5,
+                    "fast_training_max_trades_per_day": 1,
+                    "fast_training_max_open_positions": 1,
+                    "fast_training_require_exit_monitor": True,
+                },
+                "live_trading_enabled": False,
+                "execution": {
+                    **(cur.get("execution") or {}),
+                    "live_orders_enabled": False,
+                    "paper_orders_enabled": True,
+                },
+            },
+        )
+        cfg_mgr._activate(merged, operator, "fast_training_controlled_enable")
+        self.config = cfg_mgr.get_current()
+        self.ft = dict(self.config.get("fast_training") or {})
+        self.pl = AggressivePaperLearningService(self.session)
+
+        self._settings_audit(
+            "fast_training_enable",
+            operator,
+            {
+                "mode_enabled": True,
+                "fast_training_loop_enabled": True,
+                "fast_training_execute_orders": True,
+                "max_notional_usd": 10,
+                "max_trades_per_day": 1,
+            },
+        )
+        self.session.flush()
+        return {"status": "ok", "message": "Fast training enabled (controlled)", **self.status()}
+
+    def disable(self, operator: str = "operator") -> dict[str, Any]:
+        self.pl.disable(operator)
+        cfg_mgr = ConfigManager(self.session)
+        cur = cfg_mgr.get_current()
+        merged = _deep_merge(
+            cur,
+            {
+                "fast_training": {
+                    **(cur.get("fast_training") or {}),
+                    "fast_training_loop_enabled": False,
+                    "fast_training_execute_orders": False,
+                },
+            },
+        )
+        cfg_mgr._activate(merged, operator, "fast_training_controlled_disable")
+        self.config = cfg_mgr.get_current()
+        self.ft = dict(self.config.get("fast_training") or {})
+        self.pl = AggressivePaperLearningService(self.session)
+        self._settings_audit("fast_training_disable", operator, {"mode_enabled": False})
+        self.session.flush()
+        return {"status": "ok", "message": "Fast training disabled", **self.status()}
+
+    def monitor_exits(self) -> dict[str, Any]:
+        return self.training.monitor_exits()
+
     def run_once(self, *, actor: str = "operator") -> dict[str, Any]:
         ok, holder = self.lease.acquire()
         if not ok:
@@ -139,10 +261,17 @@ class FastCryptoTrainingLoop:
 
         stale_reviews = [r for r in reviews.get("reviews", []) if r.get("stale")]
         phases.append("stale_position_check")
+        for sr in stale_reviews:
+            OpenPositionReviewService(self.session, self.config).review_position(sr.get("symbol", ""))
 
         blockers = self._entry_blockers(pf)
         if bool(self.ft.get("fast_training_require_exit_monitor")) and not exit_ready:
             blockers.append("exit_monitor_unavailable")
+        if stale_reviews:
+            blockers.append("stale_open_position_blocks_entry")
+        open_positions = reviews.get("reviews") or []
+        if open_positions and self._can_submit_orders():
+            blockers.append("open_position_blocks_duplicate_entry")
 
         entries_skipped = True
         entry_result: dict[str, Any] = {"status": "skipped", "reason": "entries_blocked"}
