@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Optional
 
 from sqlmodel import Session, select
 
-from app.database import OrderRecord, PositionEnrichedState, PositionSnapshot, StrategySignal
+from app.database import PositionSnapshot, StrategySignal
 from app.services.aggressive_paper_learning_service import AggressivePaperLearningService
 from app.services.config_manager import ConfigManager
 from app.services.lesson_memory_service import LessonMemoryService
 from app.services.meme_volatility_spike_detector import MemeVolatilitySpikeDetector
+from app.services.position_hold_time_service import build_position_truth, resolve_entry_time
 
 
 class OpenPositionReviewService:
@@ -35,64 +36,66 @@ class OpenPositionReviewService:
         if not pos:
             return {"symbol": symbol, "status": "no_position"}
 
+        truth = build_position_truth(self.session, symbol, pos)
+        hold = resolve_entry_time(self.session, symbol, pos=pos)
         tier = AggressivePaperLearningService(self.session).symbol_tier(symbol)
-        hold_min = self._hold_minutes(pos)
+        strategy = truth.get("strategy_name")
+        signal_id = truth.get("signal_id")
+        intent = self._strategy_intent(strategy, signal_id)
+
+        push_pull_max = int(
+            self.pl_cfg.get("push_pull_max_hold_minutes")
+            or self.config.get("crypto_push_pull", {}).get("max_hold_hours", 0.5) * 60
+            or 30
+        )
         max_hold = int(self.pl_cfg.get("meme_coin_max_hold_minutes", 240))
         if tier == "MAJOR_CRYPTO":
             max_hold = int(self.pl_cfg.get("major_crypto_max_hold_hours", 48)) * 60
+        effective_max = push_pull_max if intent == "quick_push_pull" else max_hold
 
-        norm_sym = symbol.replace("/", "")
-        enriched = self.session.exec(
-            select(PositionEnrichedState).where(
-                PositionEnrichedState.broker_symbol.in_([symbol, norm_sym, f"{norm_sym}USD"])
-            )
-        ).first()
-        state = (enriched.state_json or {}) if enriched else {}
-        strategy = state.get("strategy") or state.get("strategy_id")
-        signal_id = state.get("signal_id")
-        intent = self._strategy_intent(strategy, signal_id)
+        true_hold = float(hold.get("true_hold_minutes") or 0)
+        stale = intent == "quick_push_pull" and true_hold > effective_max
+        if tier == "MEME_SUPPORTED" and intent == "quick_push_pull" and true_hold > effective_max:
+            stale = True
 
-        stale = tier == "MEME_SUPPORTED" and intent == "quick_push_pull" and hold_min > max_hold
         action = "hold"
         reason = "within_hold_window"
+        stale_status = "active"
         if stale:
             action = "exit_recommended"
-            reason = f"exceeded_quick_push_max_hold_{max_hold}m"
-            self._stale_memory(symbol, strategy, hold_min, max_hold, pos)
-        elif hold_min > max_hold * 0.8 and tier == "MEME_SUPPORTED":
+            reason = f"exceeded_quick_push_max_hold_{effective_max}m"
+            stale_status = "stale"
+            self._stale_memory(symbol, strategy, true_hold, effective_max, pos)
+        elif true_hold > effective_max * 0.8 and tier == "MEME_SUPPORTED" and intent == "quick_push_pull":
             action = "tighten_stop"
             reason = "approaching_max_hold"
+            stale_status = "warning"
 
         spike = MemeVolatilitySpikeDetector(self.session, self.config).evaluate_symbol(symbol)
         return {
-            "symbol": symbol,
+            **truth,
+            **hold,
             "tier": tier,
             "strategy": strategy,
-            "signal_id": signal_id,
             "intent": intent,
-            "hold_minutes": hold_min,
-            "max_hold_minutes": max_hold,
-            "qty": pos.qty,
-            "unrealized_pl": getattr(pos, "unrealized_pl", None),
+            "hold_minutes": true_hold,
+            "true_hold_minutes": true_hold,
+            "max_hold_minutes": effective_max,
+            "push_pull_max_hold_minutes": push_pull_max,
             "stale": stale,
+            "stale_status": stale_status,
             "action": action,
             "reason": reason,
+            "exit_status": truth.get("exit_status", "open"),
+            "monitor_status": truth.get("monitor_status", "active"),
             "manipulation_risk": spike.get("manipulation_risk"),
             "broker_mode": "paper",
             "live_trading_locked": True,
+            "reviewed_at": datetime.utcnow().isoformat() + "Z",
         }
 
-    def _hold_minutes(self, pos: PositionSnapshot) -> float:
-        opened = getattr(pos, "synced_at", None)
-        if not opened:
-            order = self.session.exec(
-                select(OrderRecord).where(OrderRecord.symbol == pos.symbol).order_by(OrderRecord.created_at.desc())
-            ).first()
-            opened = order.created_at if order else datetime.utcnow() - timedelta(hours=1)
-        return max(0.0, (datetime.utcnow() - opened).total_seconds() / 60.0)
-
     def _strategy_intent(self, strategy: Optional[str], signal_id: Optional[int]) -> str:
-        if strategy and "push" in strategy.lower():
+        if strategy and "push" in str(strategy).lower():
             return "quick_push_pull"
         if signal_id:
             sig = self.session.get(StrategySignal, signal_id)
@@ -107,11 +110,11 @@ class OpenPositionReviewService:
             memory_type="stale_position_memory",
             title=f"Stale push-pull: {symbol}",
             summary=(
-                f"Open {symbol} held {hold_min:.0f}m exceeds quick push-pull max {max_hold}m. "
+                f"Open {symbol} true hold {hold_min:.0f}m (from order fill) exceeds quick push-pull max {max_hold}m. "
                 "Do not let training positions become passive bags."
             ),
             detailed_lesson=(
-                "Meme push-pull requires fast exit discipline. Route exit through caged training path when rules fire."
+                "Meme push-pull requires fast exit discipline. true_hold_minutes uses filled_at, not broker sync."
             ),
             symbol=symbol,
             strategy_name=strategy,

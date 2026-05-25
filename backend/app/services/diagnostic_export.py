@@ -612,7 +612,19 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         from app.services.live_lock_tripwire import live_lock_tripwire_status
         from app.services.memory_policy import load_memory_policy
 
-        brain_graph = HiveBrainGraphService(session, cfg_brain).build()
+        from app.services.position_hold_time_service import audit_all_open_positions
+        from app.services.hardcoded_symbol_scan import scan_repository as hardcoded_scan
+
+        brain_graph = HiveBrainGraphService(session, cfg_brain).build_full()
+        hold_audit = audit_all_open_positions(session)
+        hc_scan = hardcoded_scan()
+        sample_node = None
+        for n in brain_graph.get("nodes", []):
+            if n.get("type") == "position":
+                from app.services.hive_brain_node_service import HiveBrainNodeService
+
+                sample_node = HiveBrainNodeService(session, cfg_brain).get_node(n["id"])
+                break
         graph = brain_graph
         cons_svc = MemoryConsolidationService(session, cfg_brain)
         ai_svc = AILearningMemoryService(session, cfg_brain)
@@ -658,8 +670,14 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             "core_ai_learning_memories.json": ai_svc.list_ai_learning(50),
             "memory_policy_config.json": load_memory_policy(session, cfg_brain),
             "hive_brain_graph.json": brain_graph,
-            "hive_brain_clusters.json": brain_graph.get("meta", {}),
+            "hive_brain_clusters.json": brain_graph.get("clusters", []),
             "hive_brain_edges.json": brain_graph.get("edges", [])[:100],
+            "hive_brain_legend.json": brain_graph.get("legend", []),
+            "hive_brain_shape_legend.json": brain_graph.get("shape_legend", []),
+            "hive_brain_layout_meta.json": brain_graph.get("meta", {}),
+            "hive_brain_node_details_sample.json": sample_node or {},
+            "true_hold_time_audit.json": hold_audit,
+            "hardcoded_symbol_scan.json": hc_scan,
             "training_cycle_decisions.json": pl.list_decisions(),
             "training_execution_queue.json": [
                 _serialize_row(r)

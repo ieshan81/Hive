@@ -336,8 +336,14 @@ class TrainingExecutionService:
         monitor = self.monitor_exits()
         scan = self.pl.scan_experiment_eligibility()
         decisions = []
+        from app.database import StrategyRegistry
+
         for row in scan.get("eligible", [])[:3]:
-            sym = "DOGE/USD" if "push" in row.get("strategy_id", "") else "BTC/USD"
+            reg = self.session.exec(
+                select(StrategyRegistry).where(StrategyRegistry.strategy_id == row.get("strategy_id"))
+            ).first()
+            symbols = (reg.symbols if reg else None) or ["BTC/USD"]
+            sym = symbols[0] if isinstance(symbols, list) and symbols else "BTC/USD"
             ev = self.pl.evaluate(row["strategy_id"], sym, side="buy")
             if ev.get("decision") == "approved":
                 dec_row = self.session.exec(

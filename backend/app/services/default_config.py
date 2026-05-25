@@ -288,6 +288,20 @@ DEFAULT_CONFIG = {
         "require_position_monitor": True,
         "allow_live": False,
         "block_pump_dump_risk": True,
+        "push_pull_max_hold_minutes": 30,
+    },
+    "fast_training": {
+        "fast_training_loop_enabled": False,
+        "fast_training_cycle_seconds": 20,
+        "fast_training_max_scan_symbols": 40,
+        "fast_training_execute_orders": False,
+        "fast_training_default_notional_usd": 5,
+        "fast_training_max_notional_usd": 10,
+        "fast_training_max_trades_per_day": 10,
+        "fast_training_max_open_positions": 1,
+        "fast_training_daily_loss_cap_pct": 5,
+        "fast_training_require_exit_monitor": True,
+        "use_db_lease": True,
     },
     "locked_config_keys": list(
         {

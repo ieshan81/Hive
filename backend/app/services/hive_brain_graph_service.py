@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from datetime import datetime
 from typing import Any, Optional
 
 from sqlmodel import Session, select
@@ -20,6 +21,8 @@ from app.services.memory_categories import (
 )
 from app.services.memory_consolidation_service import MemoryConsolidationService
 from app.services.memory_policy import load_memory_policy
+from app.services.position_hold_time_service import build_position_truth
+from app.services.symbol_normalize import broker_symbol as to_broker_sym
 
 
 def _cluster_for_lesson(lesson: LessonNode) -> str:
@@ -242,18 +245,37 @@ class HiveBrainGraphService:
     def _append_positions(self, nodes: list[dict], edges: list[dict]) -> None:
         cid = "cluster-active-positions"
         for pos in self.session.exec(select(PositionSnapshot).where(PositionSnapshot.qty > 0)).all():
-            pid = f"position-{pos.symbol.replace('/', '')}"
+            truth = build_position_truth(self.session, pos.symbol, pos)
+            from app.services.open_position_review_service import OpenPositionReviewService
+
+            review = OpenPositionReviewService(self.session, self.config).review_position(pos.symbol, pos)
+            review_stale = review.get("stale", False)
+            bs = truth.get("broker_symbol") or to_broker_sym(pos.symbol)
+            pid = f"position-{bs.replace('/', '')}"
             nodes.append(
                 {
                     "id": pid,
-                    "label": f"{pos.symbol} open",
+                    "label": f"{truth.get('display_symbol', pos.symbol)}",
+                    "full_label": f"{truth.get('display_symbol')} open — broker paper",
                     "type": "position",
-                    "severity": "MEDIUM",
+                    "shape": "portfolio_card",
+                    "severity": "HIGH" if review_stale else "MEDIUM",
                     "confidence": 0.95,
                     "status": "active",
+                    "status_ring": "red" if review_stale else "green",
                     "x": 62,
                     "y": 48,
-                    "color": "#22c55e",
+                    "color": "#06b6d4",
+                    "source": "Broker Position / Position State",
+                    "source_table": truth.get("source_table", "position_snapshots"),
+                    "source_endpoint": "/api/positions/state",
+                    "source_id": truth.get("order_id"),
+                    "broker_symbol": bs,
+                    "display_symbol": truth.get("display_symbol"),
+                    "signal_id": truth.get("signal_id"),
+                    "true_hold_minutes": truth.get("true_hold_minutes"),
+                    "hold_time_source": truth.get("hold_time_source"),
+                    "visible_by_default": True,
                 }
             )
             edges.append(
@@ -261,7 +283,7 @@ class HiveBrainGraphService:
                     "id": f"e-{cid}-{pid}",
                     "source": cid,
                     "target": pid,
-                    "relation": "open_position",
+                    "relation": "linked_to_position",
                     "weight": 1.0,
                     "weight_tier": "strong",
                 }
@@ -296,4 +318,107 @@ class HiveBrainGraphService:
             )
 
     def rebuild(self) -> dict[str, Any]:
-        return self.build(show_raw=False)
+        return self.build_full(show_raw=False)
+
+    def build_full(
+        self,
+        *,
+        show_raw: bool = False,
+        expand_cluster: Optional[str] = None,
+        max_nodes: Optional[int] = None,
+    ) -> dict[str, Any]:
+        """Full hive-brain API contract."""
+        base = self.build(show_raw=show_raw, expand_cluster=expand_cluster, max_nodes=max_nodes)
+        nodes = base["nodes"]
+        edges = base["edges"]
+        meta = base["meta"]
+
+        shape_map = {
+            "hive": "brain_core",
+            "cluster": "cluster_hub",
+            "lesson": "rounded_card",
+            "position": "portfolio_card",
+            "strategy": "diamond",
+        }
+        color_map = {
+            "hive": "#00d1ff",
+            "cluster": "#8b5cf6",
+            "position": "#06b6d4",
+            "strategy": "#a855f7",
+            "lesson": "#22d3ee",
+        }
+        enriched_nodes = []
+        visible_labels = 0
+        for n in nodes:
+            nt = n.get("type", "lesson")
+            en = {
+                **n,
+                "full_label": n.get("label", ""),
+                "shape": shape_map.get(nt, "dot" if n.get("memory_level") == MEMORY_LEVEL_RAW else "rounded_card"),
+                "color": n.get("color") or color_map.get(nt, "#64748b"),
+                "status_ring": "green" if n.get("status") == "active" else "gray",
+                "visible_by_default": nt in ("hive", "cluster", "position", "strategy")
+                or (nt == "lesson" and n.get("memory_level") != MEMORY_LEVEL_RAW),
+                "raw_hidden_by_default": n.get("memory_level") == MEMORY_LEVEL_RAW,
+                "category": n.get("category") or nt,
+                "source": n.get("source", "hive_brain_graph"),
+                "source_table": n.get("source_table"),
+                "source_endpoint": n.get("source_endpoint", "/api/hive-brain/graph"),
+                "source_id": n.get("source_id"),
+                "evidence_strength": n.get("evidence_count", 1),
+                "memory_level": n.get("memory_level", "consolidated_lesson"),
+            }
+            if en["visible_by_default"] and visible_labels < 15:
+                visible_labels += 1
+            else:
+                en["label"] = (en["label"][:12] + "…") if len(en.get("label", "")) > 14 else en.get("label", "")
+            enriched_nodes.append(en)
+
+        clusters = [
+            {
+                "id": cid,
+                "label": CLUSTER_LABELS.get(cid, cid),
+                "shape": "cluster_hub",
+                "color": "#8b5cf6",
+                "child_count": sum(1 for e in edges if e.get("source") == cid),
+            }
+            for cid in HIVE_BRAIN_CLUSTERS
+        ]
+
+        return {
+            "status": "ok",
+            "center": next((n for n in enriched_nodes if n["id"] == "hive"), None),
+            "clusters": clusters,
+            "nodes": enriched_nodes,
+            "edges": edges,
+            "legend": COLOR_LEGEND,
+            "shape_legend": SHAPE_LEGEND,
+            "color_legend": COLOR_LEGEND,
+            "meta": {
+                **meta,
+                "layout_mode": "hierarchical",
+                "visible_labels": visible_labels,
+                "last_built_at": datetime.utcnow().isoformat() + "Z",
+                "source_truth_status": "broker_linked",
+                "data_freshness": "live",
+            },
+        }
+
+
+COLOR_LEGEND = [
+    {"color": "#06b6d4", "meaning": "Broker truth / active positions"},
+    {"color": "#8b5cf6", "meaning": "Strategy / AI core lessons"},
+    {"color": "#f97316", "meaning": "Risk / warnings"},
+    {"color": "#ef4444", "meaning": "Loss / rejected / blocked"},
+    {"color": "#22c55e", "meaning": "Growth / validated"},
+    {"color": "#64748b", "meaning": "Archived / raw / low confidence"},
+]
+
+SHAPE_LEGEND = [
+    {"shape": "brain_core", "meaning": "HIVE BRAIN core"},
+    {"shape": "cluster_hub", "meaning": "Memory cluster hub"},
+    {"shape": "portfolio_card", "meaning": "Open broker position"},
+    {"shape": "diamond", "meaning": "Strategy"},
+    {"shape": "rounded_card", "meaning": "Consolidated lesson"},
+    {"shape": "dot", "meaning": "Raw memory (hidden by default)"},
+]

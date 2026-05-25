@@ -13,6 +13,7 @@
     "node": ">=20.19.0"
   },
   "dependencies": {
+    "@xyflow/react": "^12.10.2",
     "lucide-react": "^0.511.0",
     "next": "^15.3.3",
     "react": "^19.1.0",
