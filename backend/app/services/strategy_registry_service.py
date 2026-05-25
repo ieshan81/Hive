@@ -152,20 +152,14 @@ class StrategyRegistryService:
             meta["latest_rejection_id"] = cand.id
             return "rejected", meta
 
+        metrics = self._latest_metrics(sid)
         rej_mem = self.session.exec(
             select(LessonNode).where(
                 LessonNode.strategy_name == sid,
                 LessonNode.memory_type == "rejected_strategy_memory",
             )
         ).first()
-        if rej_mem and sid == "crypto_push_pull_momentum":
-            return "rejected", meta
-
-        metrics = self._latest_metrics(sid)
         ev = evaluate_metrics(metrics, self.config)
-        if ev["reject"] and metrics.get("num_trades", 0) >= 20:
-            return "rejected", meta
-
         if sid == "crypto_push_pull":
             for p in open_positions:
                 st = enriched.get(p.symbol, {})
@@ -176,6 +170,15 @@ class StrategyRegistryService:
             if any("DOGE" in (p.symbol or "").upper() for p in open_positions):
                 meta["quarantine"] = "open_doge_position"
                 return "paper_active", meta
+
+        if sid == "crypto_push_pull_momentum":
+            if rej_mem or (cand and cand.status == "rejected"):
+                return "rejected", meta
+            if ev["reject"] and metrics.get("num_trades", 0) >= 20:
+                return "rejected", meta
+
+        if ev["reject"] and metrics.get("num_trades", 0) >= 20 and sid != "crypto_push_pull":
+            return "rejected", meta
 
         if cand and cand.promotion_stage in ("paper_candidate", "paper_enabled"):
             return "paper_candidate", meta

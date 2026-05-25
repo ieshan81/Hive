@@ -95,7 +95,9 @@ class StrategyValidationGate:
             else:
                 failures.append(reason or "transition_denied")
         elif not passed and ev["reject"]:
-            if reg.current_stage not in ("rejected", "retired"):
+            if reg.current_stage == "paper_active" and reg.quarantine_status:
+                warnings.append("runtime_position_override_keeps_paper_active")
+            elif reg.current_stage not in ("rejected", "retired"):
                 self._transition(reg, "rejected", "metrics_fail", failures)
                 self._record_rejection(strategy_id, failures)
 
@@ -194,6 +196,8 @@ class StrategyValidationGate:
         return reg
 
     def _suggest_target(self, reg: StrategyRegistry, ev: dict, sc) -> str:
+        if reg.current_stage == "paper_active" and reg.quarantine_status:
+            return "paper_active"
         if ev["reject"]:
             return "rejected"
         if reg.current_stage == "research_only" and sc.sample_size and sc.sample_size >= 100 and sc.promote_allowed:
