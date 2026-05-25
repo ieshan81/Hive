@@ -40,7 +40,14 @@ export function FastTrainingPanel() {
       {status && (
         <p className="text-[9px] font-mono text-slate-400 mb-2">
           loop={String(status.fast_training_loop_enabled)} mode={String(status.mode_enabled)} orders=
-          {String(status.orders_total)} live={String(status.live_lock_status)}
+          {String(status.orders_total)} live={String(status.live_lock_status)} entries_eligible=
+          {String(status.entries_eligible)} entries_allowed={String(status.entries_allowed)}
+        </p>
+      )}
+      {status?.broker_reconciliation && (
+        <p className="text-[9px] font-mono text-amber-400/90 mb-2">
+          DOGE: {String((status.broker_reconciliation as Record<string, unknown>).classification)} ·{" "}
+          {String((status.broker_reconciliation as Record<string, unknown>).reconciliation_state)}
         </p>
       )}
       {exitOnly && (

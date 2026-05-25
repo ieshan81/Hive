@@ -214,6 +214,14 @@ def get_reconciliation_status(session: Session = Depends(get_session)):
     return {"status": "ok", **reconciliation_status(session, AlpacaAdapter(session))}
 
 
+@router.get("/reconciliation/broker-truth")
+def get_broker_truth_reconciliation(session: Session = Depends(get_session)):
+    from app.services.broker_reconciliation_service import BrokerReconciliationService
+
+    svc = BrokerReconciliationService(session)
+    return {"status": "ok", **svc.build_diagnostic_exports()}
+
+
 @router.post("/reconciliation/run")
 def run_reconciliation(session: Session = Depends(get_session)):
     from app.services.order_reconciliation import reconciliation_status

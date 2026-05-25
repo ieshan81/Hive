@@ -256,6 +256,10 @@ class HiveBrainGraphService:
         return rows
 
     def _append_positions(self, nodes: list[dict], edges: list[dict]) -> None:
+        from app.services.broker_reconciliation_service import BrokerReconciliationService
+
+        recon = BrokerReconciliationService(self.session, self.config)
+        recon.sync_broker_snapshots()
         cid = "cluster-active-positions"
         for pos in self.session.exec(select(PositionSnapshot).where(PositionSnapshot.qty > 0)).all():
             truth = build_position_truth(self.session, pos.symbol, pos)
@@ -299,6 +303,51 @@ class HiveBrainGraphService:
                     "relation": "linked_to_position",
                     "weight": 1.0,
                     "weight_tier": "strong",
+                }
+            )
+        self._append_flat_historical_positions(nodes, edges, recon, cid)
+
+    def _append_flat_historical_positions(
+        self, nodes: list[dict], edges: list[dict], recon, cid: str
+    ) -> None:
+        from app.database import OrderRecord
+
+        for cand in recon._local_buy_broker_flat_candidates():
+            sym = cand.get("symbol", "DOGE/USD")
+            bs = sym.upper().replace("/", "")
+            pid = f"position-{bs}"
+            if any(n["id"] == pid for n in nodes):
+                continue
+            nodes.append(
+                {
+                    "id": pid,
+                    "label": f"{sym} (historical)",
+                    "full_label": f"{sym} — broker flat, historical buy only",
+                    "type": "anomaly",
+                    "shape": "portfolio_card",
+                    "severity": "MEDIUM",
+                    "confidence": 0.9,
+                    "status": "broker_flat_historical",
+                    "status_ring": "slate",
+                    "x": 58,
+                    "y": 52,
+                    "color": "#64748b",
+                    "source": "Broker reconciliation",
+                    "source_table": "orders",
+                    "source_endpoint": "/api/reconciliation/broker-truth",
+                    "display_symbol": sym,
+                    "visible_by_default": True,
+                    "classification": cand.get("classification"),
+                }
+            )
+            edges.append(
+                {
+                    "id": f"e-{cid}-{pid}-hist",
+                    "source": cid,
+                    "target": pid,
+                    "relation": "historical_position_anomaly",
+                    "weight": 0.6,
+                    "weight_tier": "weak",
                 }
             )
 

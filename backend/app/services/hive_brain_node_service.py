@@ -9,6 +9,7 @@ from sqlmodel import Session
 from app.database import LessonNode
 from app.services.config_manager import ConfigManager
 from app.services.lesson_memory_service import LessonMemoryService
+from app.services.broker_reconciliation_service import BrokerReconciliationService
 from app.services.open_position_review_service import OpenPositionReviewService
 from app.services.position_hold_time_service import build_position_truth
 
@@ -25,9 +26,13 @@ class HiveBrainNodeService:
             from app.services.symbol_normalize import display_symbol
 
             sym = display_symbol(raw)
+            recon = BrokerReconciliationService(self.session, self.config)
+            doge_audit = recon.classify_symbol(sym) if "DOGE" in sym.upper() else recon.classify_symbol(sym)
             truth = build_position_truth(self.session, sym)
             review = OpenPositionReviewService(self.session, self.config).review_position(sym)
-            return self._position_drawer(node_id, truth, review)
+            if review.get("status") == "no_position":
+                review = {**doge_audit, "status": "no_position", "action": None, "stale": False}
+            return self._position_drawer(node_id, truth, review, doge_audit)
 
         if node_id.startswith("lesson-"):
             lid = int(node_id.replace("lesson-", ""))
@@ -89,20 +94,34 @@ class HiveBrainNodeService:
 
         return {"status": "error", "message": "unknown node id"}
 
-    def _position_drawer(self, node_id: str, truth: dict, review: dict) -> dict[str, Any]:
+    def _position_drawer(
+        self, node_id: str, truth: dict, review: dict, reconciliation: Optional[dict] = None
+    ) -> dict[str, Any]:
         display = truth.get("display_symbol") or truth.get("symbol")
+        recon = reconciliation or {}
+        state = recon.get("reconciliation_state", "unknown")
+        labels = {
+            "active_broker_position": ("Active broker position", "green", "position"),
+            "broker_availability_conflict": ("Broker availability conflict", "amber", "anomaly"),
+            "broker_flat_historical_order_only": ("Broker-flat — historical buy only", "slate", "historical"),
+            "local_ghost_candidate": ("Local ghost candidate", "red", "anomaly"),
+            "no_position": ("No open position", "slate", "resolved"),
+        }
+        title, ring, node_kind = labels.get(
+            state, (f"{display} position (reconcile)", "slate", "anomaly")
+        )
         return {
             "status": "ok",
             "node": {
                 "id": node_id,
-                "title": f"{display} open position",
-                "full_label": f"{display} — broker paper position",
-                "type": "position",
+                "title": f"{display} — {title}",
+                "full_label": f"{display} — {recon.get('classification', state)}",
+                "type": node_kind if node_kind != "position" else "position",
                 "shape": "portfolio_card",
                 "category": "broker_truth",
-                "color": "#06b6d4",
-                "status": review.get("stale_status", "active"),
-                "status_ring": "red" if review.get("stale") else "green",
+                "color": "#06b6d4" if state == "active_broker_position" else "#64748b",
+                "status": state,
+                "status_ring": ring,
                 "source": truth.get("data_source", "Broker Position / Position State"),
                 "source_table": truth.get("source_table"),
                 "source_endpoint": truth.get("source_endpoint", "/api/positions/state"),
@@ -111,14 +130,26 @@ class HiveBrainNodeService:
                 "severity": "HIGH" if review.get("stale") else "MEDIUM",
                 "sections": {
                     "summary": {
-                        "what_this_means": f"Live broker-paper position for {display}. Not hardcoded.",
+                        "what_this_means": self._reconciliation_summary(state, display, recon),
                         "what_ai_learned": (
                             "Quick push-pull must use true fill time for hold; broker sync is not entry time."
                         ),
                         "why_it_matters": "Training and exit rules depend on accurate hold duration.",
                         "behavior_changed": "Stale push-pull positions trigger exit recommendation and memories.",
+                        "reconciliation_state": state,
+                        "classification": recon.get("classification"),
                     },
                     "evidence": {
+                        "reconciliation_state": state,
+                        "classification": recon.get("classification"),
+                        "broker_position_open": recon.get("broker_position_open"),
+                        "broker_qty": recon.get("broker_qty"),
+                        "available_qty": recon.get("available_qty"),
+                        "local_qty": recon.get("local_qty"),
+                        "historical_buy_exists": recon.get("historical_buy_exists"),
+                        "historical_broker_order_id": recon.get("historical_broker_order_id"),
+                        "last_exit_reject_reason": recon.get("last_exit_reject_reason"),
+                        "last_exit_broker_message": recon.get("last_exit_broker_message"),
                         "broker_symbol": truth.get("broker_symbol"),
                         "display_symbol": display,
                         "qty": truth.get("qty"),
@@ -160,6 +191,23 @@ class HiveBrainNodeService:
                 },
             },
         }
+
+    def _reconciliation_summary(self, state: str, display: str, recon: dict) -> str:
+        if state == "active_broker_position":
+            return f"Broker reports open {display} position (paper)."
+        if state == "broker_availability_conflict":
+            return (
+                f"Broker shows {display} position but available sell qty was 0 on exit attempt. "
+                "Do not retry exit until explained."
+            )
+        if state == "broker_flat_historical_order_only":
+            return (
+                f"Broker is flat for {display}. Historical buy order remains in evidence; "
+                "no accepted sell fill."
+            )
+        if state == "local_ghost_candidate":
+            return f"Local DB may show {display} open but broker truth is flat — ghost candidate for operator review."
+        return f"No active broker position for {display}. Reconcile before new entries."
 
     def _lesson_drawer(self, detail: dict) -> dict[str, Any]:
         return {

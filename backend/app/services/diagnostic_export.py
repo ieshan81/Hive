@@ -634,7 +634,9 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         from app.services.technical_candle_analysis_service import TechnicalCandleAnalysisService
         from app.services.strategy_import_service import StrategyImportService
         from app.services.fast_training_exit_diagnostics import build_exit_diagnostic_exports
+        from app.services.broker_reconciliation_service import BrokerReconciliationService
 
+        recon_exports = BrokerReconciliationService(session, cfg_brain).build_diagnostic_exports()
         ft_loop = FastCryptoTrainingLoop(session, cfg_brain)
         exit_only_svc = FastTrainingExitOnlyService(session, cfg_brain)
         exit_diag = build_exit_diagnostic_exports(session, cfg_brain)
@@ -687,7 +689,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             "hive_brain_shape_legend.json": brain_graph.get("shape_legend", []),
             "hive_brain_layout_meta.json": brain_graph.get("meta", {}),
             "hive_brain_node_details_sample.json": sample_node or {},
-            "true_hold_time_audit.json": hold_audit,
+            "true_hold_time_audit.json": recon_exports.get("true_hold_time_audit.json", hold_audit),
             "hardcoded_symbol_scan.json": hc_scan,
             "training_cycle_decisions.json": pl.list_decisions(),
             "training_execution_queue.json": [
@@ -735,7 +737,18 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             "meme_spike_evaluations.json": meme_recent,
             "meme_spike_recent.json": meme_recent,
             "live_lock_tripwire_status.json": live_lock_tripwire_status(cfg_brain),
-            "open_position_reviews.json": exit_diag.get("open_position_reviews.json", pos_review),
+            "open_position_reviews.json": recon_exports.get(
+                "open_position_reviews.json", exit_diag.get("open_position_reviews.json", pos_review)
+            ),
+            "broker_position_availability_audit.json": recon_exports.get(
+                "broker_position_availability_audit.json", {}
+            ),
+            "doge_broker_availability_audit.json": recon_exports.get("doge_broker_availability_audit.json", {}),
+            "ghost_position_candidates.json": recon_exports.get("ghost_position_candidates.json", []),
+            "broker_rejects.json": recon_exports.get("broker_rejects.json", []),
+            "exit_only_reconciliation_status.json": recon_exports.get(
+                "exit_only_reconciliation_status.json", {}
+            ),
             "stale_position_memories.json": [
                 _lesson_row(r)
                 for r in session.exec(select(LessonNode).where(LessonNode.memory_type == "stale_position_memory").limit(20)).all()

@@ -39,7 +39,17 @@ class FastCryptoTrainingLoop:
         return int(self.session.exec(select(func.count()).select_from(OrderRecord)).one())
 
     def status(self) -> dict[str, Any]:
+        from app.services.broker_reconciliation_service import BrokerReconciliationService
+
         pf = self.training.preflight_training()
+        recon = BrokerReconciliationService(self.session, self.config)
+        recon_blockers = recon.training_entry_blockers()
+        blockers = self._entry_blockers(pf) + recon_blockers
+        entries_eligible = (
+            not recon_blockers
+            and not any(b.startswith("open_position") for b in recon_blockers)
+            and len(recon.ghost_position_candidates()) == 0
+        )
         return {
             "status": "ok",
             "fast_training_loop_enabled": bool(self.ft.get("fast_training_loop_enabled", False)),
@@ -52,8 +62,11 @@ class FastCryptoTrainingLoop:
             "paper_orders_enabled": bool(cfg_get(self.config, "execution.paper_orders_enabled", False)),
             "live_orders_enabled": bool(cfg_get(self.config, "execution.live_orders_enabled", False)),
             "orders_total": self._order_count(),
-            "can_submit_orders": self._can_submit_orders(),
-            "blockers": self._entry_blockers(pf),
+            "can_submit_orders": self._can_submit_orders() and not recon_blockers,
+            "blockers": list(dict.fromkeys(blockers)),
+            "entries_eligible": entries_eligible,
+            "entries_allowed": entries_eligible and self._can_submit_orders(),
+            "broker_reconciliation": recon.doge_audit(),
             "preflight": pf,
             "lease": self.lease.status(),
             "in_process_loop_supported": False,

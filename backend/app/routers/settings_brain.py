@@ -52,13 +52,26 @@ def resync_broker_truth(session: Session = Depends(get_session)):
     alpaca = AlpacaAdapter(session)
     account = alpaca.sync_account()
     positions = alpaca.sync_positions()
+    from app.services.broker_reconciliation_service import BrokerReconciliationService
+
+    recon = BrokerReconciliationService(session)
+    mem = recon.ensure_reconciliation_memories(actor="resync_broker_truth")
     out = _audit(
         session,
         "resync_broker_truth",
-        {"account_synced": account is not None, "positions": len(positions)},
+        {
+            "account_synced": account is not None,
+            "positions": len(positions),
+            "reconciliation": mem,
+        },
     )
     session.commit()
-    return {**out, "broker_truth_resync": True}
+    return {
+        **out,
+        "broker_truth_resync": True,
+        "doge_audit": recon.doge_audit(),
+        "diagnostic_preview": recon.build_diagnostic_exports(),
+    }
 
 
 @router.post("/clear-ghost-rows")

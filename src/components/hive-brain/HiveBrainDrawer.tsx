@@ -24,7 +24,29 @@ export function HiveBrainDrawer({ node, loading, onClose }: Props) {
 
   const evidence = node?.sections?.evidence ?? {};
   const summary = node?.sections?.summary ?? {};
-  const isPosition = node?.type === "position";
+  const isPosition = node?.type === "position" || node?.type === "anomaly";
+  const reconState = String(
+    summary.reconciliation_state || evidence.reconciliation_state || ""
+  );
+  const reconBanner: Record<string, { text: string; className: string }> = {
+    active_broker_position: {
+      text: "Active broker position",
+      className: "border-emerald-500/40 bg-emerald-950/30 text-emerald-300",
+    },
+    broker_availability_conflict: {
+      text: "Broker availability conflict — do not retry exit until explained",
+      className: "border-amber-500/40 bg-amber-950/30 text-amber-300",
+    },
+    broker_flat_historical_order_only: {
+      text: "Broker-flat — historical buy order only (no accepted sell)",
+      className: "border-slate-500/40 bg-slate-900/50 text-slate-300",
+    },
+    local_ghost_candidate: {
+      text: "Local ghost candidate — operator review required",
+      className: "border-red-500/40 bg-red-950/30 text-red-300",
+    },
+  };
+  const banner = reconBanner[reconState];
 
   return (
     <aside className="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-[#0a0f18]/95 border-l border-cyan-500/20 shadow-2xl overflow-y-auto p-4">
@@ -45,9 +67,14 @@ export function HiveBrainDrawer({ node, loading, onClose }: Props) {
         <>
           {node.summary && <p className="text-[11px] text-slate-300 mb-3">{node.summary}</p>}
 
+          {isPosition && banner && (
+            <p className={`text-[10px] font-semibold mb-3 px-2 py-1.5 rounded border ${banner.className}`}>
+              {banner.text}
+            </p>
+          )}
           {isPosition && (
             <section className="mb-4 p-3 rounded-lg border border-cyan-500/30 bg-cyan-950/20">
-              <p className="text-[10px] font-semibold text-cyan-300 mb-2">Broker source proof (required)</p>
+              <p className="text-[10px] font-semibold text-cyan-300 mb-2">Broker reconciliation</p>
               <EvidenceRow label="Source" value={node.source} />
               <EvidenceRow label="Source endpoint" value={node.source_endpoint} />
               <EvidenceRow label="Source table" value={node.source_table} />
