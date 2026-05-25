@@ -30,6 +30,13 @@ from app.services.symbol_tier_service import EngineBoundaryBlocked, SymbolTierSe
 CODE_VERSION_SHA = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "dev")[:12]
 
 
+def _map_broker_rejection_code(error: str) -> str:
+    err = (error or "").lower()
+    if "notional" in err or "minimum" in err or "min order" in err:
+        return "BROKER_REJECTED_MIN_NOTIONAL"
+    return "BROKER_REJECTED"
+
+
 class PaperExecutionService:
     def __init__(self, session: Session, config: Optional[dict] = None):
         self.session = session
@@ -130,7 +137,12 @@ class PaperExecutionService:
                 limit_price=pf.limit_price,
                 quote=pf.quote or quote,
                 portfolio_decision_id=portfolio_decision.id if portfolio_decision else None,
-                gates_failed={"code": pf.block_reason_code, "reason": pf.human_reason, "evidence": pf.evidence},
+                gates_failed={
+                    "code": pf.block_reason_code,
+                    "reason": pf.human_reason,
+                    "evidence": pf.evidence,
+                    "preflight_stage": pf.evidence.get("preflight_stage", "internal_preflight_block"),
+                },
             )
 
         try:
@@ -170,8 +182,11 @@ class PaperExecutionService:
 
         if not result.get("success"):
             pending.status = "paper_order_rejected"
-            pending.reject_reason = result.get("error", "broker_rejected")
-            pending.gates_failed_json = {"broker": result.get("error")}
+            pending.reject_reason = _map_broker_rejection_code(result.get("error", ""))
+            pending.gates_failed_json = {
+                "broker": result.get("error"),
+                "preflight_stage": "broker_rejection",
+            }
             self.session.add(pending)
             CooldownService(self.session, self.config).apply_symbol(
                 cand.symbol, "BROKER_REJECTION", details={"error": pending.reject_reason}

@@ -633,9 +633,11 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         from app.services.fast_training_exit_only_service import FastTrainingExitOnlyService
         from app.services.technical_candle_analysis_service import TechnicalCandleAnalysisService
         from app.services.strategy_import_service import StrategyImportService
+        from app.services.fast_training_exit_diagnostics import build_exit_diagnostic_exports
 
         ft_loop = FastCryptoTrainingLoop(session, cfg_brain)
         exit_only_svc = FastTrainingExitOnlyService(session, cfg_brain)
+        exit_diag = build_exit_diagnostic_exports(session, cfg_brain)
         candle_svc = TechnicalCandleAnalysisService(session, cfg_brain)
         import_svc = StrategyImportService(session, cfg_brain)
         pos_review = OpenPositionReviewService(session, cfg_brain).review_all()
@@ -701,7 +703,12 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
                 "lease": ft_loop.lease.status(),
                 "in_process_loop_supported": False,
             },
-            "fast_training_exit_only_status.json": exit_only_svc.status(),
+            "fast_training_exit_only_status.json": exit_diag.get(
+                "fast_training_exit_only_status.json", exit_only_svc.status()
+            ),
+            "fast_training_exit_decisions.json": exit_diag.get("fast_training_exit_decisions.json", []),
+            "fast_training_exit_orders.json": exit_diag.get("fast_training_exit_orders.json", {}),
+            "preflight_decisions.json": exit_diag.get("preflight_decisions.json", []),
             "candle_lab_status.json": candle_svc.status(),
             "candle_lab_analysis.json": candle_svc.analyze("DOGE/USD", timeframe="5Min"),
             "strategy_import_status.json": import_svc.status(),
@@ -720,12 +727,15 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
                 "training_blockers": ft_loop.status().get("blockers", []),
                 "can_submit_orders": ft_loop.status().get("can_submit_orders", False),
             },
-            "training_outcomes.json": [_serialize_row(r) for r in session.exec(select(PaperExperimentOutcome)).all()],
+            "training_outcomes.json": exit_diag.get(
+                "training_outcomes.json",
+                [_serialize_row(r) for r in session.exec(select(PaperExperimentOutcome)).all()],
+            ),
             "training_memories.json": train_svc.list_training_memories(40),
             "meme_spike_evaluations.json": meme_recent,
             "meme_spike_recent.json": meme_recent,
             "live_lock_tripwire_status.json": live_lock_tripwire_status(cfg_brain),
-            "open_position_reviews.json": pos_review,
+            "open_position_reviews.json": exit_diag.get("open_position_reviews.json", pos_review),
             "stale_position_memories.json": [
                 _lesson_row(r)
                 for r in session.exec(select(LessonNode).where(LessonNode.memory_type == "stale_position_memory").limit(20)).all()

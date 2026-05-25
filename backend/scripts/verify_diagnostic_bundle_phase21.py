@@ -7,6 +7,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 REQUIRED = [
     "fast_training_exit_only_status.json",
+    "fast_training_exit_decisions.json",
+    "fast_training_exit_orders.json",
+    "preflight_decisions.json",
     "meme_spike_v2_status.json",
     "candle_lab_status.json",
     "candle_lab_analysis.json",

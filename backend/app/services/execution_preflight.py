@@ -15,6 +15,13 @@ from app.services.cost_edge_gate import evaluate_cost_edge
 from app.services.cooldown_service import CooldownService
 from app.services.engine_config import cfg_get, current_promotion_stage
 from app.services.kill_switch_service import KillSwitchService
+from app.services.closing_position_preflight import (
+    evaluate_full_position_exit_exemption,
+    notional_from_candidate,
+    qty_within_tolerance,
+    resolve_close_purpose,
+    _broker_position_qty,
+)
 from app.services.portfolio_gate import ApprovedCandidate, _stage_portfolio_value
 
 
@@ -237,12 +244,66 @@ def run_preflight(
     if account and account.cash < equity * (reserve_pct / 100.0) and cand.signal_type == "entry":
         return PreflightResult(False, "RESERVE_CASH_REQUIRED", "Reserve cash not met", evidence)
 
-    notional = cand.position_qty * cand.entry_price
-    min_notional = float(cfg_get(config, "min_order_notional_usd", 1.0))
-    if notional < min_notional:
-        return PreflightResult(False, "BROKER_MINIMUM_NOTIONAL", f"Notional ${notional:.2f}", evidence)
     if cand.position_qty <= 0:
         return PreflightResult(False, "INVALID_QTY", "Quantity invalid", evidence)
+
+    notional = notional_from_candidate(cand, quote)
+    min_notional = float(cfg_get(config, "min_order_notional_usd", 1.0))
+    evidence["notional_usd"] = round(notional, 4)
+    evidence["min_order_notional_usd"] = min_notional
+
+    is_buy = cand.side.lower() == "buy" or cand.signal_type == "entry"
+    is_sell = cand.side.lower() == "sell"
+
+    if is_buy and notional < min_notional:
+        return PreflightResult(
+            False,
+            "ENTRY_MIN_NOTIONAL_BLOCK",
+            f"Entry notional ${notional:.2f} below minimum ${min_notional:.2f}",
+            {**evidence, "preflight_stage": "internal_preflight_block"},
+        )
+
+    if is_sell:
+        exempt, exempt_ev = evaluate_full_position_exit_exemption(
+            session,
+            config,
+            cand=cand,
+            positions=positions,
+            portfolio_decision=portfolio_decision,
+            open_order_symbols=open_order_symbols,
+        )
+        evidence.update(exempt_ev)
+        if exempt:
+            evidence["notional_exemption"] = "EXIT_FULL_POSITION_MIN_NOTIONAL_EXEMPT"
+            evidence["preflight_stage"] = "full_position_exit_exempt"
+        elif notional < min_notional:
+            broker_qty, _ = _broker_position_qty(positions, cand.symbol)
+            partial = (
+                broker_qty is not None
+                and broker_qty > 0
+                and not qty_within_tolerance(cand.position_qty, broker_qty)
+            )
+            if partial:
+                return PreflightResult(
+                    False,
+                    "EXIT_MIN_NOTIONAL_BLOCK",
+                    f"Partial exit notional ${notional:.2f} below minimum ${min_notional:.2f}",
+                    {**evidence, "preflight_stage": "internal_preflight_block"},
+                )
+            fail = exempt_ev.get("fail", "exemption_denied")
+            return PreflightResult(
+                False,
+                "EXIT_MIN_NOTIONAL_BLOCK",
+                f"Exit blocked: {fail}; notional ${notional:.2f}",
+                {**evidence, "preflight_stage": "internal_preflight_block"},
+            )
+    elif notional < min_notional:
+        return PreflightResult(
+            False,
+            "ENTRY_MIN_NOTIONAL_BLOCK",
+            f"Notional ${notional:.2f} below minimum ${min_notional:.2f}",
+            {**evidence, "preflight_stage": "internal_preflight_block"},
+        )
 
     if cand.signal_type == "entry" and account:
         if notional > account.buying_power:

@@ -262,7 +262,7 @@ class TrainingExecutionService:
             ).first()
             if not pos:
                 continue
-            out = self._submit_exit(sym, pos.qty, rev.get("strategy"))
+            out = self._submit_exit(sym, pos.qty, rev.get("strategy"), review=rev)
             exits.append(out)
             self._training_memory_outcome(sym, rev)
         return {
@@ -274,10 +274,26 @@ class TrainingExecutionService:
             "training_mode_enabled": bool(self.pl.cfg.get("mode_enabled")),
         }
 
-    def _submit_exit(self, symbol: str, qty: float, strategy: Optional[str]) -> dict[str, Any]:
+    def _submit_exit(
+        self,
+        symbol: str,
+        qty: float,
+        strategy: Optional[str],
+        *,
+        review: Optional[dict] = None,
+    ) -> dict[str, Any]:
         if not self.pl.cfg.get("mode_enabled"):
             return {"status": "skipped", "reason": "training_disabled"}
+        review = review or {}
+        reason = str(review.get("reason") or "")
+        purpose = "stale_position_exit"
+        if "max_hold" in reason:
+            purpose = "max_hold_exit"
+        elif review.get("action") == "exit_recommended":
+            purpose = "max_hold_exit" if review.get("stale") else "stale_position_exit"
+
         cycle_run_id = f"training-exit-{uuid.uuid4().hex[:10]}"
+        px = float(review.get("current_price") or 0)
         sig = StrategySignal(
             strategy=strategy or "training_exit",
             symbol=symbol,
@@ -292,8 +308,14 @@ class TrainingExecutionService:
             signal_metadata={
                 "training_trade": True,
                 "training_exit": True,
+                "close_existing_position": True,
+                "purpose": purpose,
+                "asset_class": "crypto",
                 "position_qty": qty,
+                "broker_confirmed_qty": qty,
+                "current_price": px,
                 "broker_mode": "paper",
+                "exit_only": True,
             },
         )
         self.session.add(sig)
@@ -315,18 +337,39 @@ class TrainingExecutionService:
         alpaca = AlpacaAdapter(self.session)
         account = alpaca.sync_account()
         positions = alpaca.sync_positions()
+        open_orders = alpaca.get_open_orders() or []
+        open_syms = {str(o.get("symbol") or "") for o in open_orders}
         cand = self.paper.candidate_from_signal(sig, pdec)
         cand.position_qty = qty
+        cand.entry_price = px if px > 0 else cand.entry_price
         log = self.paper.submit_candidate(
             cand,
             cycle_run_id=cycle_run_id,
             portfolio_decision=pdec,
             account=account,
             positions=positions,
-            open_order_symbols=set(),
+            open_order_symbols=open_syms,
             signal_row=sig,
         )
-        return {"symbol": symbol, "status": log.status, "reject_reason": log.reject_reason}
+        stage = "caged_order_submitted"
+        if log.status == "preflight_blocked":
+            stage = "internal_preflight_block"
+        elif log.status == "paper_order_rejected":
+            stage = "broker_rejection"
+        elif log.status in ("paper_order_submitted", "paper_order_filled", "paper_order_partially_filled"):
+            stage = "caged_order_submitted"
+        return {
+            "symbol": symbol,
+            "status": log.status,
+            "reject_reason": log.reject_reason,
+            "broker_order_id": log.broker_order_id,
+            "requested_qty": qty,
+            "purpose": purpose,
+            "execution_path": "TrainingExecutionService→PaperExecutionService",
+            "preflight_stage": stage,
+            "gates_failed": log.gates_failed_json,
+            "gates_passed": log.gates_passed_json,
+        }
 
     def run_training_cycle(self) -> dict[str, Any]:
         pf = self.preflight_training()
