@@ -5,7 +5,13 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[3]
+SCAN_ROOTS = (
+    REPO_ROOT / "backend" / "app",
+    REPO_ROOT / "backend" / "scripts",
+    REPO_ROOT / "src",
+)
+SKIP_DIR_NAMES = frozenset({"node_modules", ".next", "__pycache__", ".git", "venv", ".venv", "dist", "build"})
 
 ALLOWED_PATH_PARTS = (
     "/tests/",
@@ -33,18 +39,31 @@ FORBIDDEN_PATTERNS = [
 ]
 
 
+def _iter_scan_files():
+    exts = {".py", ".tsx", ".ts"}
+    root_resolved = REPO_ROOT.resolve()
+    for scan_root in SCAN_ROOTS:
+        if not scan_root.is_dir():
+            continue
+        for path in scan_root.rglob("*"):
+            if not path.is_file() or path.suffix not in exts:
+                continue
+            if any(part in SKIP_DIR_NAMES for part in path.parts):
+                continue
+            try:
+                path.resolve().relative_to(root_resolved)
+            except ValueError:
+                continue
+            yield path
+
+
 def scan_repository() -> dict:
     violations: list[dict] = []
-    exts = {".py", ".tsx", ".ts"}
-    for path in ROOT.rglob("*"):
-        if not path.is_file() or path.suffix not in exts:
-            continue
-        rel = str(path.relative_to(ROOT)).replace("\\", "/")
-        if "node_modules" in rel or ".next" in rel or "__pycache__" in rel:
-            continue
+    for path in _iter_scan_files():
+        rel = str(path.relative_to(REPO_ROOT)).replace("\\", "/")
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
+        except OSError:
             continue
         if "DOGE" not in text.upper():
             continue

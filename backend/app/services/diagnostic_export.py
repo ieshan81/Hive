@@ -704,6 +704,29 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         }
     except Exception as exc:
         strategy_registry_exports = {"strategy_registry_error.json": {"error": str(exc)}}
+        try:
+            from app.services.hive_brain_graph_service import HiveBrainGraphService
+            from app.services.position_hold_time_service import audit_all_open_positions
+            from app.services.open_position_review_service import OpenPositionReviewService
+            from app.services.hardcoded_symbol_scan import scan_repository as hardcoded_scan
+
+            cfg_fb = ConfigManager(session).get_current()
+            brain_graph = HiveBrainGraphService(session, cfg_fb).build_full()
+            strategy_registry_exports.update(
+                {
+                    "hive_brain_graph.json": brain_graph,
+                    "hive_brain_clusters.json": brain_graph.get("clusters", []),
+                    "hive_brain_edges.json": brain_graph.get("edges", [])[:100],
+                    "hive_brain_legend.json": brain_graph.get("legend", []),
+                    "hive_brain_shape_legend.json": brain_graph.get("shape_legend", []),
+                    "hive_brain_layout_meta.json": brain_graph.get("meta", {}),
+                    "true_hold_time_audit.json": audit_all_open_positions(session),
+                    "hardcoded_symbol_scan.json": {"status": "scan_error", "error": str(exc)},
+                    "open_position_reviews.json": OpenPositionReviewService(session, cfg_fb).review_all(),
+                }
+            )
+        except Exception as brain_exc:
+            strategy_registry_exports["hive_brain_export_error.json"] = {"error": str(brain_exc)}
 
     brain_exports = strategy_registry_exports if "hive_brain_graph.json" in strategy_registry_exports else {}
 
