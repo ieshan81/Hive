@@ -28,24 +28,27 @@ export function normalizeArrayResponse<T>(
   return [];
 }
 
-export function normalizeMemoryGraph(response: unknown): MemoryGraphResponse {
+export function normalizeMemoryGraph(response: unknown): MemoryGraphResponse & { meta?: Record<string, unknown> } {
   if (!response || typeof response !== "object") {
     return { nodes: [], edges: [] };
   }
   const obj = response as Record<string, unknown>;
   const nodes = normalizeArrayResponse<MemoryGraphResponse["nodes"][0]>(obj, ["nodes"]);
   const edges = normalizeArrayResponse<MemoryGraphResponse["edges"][0]>(obj, ["edges"]);
+  const meta = obj.meta && typeof obj.meta === "object" ? (obj.meta as Record<string, unknown>) : undefined;
   if (Array.isArray(obj.nodes) && Array.isArray(obj.edges)) {
     return {
       status: typeof obj.status === "string" ? obj.status : undefined,
       nodes: obj.nodes as MemoryGraphResponse["nodes"],
       edges: obj.edges as MemoryGraphResponse["edges"],
+      meta,
     };
   }
   return {
     status: typeof obj.status === "string" ? obj.status : undefined,
     nodes: nodes.length ? nodes : (Array.isArray(obj.nodes) ? (obj.nodes as MemoryGraphResponse["nodes"]) : []),
     edges: edges.length ? edges : (Array.isArray(obj.edges) ? (obj.edges as MemoryGraphResponse["edges"]) : []),
+    meta,
   };
 }
 

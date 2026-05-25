@@ -480,7 +480,41 @@ class LessonMemoryService:
                         }
                     )
 
-        return {"nodes": nodes, "edges": edges_out}
+        active_trading = sum(
+            1 for r in all_rows if r.category == CATEGORY_TRADING and r.status == "active" and r.visible_in_graph
+        )
+        active_research = sum(
+            1
+            for r in all_rows
+            if r.category in ("strategy_research_memory", "backtest_memory", "walk_forward_memory")
+            and r.status == "active"
+        )
+        active_system = sum(
+            1 for r in all_rows if r.category == CATEGORY_SYSTEM and r.status == "active"
+        )
+        archived_or_deleted = sum(1 for r in all_rows if r.status in ("archived", "deleted"))
+        empty_reason = None
+        if not lessons:
+            if archived_or_deleted:
+                empty_reason = f"No active memories in this filter. {archived_or_deleted} archived/deleted hidden."
+            elif active_trading == 0 and active_research == 0:
+                empty_reason = "No active trading or research memories. Run Research Lab or complete paper cycles."
+            else:
+                empty_reason = "No memories match current filter."
+
+        return {
+            "status": "ok",
+            "nodes": nodes,
+            "edges": edges_out,
+            "meta": {
+                "active_trading_memories": active_trading,
+                "active_research_memories": active_research,
+                "active_system_issues": active_system,
+                "archived_or_deleted": archived_or_deleted,
+                "filters_applied": category or ("default_trading_only" if graph_default else "all"),
+                "empty_reason": empty_reason,
+            },
+        }
 
     def _layout_positions(self, n: int) -> list[tuple[float, float]]:
         if n <= 0:

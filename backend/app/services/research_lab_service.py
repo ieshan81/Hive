@@ -67,14 +67,17 @@ class ResearchLabService:
 
     def run_research_batch(self, body: dict) -> dict[str, Any]:
         """Run Research Lab Now — no broker orders."""
-        if self.rcfg.get("auto_backtest_skip_if_paper_position_open"):
+        if (
+            self.rcfg.get("auto_backtest_skip_if_paper_position_open")
+            and not body.get("force")
+        ):
             open_pos = self.session.exec(
                 select(PositionSnapshot).where(PositionSnapshot.qty > 0)
             ).all()
             if open_pos:
                 return {
                     "status": "skipped",
-                    "message": "Open paper position — research batch skipped per config",
+                    "message": "Open paper position — pass force=true to run anyway",
                 }
 
         families = body.get("strategy_families") or self.rcfg.get("auto_backtest_families") or [
@@ -100,12 +103,46 @@ class ResearchLabService:
         return out
 
     def batch_backtest(self, body: dict) -> dict[str, Any]:
-        strategy_id = body.get("strategy_id", "crypto_push_pull")
-        symbols = body.get("symbols") or ["BTC/USD"]
+        from app.services.strategy_library import resolve_strategy_id
+
+        family = body.get("strategy_family") or body.get("strategy_id", "crypto_push_pull_momentum")
+        strategy_id = resolve_strategy_id(family)
+        symbols = body.get("symbols") or ["DOGE/USD", "BTC/USD", "ETH/USD"]
+        timeframe = body.get("timeframe", "1h")
+        lookback_days = int(body.get("lookback_days", 90))
+
+        hist = HistoricalDataService(self.session, self.config)
+        fetch_errors = []
+        for sym in symbols:
+            fr = hist.fetch_and_store(sym, timeframe=timeframe if timeframe != "1h" else "1Hour", limit=min(500, lookback_days * 24))
+            if fr.get("status") != "ok":
+                fetch_errors.append(f"{sym}: {fr.get('message')}")
+
         strat = get_strategy(self.session, strategy_id)
         grid = body.get("parameter_grid") or (strat.parameters_json if strat else {})
         sweep = ParameterSweepEngine(self.session, self.config)
-        return sweep.sweep(strategy_id, symbols, grid)
+        out = sweep.sweep(strategy_id, symbols, grid)
+        out["fetch_errors"] = fetch_errors
+        out["strategy_id"] = strategy_id
+        return out
+
+    def fetch_historical_data(self, body: dict) -> dict[str, Any]:
+        symbols = body.get("symbols") or ["DOGE/USD", "BTC/USD", "ETH/USD"]
+        timeframes = body.get("timeframes") or ["1h"]
+        lookback_days = int(body.get("lookback_days", 90))
+        limit = min(1000, max(50, lookback_days * 24))
+        hist = HistoricalDataService(self.session, self.config)
+        results = []
+        errors = []
+        tf_map = {"1h": "1Hour", "4h": "4Hour", "1d": "1Day"}
+        for sym in symbols:
+            for tf in timeframes:
+                alpaca_tf = tf_map.get(tf, tf)
+                r = hist.fetch_and_store(sym, timeframe=alpaca_tf, limit=limit)
+                results.append(r)
+                if r.get("status") != "ok":
+                    errors.append({"symbol": sym, "timeframe": tf, "message": r.get("message")})
+        return {"status": "ok", "results": results, "errors": errors, "coverage": hist.list_coverage()}
 
     def run_walk_forward(self, body: dict) -> dict[str, Any]:
         strategy_id = body.get("strategy_id", "crypto_push_pull")

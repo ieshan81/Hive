@@ -647,6 +647,15 @@ class WalkForwardResult(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class PositionEnrichedState(SQLModel, table=True):
+    """Persisted enriched position state after backfill."""
+
+    __tablename__ = "position_enriched_states"
+    broker_symbol: str = Field(primary_key=True)
+    state_json: dict = Field(sa_column=Column(JSON))
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class StrategyCandidate(SQLModel, table=True):
     __tablename__ = "strategy_candidates"
     id: Optional[int] = Field(default=None, primary_key=True)

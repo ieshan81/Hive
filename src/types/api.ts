@@ -61,10 +61,16 @@ export interface Position {
 
 export interface PositionState {
   symbol: string;
+  broker_symbol?: string;
+  display_symbol?: string;
   signal_id?: number;
-  order_id?: string;
+  order_id?: number | string;
   cycle_run_id?: string;
   strategy?: string;
+  strategy_name?: string;
+  stop_loss?: number;
+  take_profit?: number;
+  entry_reason?: string;
   fee_adjusted_qty?: number;
   fee_qty?: number;
   fee_pct?: number;

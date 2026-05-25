@@ -169,6 +169,18 @@ export default function PositionsPage() {
                     {s.fee_adjusted_qty != null && (
                       <span className="text-slate-500 ml-2">adj qty {s.fee_adjusted_qty}</span>
                     )}
+                    {s.strategy_name != null && s.strategy_name !== "" && (
+                      <span className="text-violet-300 ml-2">{String(s.strategy_name)}</span>
+                    )}
+                    {s.stop_loss != null && (
+                      <span className="text-slate-500 ml-2">SL {Number(s.stop_loss).toFixed(6)}</span>
+                    )}
+                    {s.take_profit != null && (
+                      <span className="text-slate-500 ml-2">TP {Number(s.take_profit).toFixed(6)}</span>
+                    )}
+                    {s.signal_id != null && (
+                      <span className="text-slate-600 ml-2">sig {s.signal_id}</span>
+                    )}
                     {s.cycle_run_id && (
                       <p className="text-slate-600 font-mono truncate mt-0.5">{s.cycle_run_id}</p>
                     )}

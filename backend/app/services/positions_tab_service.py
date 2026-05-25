@@ -61,48 +61,9 @@ def current_positions(session: Session) -> list[dict[str, Any]]:
 
 
 def position_states(session: Session) -> list[dict[str, Any]]:
-    positions = current_positions(session)
-    out = []
-    for pos in positions:
-        sym = pos["symbol"]
-        el = session.exec(
-            select(ExecutionLog)
-            .where(ExecutionLog.symbol == sym)
-            .order_by(ExecutionLog.created_at.desc())
-        ).first()
-        sig = session.exec(
-            select(StrategySignal)
-            .where(StrategySignal.symbol == sym)
-            .order_by(StrategySignal.created_at.desc())
-        ).first()
-        fee_lesson = session.exec(
-            select(LessonNode).where(
-                LessonNode.symbol.in_([sym, sym.replace("USD", "/USD")]),
-                LessonNode.memory_type == "fee_lesson",
-            ).limit(1)
-        ).first()
-        ev = (fee_lesson.evidence_json or {}) if fee_lesson else {}
-        filled = ev.get("filled_qty")
-        broker_qty = ev.get("broker_position_qty") or pos["qty"]
-        fee_qty = (float(filled) - float(broker_qty)) if filled and broker_qty else None
-        fee_pct = ev.get("difference_pct")
-        out.append(
-            {
-                "symbol": sym,
-                "signal_id": sig.id if sig else (el.signal_id if el else None),
-                "order_id": el.broker_order_id if el else None,
-                "cycle_run_id": el.cycle_run_id if el else None,
-                "strategy": sig.strategy if sig else None,
-                "entry_reason": (sig.signal_metadata or {}).get("reason") if sig else None,
-                "invalidation_reason": None,
-                "fee_adjusted_qty": broker_qty,
-                "fee_qty": fee_qty,
-                "fee_pct": fee_pct,
-                "last_monitored_at": pos.get("opened_at"),
-                "broker_qty": pos["qty"],
-            }
-        )
-    return out
+    from app.services.position_state_service import get_enriched_states
+
+    return get_enriched_states(session)
 
 
 def trades_history(session: Session, limit: int = 50) -> list[dict[str, Any]]:

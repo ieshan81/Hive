@@ -648,6 +648,15 @@ def positions_state(session: Session = Depends(get_session)):
     return {"status": "ok", "count": len(rows), "states": rows}
 
 
+@router.post("/positions/state/backfill")
+def positions_state_backfill(session: Session = Depends(get_session)):
+    from app.services.position_state_service import backfill_position_states
+
+    out = backfill_position_states(session)
+    session.commit()
+    return out
+
+
 @router.get("/trades/history")
 def trades_history(limit: int = 50, session: Session = Depends(get_session)):
     from app.services.positions_tab_service import trades_history as th
@@ -883,8 +892,34 @@ def lab_promising(session: Session = Depends(get_session)):
 
 
 @router.get("/lab/leaderboard")
+@router.get("/lab/strategy-leaderboard")
 def lab_leaderboard(session: Session = Depends(get_session)):
     return {"status": "ok", "leaderboard": ResearchLabService(session).leaderboard()}
+
+
+@router.post("/lab/strategies/seed")
+def lab_strategies_seed(session: Session = Depends(get_session)):
+    n = ResearchLabService(session).ensure_library()
+    from app.services.strategy_library import seed_strategy_library
+
+    count = seed_strategy_library(session, force_update=True)
+    session.commit()
+    return {"status": "ok", "seeded": count, "total": n}
+
+
+@router.get("/lab/strategy-definitions")
+def lab_strategy_definitions(session: Session = Depends(get_session)):
+    from app.services.strategy_library import list_strategies
+
+    ResearchLabService(session).ensure_library()
+    return {"status": "ok", "strategies": list_strategies(session)}
+
+
+@router.post("/lab/data/fetch")
+def lab_data_fetch(body: dict = Body(default={}), session: Session = Depends(get_session)):
+    out = ResearchLabService(session).fetch_historical_data(body)
+    session.commit()
+    return out
 
 
 @router.get("/lab/historical-coverage")
@@ -928,7 +963,30 @@ def lab_memory(limit: int = 50, session: Session = Depends(get_session)):
 
 @router.post("/memory/import/legacy-ai-bundle")
 def memory_import_legacy(body: dict = Body(default={}), session: Session = Depends(get_session)):
-    return ResearchLabService(session).import_legacy_bundle(body)
+    out = ResearchLabService(session).import_legacy_bundle(body)
+    session.commit()
+    return out
+
+
+@router.post("/memory/reclassify/system-bugs")
+def memory_reclassify_system_bugs(session: Session = Depends(get_session)):
+    from app.services.config_manager import ConfigManager
+    from app.services.lesson_memory_service import LessonMemoryService
+    from app.services.memory_categories import CATEGORY_SYSTEM, SYSTEM_TYPES
+    from app.database import LessonNode
+    from sqlmodel import select
+
+    config = ConfigManager(session).get_current()
+    svc = LessonMemoryService(session, config)
+    rows = session.exec(select(LessonNode)).all()
+    n = 0
+    for r in rows:
+        if r.memory_type in SYSTEM_TYPES or "bug" in (r.memory_type or "") or "reconciliation" in (r.title or "").lower():
+            svc.set_category(r.id, CATEGORY_SYSTEM)
+            svc.set_visibility(r.id, visible_to_ai=False, visible_in_graph=False, can_influence_ranking=False)
+            n += 1
+    session.commit()
+    return {"status": "ok", "reclassified": n}
 
 
 @router.post("/sync/alpaca")

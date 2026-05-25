@@ -8,7 +8,11 @@ from sqlmodel import Session, select
 
 from app.database import LessonNode, ResearchBacktestRun, StrategyCandidate
 from app.services.lesson_memory_service import LessonMemoryService
-from app.services.memory_categories import CATEGORY_BACKTEST, CATEGORY_RESEARCH, CATEGORY_WALK_FORWARD
+from app.services.memory_categories import (
+    CATEGORY_BACKTEST,
+    CATEGORY_RESEARCH,
+    CATEGORY_WALK_FORWARD,
+)
 
 
 class ResearchMemoryService:

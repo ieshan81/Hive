@@ -126,11 +126,28 @@ def _run_trend_following(
     return returns, warnings
 
 
+def _run_crypto_push_pull_momentum(bars, symbol, params, config):
+    p = dict(params)
+    if "momentum_lookback_hours" in p and "lookback_bars" not in p:
+        hours = p["momentum_lookback_hours"]
+        if isinstance(hours, list):
+            hours = hours[0] if hours else 1
+        p["lookback_bars"] = max(1, int(hours))
+    if "momentum_threshold_1h" not in p:
+        cpp = config.get("crypto_push_pull") or {}
+        p["momentum_threshold_1h"] = cpp.get("momentum_threshold_1h", 0.004)
+    return _run_crypto_push_pull(bars, symbol, p, config)
+
+
 STRATEGY_RUNNERS = {
     "crypto_push_pull": _run_crypto_push_pull,
+    "crypto_push_pull_momentum": _run_crypto_push_pull_momentum,
     "mean_reversion": _run_mean_reversion,
+    "crypto_mean_reversion": _run_mean_reversion,
     "volatility_breakout": _run_volatility_breakout,
+    "crypto_volatility_breakout": _run_volatility_breakout,
     "trend_following": _run_trend_following,
+    "crypto_trend_following": _run_trend_following,
 }
 
 

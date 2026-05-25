@@ -17,6 +17,7 @@ const CY = 50;
 type CategoryFilter =
   | "all"
   | "trading_memory"
+  | "research_memory"
   | "strategy_research_memory"
   | "backtest_memory"
   | "symbol_pattern"
@@ -75,6 +76,7 @@ export function HiveMemoryGraphPanel({
   const [filter, setFilter] = useState<CategoryFilter>(categoryFilter);
   const [archived, setArchived] = useState(showArchived);
   const [hoverId, setHoverId] = useState<string | null>(null);
+  const [graphMeta, setGraphMeta] = useState<Record<string, unknown> | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -91,6 +93,8 @@ export function HiveMemoryGraphPanel({
     if (result.ok && result.data) {
       const graph = normalizeMemoryGraph(result.data);
       setRawNodes(graph.nodes);
+      const gm = (result.data as Record<string, unknown>).meta;
+      setGraphMeta(gm && typeof gm === "object" ? (gm as Record<string, unknown>) : null);
       setMeta({
         source: "live_api",
         lastUpdated: new Date().toISOString(),
@@ -99,6 +103,7 @@ export function HiveMemoryGraphPanel({
       });
     } else {
       setRawNodes([]);
+      setGraphMeta(null);
       setMeta({
         source: "empty",
         lastUpdated: new Date().toISOString(),
@@ -139,7 +144,7 @@ export function HiveMemoryGraphPanel({
   const filters: { id: CategoryFilter; label: string }[] = [
     { id: "all", label: "All" },
     { id: "trading_memory", label: "Trading" },
-    { id: "strategy_research_memory", label: "Research" },
+    { id: "research_memory", label: "Research" },
     { id: "backtest_memory", label: "Backtests" },
     { id: "symbol_pattern", label: "Patterns" },
     { id: "system_issue", label: "System" },
@@ -149,6 +154,7 @@ export function HiveMemoryGraphPanel({
 
   const showError = !loading && meta.error;
   const showEmpty = !loading && !meta.error && positioned.length === 0;
+  const emptyReason = graphMeta?.empty_reason as string | undefined;
 
   return (
     <>
@@ -195,7 +201,19 @@ export function HiveMemoryGraphPanel({
             expectedShape='{ status?: "ok", nodes: [...], edges: [...] }'
           />
         ) : showEmpty ? (
-          <EmptyState message="No memories in this filter" className="min-h-[200px]" />
+          <div className="min-h-[200px] flex flex-col items-center justify-center text-center px-4">
+            <EmptyState
+              message={emptyReason || "No active memories in this filter."}
+              className="min-h-0"
+            />
+            {graphMeta && (
+              <p className="text-[10px] text-slate-500 mt-2">
+                Trading: {String(graphMeta.active_trading_memories ?? 0)} · Research:{" "}
+                {String(graphMeta.active_research_memories ?? 0)} · Hidden archived/deleted:{" "}
+                {String(graphMeta.archived_or_deleted ?? 0)}
+              </p>
+            )}
+          </div>
         ) : (
           <>
             <figure

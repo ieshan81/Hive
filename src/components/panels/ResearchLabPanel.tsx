@@ -22,8 +22,10 @@ export function ResearchLabPanel() {
   const [rejected, setRejected] = useState<Record<string, unknown>[]>([]);
   const [memories, setMemories] = useState<Record<string, unknown>[]>([]);
   const [strategies, setStrategies] = useState<Record<string, unknown>[]>([]);
+  const [strategyDefs, setStrategyDefs] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [lastAction, setLastAction] = useState<string | null>(null);
   const [meta, setMeta] = useState<PanelLoadMeta>({ source: "empty", lastUpdated: new Date().toISOString() });
 
   const [strategyId, setStrategyId] = useState("crypto_push_pull");
@@ -31,14 +33,15 @@ export function ResearchLabPanel() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [st, cov, r, lb, rej, mem, strat] = await Promise.all([
+    const [st, cov, r, lb, rej, mem, strat, defs] = await Promise.all([
       apiGet<LabStatus>("/api/lab/status"),
       apiGet<{ coverage?: Record<string, unknown>[] }>("/api/lab/historical-coverage"),
       apiGet<{ runs?: Record<string, unknown>[] }>("/api/lab/backtest/runs"),
-      apiGet<{ leaderboard?: Record<string, unknown>[] }>("/api/lab/leaderboard"),
+      apiGet<{ leaderboard?: Record<string, unknown>[] }>("/api/lab/strategy-leaderboard"),
       apiGet<{ rejected?: Record<string, unknown>[] }>("/api/lab/rejected-strategies"),
       apiGet<{ memories?: Record<string, unknown>[] }>("/api/lab/research-memories"),
       apiGet<{ strategies?: Record<string, unknown>[] }>("/api/lab/strategies"),
+      apiGet<{ strategies?: Record<string, unknown>[] }>("/api/lab/strategy-definitions"),
     ]);
     if (st.ok) setStatus(st.data as LabStatus);
     setCoverage(cov.data?.coverage || []);
@@ -47,6 +50,7 @@ export function ResearchLabPanel() {
     setRejected(rej.data?.rejected || []);
     setMemories(mem.data?.memories || []);
     setStrategies(strat.data?.strategies || []);
+    setStrategyDefs(defs.data?.strategies || strat.data?.strategies || []);
     setMeta({
       source: st.ok ? "live_api" : "empty",
       lastUpdated: new Date().toISOString(),
@@ -73,20 +77,44 @@ export function ResearchLabPanel() {
 
   async function runBatch() {
     setBusy(true);
-    await apiPost("/api/lab/backtest/batch-run", {
-      strategy_id: strategyId,
+    const res = await apiPost("/api/lab/backtest/batch-run", {
+      strategy_family: strategyId,
       symbols: symbols.split(",").map((s) => s.trim()).filter(Boolean),
+      timeframe: "1h",
+      lookback_days: 90,
     });
+    setLastAction(res.ok ? "Batch sweep completed" : res.error || "batch failed");
     await load();
     setBusy(false);
   }
 
   async function runResearchNow() {
     setBusy(true);
-    await apiPost("/api/lab/research/run", {
+    const res = await apiPost("/api/lab/research/run", {
       strategy_families: [strategyId],
       symbols: symbols.split(",").map((s) => s.trim()).filter(Boolean),
+      force: true,
     });
+    setLastAction(res.data ? JSON.stringify(res.data).slice(0, 120) : res.error || "done");
+    await load();
+    setBusy(false);
+  }
+
+  async function fetchData() {
+    setBusy(true);
+    await apiPost("/api/lab/data/fetch", {
+      symbols: symbols.split(",").map((s) => s.trim()).filter(Boolean),
+      timeframes: ["1h"],
+      lookback_days: 90,
+    });
+    await apiPost("/api/lab/strategies/seed", {});
+    await load();
+    setBusy(false);
+  }
+
+  async function seedStrategies() {
+    setBusy(true);
+    await apiPost("/api/lab/strategies/seed", {});
     await load();
     setBusy(false);
   }
@@ -122,6 +150,31 @@ export function ResearchLabPanel() {
       {meta.error && (
         <PanelError title="Lab API failed" meta={meta} expectedShape="{ status, backtest_run_count }" />
       )}
+
+      {runs.length === 0 && !loading && (
+        <p className="text-sm text-amber-400/90 border border-amber-500/20 rounded-lg px-3 py-2">
+          No research runs yet — fetch Alpaca bars, then Run Batch Backtest or Run Research Lab Now.
+        </p>
+      )}
+      {lastAction && <p className="text-[10px] text-slate-500 font-mono">{lastAction}</p>}
+
+      <GlassPanel title="Strategy definitions">
+        <ul className="text-[10px] text-slate-400 max-h-24 overflow-y-auto space-y-0.5">
+          {strategyDefs.map((s) => (
+            <li key={String(s.strategy_id)}>
+              <span className="text-violet-300">{String(s.strategy_id)}</span> — {String(s.strategy_name)}
+            </li>
+          ))}
+          {!strategyDefs.length && <li>No definitions — click Seed strategies</li>}
+        </ul>
+        <button
+          type="button"
+          onClick={seedStrategies}
+          className="mt-2 text-[10px] text-hive-cyan border border-hive-cyan/30 rounded px-2 py-1"
+        >
+          Seed strategies
+        </button>
+      </GlassPanel>
 
       <GlassPanel title="Research controls (no trading orders)">
         <p className="text-[10px] text-slate-500 mb-3">
@@ -177,6 +230,14 @@ export function ResearchLabPanel() {
             className="px-3 py-1.5 rounded border border-indigo-500/40 text-indigo-300 text-xs"
           >
             Walk-forward
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={fetchData}
+            className="px-3 py-1.5 rounded border border-white/10 text-slate-300 text-xs"
+          >
+            Fetch historical data
           </button>
           <button
             type="button"

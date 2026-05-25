@@ -6,7 +6,8 @@ from typing import Optional
 
 # Top-level categories
 CATEGORY_TRADING = "trading_memory"
-CATEGORY_RESEARCH = "strategy_research_memory"
+CATEGORY_RESEARCH = "research_memory"
+CATEGORY_STRATEGY = "strategy_memory"
 CATEGORY_BACKTEST = "backtest_memory"
 CATEGORY_WALK_FORWARD = "walk_forward_memory"
 CATEGORY_SYMBOL_PATTERN = "symbol_pattern"
