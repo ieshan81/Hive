@@ -181,8 +181,6 @@ def build_dashboard(session: Session) -> dict[str, Any]:
         deferred_early = [d for d in portfolio_decs_early if d.portfolio_status == "portfolio_deferred"]
         approved_no_order_early = [s for s in signals_early if s.status == "approved_no_order"]
         if last_cycle.get("orders_submitted", 0) > 0:
-            from app.database import ExecutionLog
-
             filled = session.exec(
                 select(ExecutionLog)
                 .where(

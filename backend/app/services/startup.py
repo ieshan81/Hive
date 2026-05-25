@@ -17,5 +17,10 @@ def bootstrap_database() -> None:
         from app.services.memory_reclassify import reclassify_existing_lessons
 
         n = reclassify_existing_lessons(session)
+        from app.services.strategy_promotion_seed import seed_promotion_rules
+
+        seed_promotion_rules(session)
         if n:
+            session.commit()
+        else:
             session.commit()

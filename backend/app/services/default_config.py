@@ -225,6 +225,14 @@ DEFAULT_CONFIG = {
         "promotion_max_drawdown_pct": 25.0,
         "low_sample_trade_threshold": 10,
     },
+    "strategy_promotion": {
+        "profile": "micro_account_safe",
+        "eligibility_earliest_days": 7,
+        "eligibility_latest_days": 14,
+        "min_valid_observations": 5,
+        "max_open_positions_micro": 3,
+        "max_meme_positions": 1,
+    },
     "memory_weights": {
         "confirmation_bonus": 0.1,
         "failure_penalty": 0.15,

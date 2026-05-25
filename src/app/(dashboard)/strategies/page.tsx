@@ -1,7 +1,5 @@
-import { getDashboardData } from "@/lib/dashboard";
-import { StrategyLabPanel } from "@/components/panels/StrategyLabPanel";
+import { StrategyRegistryPanel } from "@/components/panels/StrategyRegistryPanel";
 
-export default async function StrategiesPage() {
-  const data = await getDashboardData();
-  return <StrategyLabPanel strategies={data.strategies} />;
+export default function StrategiesPage() {
+  return <StrategyRegistryPanel />;
 }

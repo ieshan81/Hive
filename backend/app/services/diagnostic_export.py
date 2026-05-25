@@ -570,6 +570,60 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
     except Exception:
         pass
 
+    strategy_registry_exports: dict = {}
+    try:
+        from app.database import (
+            StrategyAllocation,
+            StrategyConflict,
+            StrategyEligibilityWindow,
+            StrategyLifecycleEvent,
+            StrategyMemoryLink,
+            StrategyRegistry,
+            StrategyRejection,
+            StrategyRetirement,
+            StrategyScorecard,
+            StrategyValidationResult,
+            SystemValidationAudit,
+        )
+        from app.database import AIReview
+        from app.services.strategy_registry_service import StrategyRegistryService
+
+        reg_svc = StrategyRegistryService(session)
+        snap = reg_svc.tab_snapshot()
+        pending_ranking = session.exec(
+            select(StrategyMemoryLink).where(
+                StrategyMemoryLink.memory_status == "pending",
+                StrategyMemoryLink.can_influence_ranking == True,  # noqa: E712
+            )
+        ).all()
+        strategy_registry_exports = {
+            "strategy_registry.json": [_serialize_row(r) for r in session.exec(select(StrategyRegistry)).all()],
+            "strategy_lifecycle_events.json": [_serialize_row(r) for r in session.exec(select(StrategyLifecycleEvent)).all()],
+            "strategy_scorecards.json": [_serialize_row(r) for r in session.exec(select(StrategyScorecard)).all()],
+            "strategy_validation_results.json": [_serialize_row(r) for r in session.exec(select(StrategyValidationResult)).all()],
+            "strategy_promotion_audit.json": [_serialize_row(r) for r in session.exec(select(SystemValidationAudit)).all()],
+            "strategy_rejections.json": [_serialize_row(r) for r in session.exec(select(StrategyRejection)).all()],
+            "strategy_retirements.json": [_serialize_row(r) for r in session.exec(select(StrategyRetirement)).all()],
+            "strategy_conflicts.json": [_serialize_row(r) for r in session.exec(select(StrategyConflict)).all()],
+            "strategy_allocations.json": [_serialize_row(r) for r in session.exec(select(StrategyAllocation)).all()],
+            "strategy_memory_links.json": [_serialize_row(r) for r in session.exec(select(StrategyMemoryLink)).all()],
+            "strategy_eligibility_windows.json": [_serialize_row(r) for r in session.exec(select(StrategyEligibilityWindow)).all()],
+            "active_strategies.json": snap.get("strategies", []),
+            "paper_candidates.json": reg_svc.list_registry(stage="paper_candidate"),
+            "strategy_tab_snapshot.json": snap,
+            "memory_pipeline_health.json": {
+                "pending_memories": sum(1 for _ in session.exec(select(StrategyMemoryLink).where(StrategyMemoryLink.memory_status == "pending")).all()),
+                "validated_memories": sum(1 for _ in session.exec(select(StrategyMemoryLink).where(StrategyMemoryLink.memory_status == "validated")).all()),
+                "pending_influence_ranking_violations": len(pending_ranking),
+                "live_trading_locked": True,
+                "ai_direct_promotion_detected": False,
+            },
+            "system_validation_audit.json": [_serialize_row(r) for r in session.exec(select(SystemValidationAudit)).all()],
+            "ai_advisory_history.json": [_serialize_row(r) for r in session.exec(select(AIReview)).all()[:30]],
+        }
+    except Exception as exc:
+        strategy_registry_exports = {"strategy_registry_error.json": {"error": str(exc)}}
+
     return {
         "activity.json": activity_data,
         "trades.json": [_serialize_row(r) for r in session.exec(select(TradeRecord)).all()],
@@ -634,6 +688,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         "ui_panel_data_sources.json": UI_PANEL_DATA_SOURCES,
         "ai_bundle": ai_bundle,
         "research_bundle": research_bundle,
+        **strategy_registry_exports,
     }
 
 

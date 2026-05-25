@@ -663,6 +663,236 @@ class PositionEnrichedState(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+# --- Strategy Promotion Pipeline / Living Registry ---
+
+class StrategyRegistry(SQLModel, table=True):
+    __tablename__ = "strategy_registry"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    strategy_id: str = Field(index=True, unique=True)
+    name: str
+    family: str = Field(index=True)
+    version: str = "1.0.0"
+    code_hash: Optional[str] = None
+    asset_class: str = "crypto"
+    symbols: list = Field(default_factory=list, sa_column=Column(JSON))
+    timeframe: str = "1h"
+    author_type: str = "built_in"
+    parameter_schema_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    active_parameters_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    current_stage: str = Field(default="research_only", index=True)
+    previous_stage: Optional[str] = None
+    current_score: Optional[float] = None
+    confidence: str = "low"
+    risk_tier: str = "micro_safe"
+    allowed_capital_usd: Optional[float] = None
+    allowed_risk_pct: Optional[float] = None
+    can_trade_paper: bool = False
+    can_trade_live: bool = False
+    live_locked: bool = True
+    quarantine_status: Optional[str] = None
+    data_quality_score: Optional[float] = None
+    cost_sensitivity_score: Optional[float] = None
+    overfit_risk_score: Optional[float] = None
+    latest_backtest_run_id: Optional[str] = None
+    latest_walk_forward_id: Optional[str] = None
+    latest_paper_performance_id: Optional[str] = None
+    latest_rejection_id: Optional[str] = None
+    latest_validation_id: Optional[str] = None
+    memory_count: int = 0
+    validated_memory_count: int = 0
+    pending_memory_count: int = 0
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    last_reviewed_at: Optional[datetime] = None
+
+
+class StrategyLifecycleEvent(SQLModel, table=True):
+    __tablename__ = "strategy_lifecycle_events"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    strategy_id: str = Field(index=True)
+    from_stage: str
+    to_stage: str
+    reason_code: str
+    reason_text: str
+    evidence_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    decided_by: str = "validation_gate"
+    ai_advisory_payload_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class StrategyValidationResult(SQLModel, table=True):
+    __tablename__ = "strategy_validation_results"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    strategy_id: str = Field(index=True)
+    gate_name: str
+    target_stage: str
+    passed: bool
+    metrics_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    thresholds_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    failure_reasons_json: Optional[list] = Field(default=None, sa_column=Column(JSON))
+    warning_reasons_json: Optional[list] = Field(default=None, sa_column=Column(JSON))
+    data_freshness_ok: bool = False
+    sample_size_ok: bool = False
+    cost_realism_ok: bool = False
+    risk_ok: bool = False
+    broker_ok: bool = False
+    reconciliation_ok: bool = False
+    memory_ok: bool = False
+    portfolio_ok: bool = False
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class StrategyScorecard(SQLModel, table=True):
+    __tablename__ = "strategy_scorecards"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    strategy_id: str = Field(index=True)
+    as_of: datetime = Field(default_factory=datetime.utcnow)
+    expectancy_net: Optional[float] = None
+    profit_factor_net: Optional[float] = None
+    sharpe: Optional[float] = None
+    sortino: Optional[float] = None
+    psr: Optional[float] = None
+    dsr: Optional[float] = None
+    max_drawdown: Optional[float] = None
+    win_rate: Optional[float] = None
+    sample_size: Optional[int] = None
+    walk_forward_pass_rate: Optional[float] = None
+    cost_to_edge_ratio: Optional[float] = None
+    cost_drag_pct: Optional[float] = None
+    paper_perf_30d: Optional[float] = None
+    live_perf_30d: Optional[float] = None
+    correlation_to_active_book: Optional[float] = None
+    regime_fit_score: Optional[float] = None
+    degradation_30d: Optional[float] = None
+    memory_evidence_score: Optional[float] = None
+    composite_score: Optional[float] = None
+    confidence: str = "low"
+    recommended_action: str = "hold"
+    promote_allowed: bool = False
+    rejection_reason: Optional[str] = None
+    data_warning: Optional[str] = None
+    parameter_variation_warning: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class StrategyPromotionRule(SQLModel, table=True):
+    __tablename__ = "strategy_promotion_rules"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    profile: str = Field(default="micro_account_safe", index=True)
+    rule_key: str
+    threshold_value_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    weight: float = 1.0
+    asset_class: Optional[str] = None
+    strategy_family: Optional[str] = None
+    stage_from: str
+    stage_to: str
+    enabled: bool = True
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class StrategyRejection(SQLModel, table=True):
+    __tablename__ = "strategy_rejections"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    strategy_id: str = Field(index=True)
+    gate_name: str
+    failure_codes_json: list = Field(default_factory=list, sa_column=Column(JSON))
+    permanent: bool = False
+    allow_retry_after: Optional[datetime] = None
+    rationale: str
+    evidence_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class StrategyRetirement(SQLModel, table=True):
+    __tablename__ = "strategy_retirements"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    strategy_id: str = Field(index=True)
+    trigger_code: str
+    performance_snapshot_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    rationale: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class StrategyMemoryLink(SQLModel, table=True):
+    __tablename__ = "strategy_memory_links"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    strategy_id: str = Field(index=True)
+    memory_id: int = Field(index=True)
+    memory_type: str
+    memory_status: str = Field(default="pending", index=True)
+    visible_to_ai: bool = True
+    can_influence_ranking: bool = False
+    validator_rule: Optional[str] = None
+    validation_evidence_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    validated_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class StrategyConflict(SQLModel, table=True):
+    __tablename__ = "strategy_conflicts"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    winner_strategy_id: Optional[str] = None
+    loser_strategy_id: Optional[str] = None
+    symbol: str
+    side: str
+    signal_timestamp: Optional[datetime] = None
+    resolution: str
+    evidence_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class StrategyAllocation(SQLModel, table=True):
+    __tablename__ = "strategy_allocations"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    strategy_id: str = Field(index=True)
+    as_of: datetime = Field(default_factory=datetime.utcnow)
+    risk_budget_pct: Optional[float] = None
+    max_position_usd: Optional[float] = None
+    max_open_positions: int = 1
+    kelly_fraction: Optional[float] = None
+    daily_entry_limit: int = 3
+    strategy_entry_limit: int = 1
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class StrategyEligibilityWindow(SQLModel, table=True):
+    __tablename__ = "strategy_eligibility_windows"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    strategy_id: str = Field(index=True)
+    stage: str = "live_candidate"
+    eligibility_start_at_utc: datetime
+    earliest_promote_at_utc: datetime
+    latest_decision_at_utc: datetime
+    valid_observation_count: int = 0
+    soft_warning_count: int = 0
+    hard_block_reason: Optional[str] = None
+    eligibility_health: str = "clean"
+    eligibility_window_version: int = 1
+    material_config_changed: bool = False
+    maintenance_pass: bool = False
+    capacity_pass: bool = False
+    correlation_pass: bool = False
+    decision: Optional[str] = None
+    decision_reason: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    closed_at: Optional[datetime] = None
+
+
+class SystemValidationAudit(SQLModel, table=True):
+    __tablename__ = "system_validation_audit"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    actor: str = "gate"
+    action: str
+    target_strategy_id: Optional[str] = None
+    inputs_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    decision: str
+    reasoning: Optional[str] = None
+    deterministic_seed: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class StrategyCandidate(SQLModel, table=True):
     __tablename__ = "strategy_candidates"
     id: Optional[int] = Field(default=None, primary_key=True)
