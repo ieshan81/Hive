@@ -100,6 +100,11 @@ def strategies_imported(session: Session = Depends(get_session)):
     }
 
 
+@router.get("/import/status")
+def strategies_import_status(session: Session = Depends(get_session)):
+    from app.services.strategy_import_service import StrategyImportService
+
+    return StrategyImportService(session).status()
 
 
 @router.get("/{strategy_id}")
