@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { apiGet } from "@/lib/apiClient";
-import { friendlyClassification } from "@/lib/labels";
+
+const DEFAULT_PLAIN =
+  "The bot found possible paper trades, but Training Mode is OFF — it cannot place orders.";
 
 type BannerData = {
   liveTradingLocked?: boolean;
@@ -12,7 +14,6 @@ type BannerData = {
   brokerTruth?: string;
   paperBroker?: boolean;
   plainMessage?: string;
-  brokerReconciliation?: string;
 };
 
 export function SafetyBanner() {
@@ -20,23 +21,20 @@ export function SafetyBanner() {
 
   useEffect(() => {
     (async () => {
-      const [dash, ft, lock] = await Promise.all([
+      const [dash, lock] = await Promise.all([
         apiGet<Record<string, unknown>>("/api/dashboard"),
-        apiGet<Record<string, unknown>>("/api/fast-training/status"),
         apiGet<Record<string, unknown>>("/api/settings/live-lock-tripwire"),
       ]);
       const banner = (dash.data as { safetyBanner?: BannerData })?.safetyBanner;
-      const br = ft.data?.broker_reconciliation as Record<string, unknown> | undefined;
       setData({
-        ...banner,
-        liveTradingLocked: lock.data?.live_lock_status === "locked",
-        paperBroker: Boolean(lock.data?.paper_broker),
-        brokerReconciliation: br?.classification
-          ? friendlyClassification(String(br.classification))
-          : undefined,
-        plainMessage:
-          String(ft.data?.plain_message || banner?.plainMessage || "") ||
-          "The bot cannot place new paper orders until Training Mode is enabled.",
+        liveTradingLocked:
+          lock.data?.live_lock_status === "locked" || Boolean(banner?.liveTradingLocked),
+        trainingMode: banner?.trainingMode ?? "OFF",
+        botCanPlaceOrders: banner?.botCanPlaceOrders ?? "NO",
+        openPositions: banner?.openPositions ?? 0,
+        brokerTruth: banner?.brokerTruth ?? "—",
+        paperBroker: Boolean(lock.data?.paper_broker ?? banner?.paperBroker),
+        plainMessage: banner?.plainMessage || DEFAULT_PLAIN,
       });
     })();
   }, []);
@@ -53,9 +51,6 @@ export function SafetyBanner() {
         <span>Broker Truth: {data.brokerTruth ?? "—"}</span>
         <span>Paper broker: {data.paperBroker ? "yes" : "no"}</span>
       </div>
-      {data.brokerReconciliation && (
-        <p className="mt-1 text-amber-400/90">{data.brokerReconciliation}</p>
-      )}
       <p className="mt-1 text-slate-400">{data.plainMessage}</p>
     </div>
   );

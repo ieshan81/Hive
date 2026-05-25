@@ -15,6 +15,7 @@ interface TopStatusBarProps {
 }
 
 function ChipIcon({ label }: { label: string }) {
+  if (label.includes("Stocks") || label.includes("Crypto")) return <Activity className="h-3.5 w-3.5" />;
   if (label.includes("Market")) return <Activity className="h-3.5 w-3.5" />;
   if (label.includes("AI")) return <Brain className="h-3.5 w-3.5" />;
   if (label.includes("Risk")) return <Shield className="h-3.5 w-3.5" />;

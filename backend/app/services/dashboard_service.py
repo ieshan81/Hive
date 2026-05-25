@@ -45,6 +45,24 @@ def _empty_state(message: str) -> dict[str, Any]:
     return {"status": "empty", "message": message}
 
 
+def _market_status_chips(session_state) -> list[dict[str, Any]]:
+    if not session_state.calendar_available:
+        us_value = "Calendar unavailable"
+        us_variant = "neutral"
+    else:
+        us_value = "OPEN" if session_state.stock_trading_allowed else "CLOSED"
+        us_variant = "success" if session_state.stock_trading_allowed else "neutral"
+    crypto_value = "OPEN" if session_state.crypto_trading_allowed else "CLOSED"
+    return [
+        {"label": "U.S. Stocks", "value": us_value, "variant": us_variant},
+        {
+            "label": "Crypto",
+            "value": crypto_value,
+            "variant": "success" if session_state.crypto_trading_allowed else "neutral",
+        },
+    ]
+
+
 def _cycle_decision_stats(session: Session, cycle_id: str | None, memory: MemoryEngine) -> dict[str, int]:
     if not cycle_id:
         return {
@@ -359,6 +377,8 @@ def build_dashboard(session: Session) -> dict[str, Any]:
         "crypto_push_pull": "Crypto Push-Pull",
     }
     strategies = []
+    from app.services.session_engine import CRYPTO_STRATEGIES, STOCK_STRATEGIES
+
     for s in states:
         closed = session.exec(
             select(TradeRecord).where(TradeRecord.strategy == s.strategy, TradeRecord.status == "closed")
@@ -366,16 +386,29 @@ def build_dashboard(session: Session) -> dict[str, Any]:
         perf = None
         if closed:
             perf = sum(t.return_pct or 0 for t in closed) * 100
+        status = s.status.replace("_", " ").title() if s.status else "Inactive"
+        message = s.status_reason or ("No trades yet" if perf is None else None)
+        if s.strategy in STOCK_STRATEGIES and not session_state.stock_trading_allowed:
+            status = "Paused"
+            if not session_state.calendar_available:
+                message = "U.S. stock market: calendar unavailable — stock strategies paused."
+            elif session_state.us_stock_close_reason:
+                message = f"U.S. stock market is closed ({session_state.us_stock_close_reason})."
+            else:
+                message = "U.S. stock market is closed — stock strategies paused."
+        elif s.strategy in CRYPTO_STRATEGIES and not session_state.crypto_trading_allowed:
+            status = "Paused"
+            message = "Crypto session unavailable."
         strategies.append(
             {
                 "id": s.strategy,
                 "name": display_names.get(s.strategy, s.strategy),
-                "status": s.status.replace("_", " ").title() if s.status else "Inactive",
+                "status": status,
                 "performance7d": perf,
                 "confidence": s.confidence,
                 "exposure": s.exposure_pct,
                 "sparkline": [],
-                "message": s.status_reason or ("No trades yet" if perf is None else None),
+                "message": message,
             }
         )
     if not strategies:
@@ -575,16 +608,7 @@ def build_dashboard(session: Session) -> dict[str, Any]:
             "liveTradingEnabled": False,
         },
         "statusChips": [
-            {
-                "label": "Market Status",
-                "value": session_state.us_stock_session.upper(),
-                "variant": "success" if session_state.stock_trading_allowed else "neutral",
-            },
-            {
-                "label": "Session Mode",
-                "value": session_state.mode.upper().replace("_", " "),
-                "variant": "info",
-            },
+            *_market_status_chips(session_state),
             {
                 "label": "AI Mode",
                 "value": "LEARNING" if health.gemini_configured else "OFFLINE",
@@ -716,7 +740,7 @@ def _safety_banner(session: Session, config: dict, paper_status: dict) -> dict:
         "brokerTruth": broker_truth,
         "paperBroker": trip.get("paper_broker", True),
         "plainMessage": ft.get("plain_message")
-        or "The bot cannot place new paper orders until Training Mode is enabled.",
+        or "The bot found possible paper trades, but Training Mode is OFF — it cannot place orders.",
     }
 
 

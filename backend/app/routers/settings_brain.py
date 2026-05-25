@@ -71,7 +71,7 @@ def resync_broker_truth(session: Session = Depends(get_session)):
     return {
         **out,
         "broker_truth_resync": True,
-        "message": "Broker positions re-synced. DOGE confirmed history only."
+        "message": "Broker positions re-synced. Historical records preserved; no open broker conflicts."
         if doge.get("classification") == "BROKER_FLAT_WITH_HISTORICAL_BUY_ONLY"
         else "Broker positions re-synced.",
         "changed": False,

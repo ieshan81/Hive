@@ -29,8 +29,10 @@ def order_summary(session: Session) -> dict[str, Any]:
     last_msg = "No orders yet."
     if rejected_logs:
         last = rejected_logs[-1]
-        sym = last.symbol or "?"
-        last_msg = f"Last attempt for {sym} was rejected — not filled at broker."
+        if last.status == "preflight_blocked":
+            last_msg = "Last order attempt was blocked by safety check before broker."
+        else:
+            last_msg = "Last order attempt was rejected — not filled at broker."
 
     return {
         "orders_attempted": attempted,

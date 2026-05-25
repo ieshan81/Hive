@@ -47,14 +47,24 @@ export function SettingsBrainMaintenance() {
 
   return (
     <section className="space-y-4 max-w-2xl">
+      <p className="text-xs text-slate-400 leading-relaxed">
+        Settings are grouped by risk. Read-only checks never place trades. Paper training and exit-only
+        only affect the Alpaca paper account. Live trading stays locked unless you deliberately change
+        production secrets (not available here).
+      </p>
+
       <OperatorAuthPanel />
 
       <GlassPanel title="Read-only status checks" icon={<Shield className="h-4 w-4" />}>
+        <p className="text-[10px] text-slate-500 mb-2">
+          These buttons only refresh status or re-sync broker truth. They do not enable training and do not
+          place orders.
+        </p>
         <ul className="text-[11px] text-slate-300 space-y-1">
           <li>Live trading: {liveLocked ? "LOCKED" : "CHECK"}</li>
           <li>Paper broker: {tripwire?.paper_broker ? "yes" : "no"}</li>
           <li>Tripwire: {tripOk ? "secure" : "needs review"}</li>
-          <li>Server operator proxy: {proxy ? "configured" : "not configured"}</li>
+          <li>Server operator proxy: {proxy ? "configured" : "not configured — set OPERATOR_SECRET on frontend service"}</li>
         </ul>
         <button
           type="button"
@@ -66,8 +76,26 @@ export function SettingsBrainMaintenance() {
       </GlassPanel>
 
       <GlassPanel title="Paper training controls" icon={<Brain className="h-4 w-4" />}>
-        <p className="text-[10px] text-slate-500 mb-2">Requires operator authorization.</p>
+        <p className="text-[10px] text-slate-500 mb-2">
+          Paper training lets the bot place Alpaca paper orders only (not live money). Requires operator
+          authorization. Use Run Once on the Fast Training page for a single controlled cycle — no background
+          loop on Railway.
+        </p>
         <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              act(
+                "/api/fast-training/enable",
+                "Enable training",
+                "Enable Training Mode? The bot may place paper orders when you run once. Live trading stays locked."
+              )
+            }
+            className="text-[10px] border border-hive-cyan/30 text-hive-cyan rounded px-2 py-1"
+          >
+            Enable paper training
+          </button>
           <button
             type="button"
             disabled={busy}
@@ -82,6 +110,10 @@ export function SettingsBrainMaintenance() {
       </GlassPanel>
 
       <GlassPanel title="Exit-only controls">
+        <p className="text-[10px] text-slate-500 mb-2">
+          Exit-only can close existing paper positions only. It cannot open new buys. Requires operator
+          authorization and confirmation.
+        </p>
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
@@ -101,6 +133,10 @@ export function SettingsBrainMaintenance() {
       </GlassPanel>
 
       <GlassPanel title="Brain maintenance">
+        <p className="text-[10px] text-slate-500 mb-2">
+          Memory consolidation and graph rebuild update learning data only. They do not submit broker
+          orders.
+        </p>
         <div className="flex flex-wrap gap-2">
           {[
             ["/api/settings/clear-ui-cache", "Clear UI cache", undefined],
@@ -122,7 +158,10 @@ export function SettingsBrainMaintenance() {
       </GlassPanel>
 
       <GlassPanel title="Danger zone">
-        <p className="text-[10px] text-amber-400/90 mb-2">These change stored rows — confirmation required.</p>
+        <p className="text-[10px] text-amber-400/90 mb-2">
+          These change stored database rows. Operator authorization and confirmation are required. They do
+          not enable live trading.
+        </p>
         <button
           type="button"
           disabled={busy}

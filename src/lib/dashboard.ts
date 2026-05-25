@@ -13,7 +13,8 @@ function emptyDashboard(message: string): DashboardData {
       liveTradingEnabled: false,
     },
     statusChips: [
-      { label: "Market Status", value: "UNKNOWN", variant: "neutral" },
+      { label: "U.S. Stocks", value: "Calendar unavailable", variant: "neutral" },
+      { label: "Crypto", value: "OPEN", variant: "success" },
       { label: "AI Mode", value: "OFFLINE", variant: "neutral" },
       { label: "Risk Mode", value: "SURVIVAL", variant: "info" },
     ],

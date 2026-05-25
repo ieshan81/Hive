@@ -9,7 +9,7 @@ export const LABELS = {
   paper_order_rejected: "Paper order rejected",
   marketable_limit_ioc: "Instant market-price limit order",
   BROKER_FLAT_WITH_HISTORICAL_BUY_ONLY:
-    "Broker holds no DOGE. Old DOGE buy is history only.",
+    "Broker is flat; an old buy exists in history only (not an open position).",
   ghost_position: "Local record mismatch",
   training_mode_disabled: "Training Mode is OFF",
   fast_training_loop_disabled: "Fast training loop is off (Railway uses run-once only)",
@@ -17,7 +17,9 @@ export const LABELS = {
 
 export function friendlyClassification(code: string | undefined | null): string {
   if (!code) return "Unknown";
-  if (code === "BROKER_FLAT_WITH_HISTORICAL_BUY_ONLY") return LABELS.BROKER_FLAT_WITH_HISTORICAL_BUY_ONLY;
+  if (code === "BROKER_FLAT_WITH_HISTORICAL_BUY_ONLY") {
+    return LABELS.BROKER_FLAT_WITH_HISTORICAL_BUY_ONLY;
+  }
   return code.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
 }
 
