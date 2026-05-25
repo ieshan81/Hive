@@ -87,6 +87,21 @@ def get_allocations(session: Session = Depends(get_session)):
     }
 
 
+@router.get("/imported")
+def strategies_imported(session: Session = Depends(get_session)):
+    from app.services.strategy_import_service import StrategyImportService
+
+    strategies = StrategyImportService(session).list_imported()
+    return {
+        "status": "ok",
+        "imported_count": len(strategies),
+        "strategies": strategies,
+        "message": "No strategies imported yet." if not strategies else f"{len(strategies)} imported strateg(ies).",
+    }
+
+
+
+
 @router.get("/{strategy_id}")
 def get_strategy(strategy_id: str, session: Session = Depends(get_session)):
     row = StrategyRegistryService(session).get(strategy_id)
@@ -275,19 +290,6 @@ def pause_experiment(strategy_id: str, body: dict = Body(default={}), session: S
     return out
 
 
-@router.get("/imported")
-def strategies_imported(session: Session = Depends(get_session)):
-    from app.services.strategy_import_service import StrategyImportService
-
-    strategies = StrategyImportService(session).list_imported()
-    return {
-        "status": "ok",
-        "imported_count": len(strategies),
-        "strategies": strategies,
-        "message": "No strategies imported yet." if not strategies else f"{len(strategies)} imported strateg(ies).",
-    }
-
-
 @router.post("/import")
 def strategies_import(
     body: dict = Body(default={}),
@@ -308,8 +310,3 @@ def strategies_import(
     return out
 
 
-@router.get("/import/status")
-def strategies_import_status(session: Session = Depends(get_session)):
-    from app.services.strategy_import_service import StrategyImportService
-
-    return StrategyImportService(session).status()
