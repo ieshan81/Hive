@@ -629,6 +629,9 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         cons_svc = MemoryConsolidationService(session, cfg_brain)
         ai_svc = AILearningMemoryService(session, cfg_brain)
         train_svc = TrainingExecutionService(session, cfg_brain)
+        from app.services.fast_crypto_training_loop import FastCryptoTrainingLoop
+
+        ft_loop = FastCryptoTrainingLoop(session, cfg_brain)
         pos_review = OpenPositionReviewService(session, cfg_brain).review_all()
         meme_recent = MemeVolatilitySpikeDetector(session, cfg_brain).recent(15)
         from app.services.strategy_memory_validation_service import StrategyMemoryValidationService
@@ -685,7 +688,13 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             ],
             "training_orders.json": [_serialize_row(r) for r in session.exec(select(OrderRecord)).all()],
             "training_open_positions.json": train_svc.open_training_positions(),
-            "training_exit_monitor.json": {"status": "skipped", "training_mode_enabled": bool(pl.cfg.get("mode_enabled")), "message": "Run monitor-exits when training enabled"},
+            "training_exit_monitor.json": train_svc.monitor_exits(),
+            "fast_training_status.json": ft_loop.status(),
+            "fast_training_loop_status.json": {
+                "loop": ft_loop.status(),
+                "lease": ft_loop.lease.status(),
+                "in_process_loop_supported": False,
+            },
             "training_outcomes.json": [_serialize_row(r) for r in session.exec(select(PaperExperimentOutcome)).all()],
             "training_memories.json": train_svc.list_training_memories(40),
             "meme_spike_evaluations.json": meme_recent,

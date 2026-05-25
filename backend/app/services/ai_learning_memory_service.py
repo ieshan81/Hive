@@ -13,7 +13,9 @@ from app.services.memory_categories import (
     CATEGORY_AI_LEARNING,
     MEMORY_LEVEL_CORE,
     MEMORY_LEVEL_CONSOLIDATED,
+    OUTCOME_SOURCE_MEMORY_TYPES,
     RESEARCH_MEMORY_TYPES,
+    TRAINING_MEMORY_TYPES,
 )
 
 
@@ -103,8 +105,89 @@ class AILearningMemoryService:
         created += self._from_rejected_strategies()
         created += self._from_consolidated()
         created += self._from_research_links()
+        created += self._from_outcome_memories()
         self.session.flush()
         return {"status": "ok", "created": created, "total_ai": len(self.list_ai_learning(100))}
+
+    def learning_directives(self, limit: int = 8) -> dict[str, list[str]]:
+        """AI Fund Manager payload: learned / avoid / test next."""
+        learned: list[str] = []
+        avoid: list[str] = []
+        test_next: list[str] = []
+        rows = self.list_ai_learning(limit * 3)
+        for row in rows:
+            title = str(row.get("title") or "")
+            summary = str(row.get("summary") or "")[:200]
+            line = f"{title}: {summary}" if summary else title
+            mt = row.get("memory_type") or ""
+            if mt in ("stale_position_memory",) or "reject" in title.lower() or "block" in title.lower():
+                avoid.append(line)
+            elif mt in TRAINING_MEMORY_TYPES or "test" in title.lower() or "experiment" in title.lower():
+                test_next.append(line)
+            else:
+                learned.append(line)
+        return {
+            "what_i_learned": learned[:limit],
+            "what_i_will_avoid": avoid[:limit],
+            "what_i_will_test_next": test_next[:limit],
+        }
+
+    def _from_outcome_memories(self) -> int:
+        n = 0
+        for src in self.session.exec(
+            select(LessonNode).where(
+                LessonNode.status == "active",
+                LessonNode.memory_type.in_(list(OUTCOME_SOURCE_MEMORY_TYPES)),
+            ).limit(40)
+        ).all():
+            pk = f"core_ai|outcome|{src.memory_type}|{src.id}"
+            if self.session.exec(select(LessonNode).where(LessonNode.pattern_key == pk)).first():
+                continue
+            title = f"Core lesson: {src.title[:60]}"
+            avoid = src.memory_type in (
+                "stale_position_memory",
+                "training_blocked_memory",
+                "fast_training_blocked_memory",
+                "meme_spike_block_memory",
+            )
+            row = self.lessons.upsert_lesson(
+                memory_type="core_ai_lesson",
+                title=title,
+                summary=src.summary[:500],
+                detailed_lesson=src.detailed_lesson[:900] if src.detailed_lesson else src.summary[:900],
+                strategy_name=src.strategy_name,
+                symbol=src.symbol,
+                source="ai_learning_outcome",
+                pattern_key=pk,
+                category=CATEGORY_AI_LEARNING,
+                can_influence_ranking=False,
+                visible_to_ai=True,
+                visible_in_graph=True,
+            )
+            row.memory_level = MEMORY_LEVEL_CORE
+            row.importance_score = 0.88 if avoid else 0.72
+            row.source_memory_ids_json = [src.id]
+            row.evidence_json = {"source_memory_id": src.id, "source_memory_type": src.memory_type}
+            row.system_validation_status = "validated"
+            row.system_validator_rule = "outcome_to_core_ai_lesson"
+            self.session.add(row)
+            self._link_core_to_source(row, src)
+            n += 1
+        return n
+
+    def _link_core_to_source(self, core: LessonNode, source: LessonNode) -> None:
+        from app.database import MemoryEdge
+
+        self.session.add(
+            MemoryEdge(
+                source_id=f"lesson-{source.id}",
+                target_id=f"lesson-{core.id}",
+                relation="converted_into_core_lesson",
+                weight=0.85,
+                evidence_count=source.occurrence_count,
+                lesson_id=core.id,
+            )
+        )
 
     def _from_rejected_strategies(self) -> int:
         n = 0

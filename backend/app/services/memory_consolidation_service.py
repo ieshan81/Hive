@@ -15,6 +15,7 @@ from app.services.memory_categories import (
     CATEGORY_RESEARCH,
     MEMORY_LEVEL_CONSOLIDATED,
     MEMORY_LEVEL_RAW,
+    OUTCOME_SOURCE_MEMORY_TYPES,
     RESEARCH_MEMORY_TYPES,
 )
 from app.services.memory_policy import ensure_memory_policy_row, load_memory_policy
@@ -115,8 +116,21 @@ class MemoryConsolidationService:
                 reasoning=f"created={created} archived={archived}",
             )
         )
+        ai_created = 0
+        try:
+            from app.services.ai_learning_memory_service import AILearningMemoryService
+
+            ai_created = AILearningMemoryService(self.session, self.config).generate(force=force).get("created", 0)
+        except Exception:
+            pass
         self.session.flush()
-        return {"status": "ok", "consolidated_created": created, "raw_archived": archived, **self.status()}
+        return {
+            "status": "ok",
+            "consolidated_created": created,
+            "raw_archived": archived,
+            "core_ai_promoted": ai_created,
+            **self.status(),
+        }
 
     def _group_raw(self, rows: list[LessonNode]) -> dict[str, list[LessonNode]]:
         groups: dict[str, list[LessonNode]] = defaultdict(list)
@@ -213,6 +227,11 @@ class MemoryConsolidationService:
             r.is_consolidated = True
             r.consolidated_into_memory_id = consolidated_id
             r.retention_until = until
+            r.evidence_json = {
+                **(r.evidence_json or {}),
+                "archived_as_duplicate_of": consolidated_id,
+                "evidence_preserved": True,
+            }
             n += 1
             self.session.add(r)
         return n

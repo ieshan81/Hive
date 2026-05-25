@@ -62,6 +62,9 @@ export interface AIFundManagerData {
   approvalStatus: string;
   approvalMessage: string;
   aiReviewFreshness?: string;
+  whatILearned?: string[];
+  whatIWillAvoid?: string[];
+  whatIWillTestNext?: string[];
   stats: {
     decisionsToday: number;
     approved: number;

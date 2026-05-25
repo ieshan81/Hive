@@ -232,13 +232,26 @@ class HiveBrainGraphService:
         if not show_raw:
             q = q.where(
                 LessonNode.memory_level.in_(
-                    ("consolidated_lesson", "core_ai_lesson", "pattern_memory", "raw_experience")
+                    ("core_ai_lesson", "consolidated_lesson", "pattern_memory")
                 )
             )
-        rows = list(self.session.exec(q.order_by(LessonNode.importance_score.desc()).limit(120)).all())
+        rows = list(self.session.exec(q.order_by(LessonNode.importance_score.desc()).limit(150)).all())
         if not show_raw:
-            prioritized = [r for r in rows if r.memory_level != MEMORY_LEVEL_RAW]
-            raw_sample = [r for r in rows if r.memory_level == MEMORY_LEVEL_RAW][:5]
+
+            def _rank(lesson: LessonNode) -> tuple:
+                level_score = {
+                    MEMORY_LEVEL_CORE: 3,
+                    MEMORY_LEVEL_CONSOLIDATED: 2,
+                    "pattern_memory": 1,
+                }.get(lesson.memory_level or "", 0)
+                return (level_score, lesson.importance_score or 0, lesson.strength or 0)
+
+            prioritized = sorted(
+                [r for r in rows if r.memory_level != MEMORY_LEVEL_RAW],
+                key=_rank,
+                reverse=True,
+            )
+            raw_sample = [r for r in rows if r.memory_level == MEMORY_LEVEL_RAW][:3]
             return prioritized + raw_sample
         return rows
 

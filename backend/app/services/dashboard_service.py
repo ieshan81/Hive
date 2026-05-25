@@ -209,6 +209,10 @@ def build_dashboard(session: Session) -> dict[str, Any]:
                 f"e.g. {deferred_early[0].portfolio_reason_code}"
             )
 
+    from app.services.ai_learning_memory_service import AILearningMemoryService
+
+    ai_learning_payload = AILearningMemoryService(session, config).learning_directives()
+
     # AI Fund Manager
     latest_review: AIReview | None = ai.get_latest_review()
     blocked_count = len(session.exec(select(BlockedTrade)).all())
@@ -228,6 +232,9 @@ def build_dashboard(session: Session) -> dict[str, Any]:
             "memoryUsedPct": None,
             "approvalStatus": "PENDING",
             "approvalMessage": "Waiting for AI configuration",
+            "whatILearned": ai_learning_payload.get("what_i_learned", []),
+            "whatIWillAvoid": ai_learning_payload.get("what_i_will_avoid", []),
+            "whatIWillTestNext": ai_learning_payload.get("what_i_will_test_next", []),
             "stats": {
                 "decisionsToday": 0,
                 "approved": approved_count,
@@ -311,8 +318,22 @@ def build_dashboard(session: Session) -> dict[str, Any]:
                 "approvalStatus": "CYCLE_TRUTH",
                 "approvalMessage": truth_message if cycle_id else "Review complete — AI does not approve trades",
                 "aiReviewFreshness": "latest",
+                "whatILearned": ai_learning_payload.get("what_i_learned", []),
+                "whatIWillAvoid": ai_learning_payload.get("what_i_will_avoid", []),
+                "whatIWillTestNext": ai_learning_payload.get("what_i_will_test_next", []),
                 "stats": _cycle_decision_stats(session, cycle_id, memory),
             }
+
+    for key in ("whatILearned", "whatIWillAvoid", "whatIWillTestNext"):
+        if key not in ai_fund_manager:
+            ai_fund_manager[key] = ai_learning_payload.get(
+                {
+                    "whatILearned": "what_i_learned",
+                    "whatIWillAvoid": "what_i_will_avoid",
+                    "whatIWillTestNext": "what_i_will_test_next",
+                }[key],
+                [],
+            )
 
     # Memory graph
     nodes = memory.memory_graph_nodes()

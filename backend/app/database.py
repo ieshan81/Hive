@@ -981,6 +981,18 @@ class PaperExperimentOutcome(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class FastTrainingLease(SQLModel, table=True):
+    """Singleton-style lease row to prevent overlapping fast-training runs."""
+
+    __tablename__ = "fast_training_leases"
+    lease_key: str = Field(primary_key=True, default="fast_training_run")
+    holder_id: Optional[str] = None
+    acquired_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    last_completed_at: Optional[datetime] = None
+    last_result_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+
+
 class SystemValidationAudit(SQLModel, table=True):
     __tablename__ = "system_validation_audit"
     id: Optional[int] = Field(default=None, primary_key=True)

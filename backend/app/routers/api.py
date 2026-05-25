@@ -335,9 +335,15 @@ def memory_hive_mind(session: Session = Depends(get_session)):
     if latest_review and (latest_review.review_status or "").lower() in ("skipped", "skip"):
         freshness = "skipped"
         skip_reason = (latest_review.payload or {}).get("skip_reason", "rate_or_daily_limit")
+    from app.services.ai_learning_memory_service import AILearningMemoryService
+
+    learning = AILearningMemoryService(session, config).learning_directives()
     return {
         "status": "ok",
         **svc.hive_mind_summary(),
+        "what_i_learned": learning.get("what_i_learned", []),
+        "what_i_will_avoid": learning.get("what_i_will_avoid", []),
+        "what_i_will_test_next": learning.get("what_i_will_test_next", []),
         "ai_review_freshness": {
             "latest_cycle_run_id": latest_cid,
             "review_cycle_run_id": review_cid,

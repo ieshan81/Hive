@@ -38,10 +38,23 @@ TRAINING_MEMORY_TYPES = frozenset(
         "training_entry_memory",
         "training_outcome_memory",
         "training_blocked_memory",
+        "fast_training_blocked_memory",
         "experiment_entry_memory",
         "experiment_outcome_memory",
         "experiment_blocked_memory",
         "stale_position_memory",
+        "meme_spike_block_memory",
+    }
+)
+
+OUTCOME_SOURCE_MEMORY_TYPES = frozenset(
+    {
+        "stale_position_memory",
+        "training_blocked_memory",
+        "training_outcome_memory",
+        "fast_training_blocked_memory",
+        "meme_spike_block_memory",
+        "open_position_monitor",
     }
 )
 
