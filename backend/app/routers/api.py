@@ -287,19 +287,28 @@ def memory_graph(
     severity: str | None = None,
     include_archived: bool = False,
     graph_default: bool = True,
+    brain: bool = True,
+    show_raw: bool = False,
+    expand_cluster: str | None = None,
     session: Session = Depends(get_session),
 ):
     from app.services.config_manager import ConfigManager
+    from app.services.hive_brain_graph_service import HiveBrainGraphService
     from app.services.lesson_memory_service import LessonMemoryService
 
     config = ConfigManager(session).get_current()
-    graph = LessonMemoryService(session, config).build_graph(
-        category=category,
-        graph_filter=graph_filter,
-        severity=severity,
-        include_archived=include_archived,
-        graph_default=graph_default,
-    )
+    if brain and graph_default and not category and not graph_filter:
+        graph = HiveBrainGraphService(session, config).build(
+            show_raw=show_raw, expand_cluster=expand_cluster
+        )
+    else:
+        graph = LessonMemoryService(session, config).build_graph(
+            category=category,
+            graph_filter=graph_filter,
+            severity=severity,
+            include_archived=include_archived,
+            graph_default=graph_default,
+        )
     return {"status": "ok", **graph}
 
 

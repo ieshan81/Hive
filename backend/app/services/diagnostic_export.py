@@ -602,9 +602,23 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         snap = reg_svc.tab_snapshot()
         pl = AggressivePaperLearningService(session)
         elig = pl.scan_experiment_eligibility()
-        graph = LessonMemoryService(session, ConfigManager(session).get_current()).build_graph(
-            graph_default=True, limit=80
-        )
+        cfg_brain = ConfigManager(session).get_current()
+        from app.services.hive_brain_graph_service import HiveBrainGraphService
+        from app.services.training_execution_service import TrainingExecutionService
+        from app.services.open_position_review_service import OpenPositionReviewService
+        from app.services.meme_volatility_spike_detector import MemeVolatilitySpikeDetector
+        from app.services.memory_consolidation_service import MemoryConsolidationService
+        from app.services.ai_learning_memory_service import AILearningMemoryService
+        from app.services.live_lock_tripwire import live_lock_tripwire_status
+        from app.services.memory_policy import load_memory_policy
+
+        brain_graph = HiveBrainGraphService(session, cfg_brain).build()
+        graph = brain_graph
+        cons_svc = MemoryConsolidationService(session, cfg_brain)
+        ai_svc = AILearningMemoryService(session, cfg_brain)
+        train_svc = TrainingExecutionService(session, cfg_brain)
+        pos_review = OpenPositionReviewService(session, cfg_brain).review_all()
+        meme_recent = MemeVolatilitySpikeDetector(session, cfg_brain).recent(15)
         from app.services.strategy_memory_validation_service import StrategyMemoryValidationService
 
         StrategyMemoryValidationService(session, ConfigManager(session).get_current()).sync_link_status_to_lessons()
@@ -639,9 +653,41 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             "memory_pipeline_health.json": mph,
             "system_validation_audit.json": [_serialize_row(r) for r in session.exec(select(SystemValidationAudit)).all()],
             "ai_advisory_history.json": [_serialize_row(r) for r in session.exec(select(AIReview)).all()[:30]],
+            "memory_consolidation_status.json": cons_svc.status(),
+            "consolidated_memories.json": cons_svc.list_consolidated(50),
+            "core_ai_learning_memories.json": ai_svc.list_ai_learning(50),
+            "memory_policy_config.json": load_memory_policy(session, cfg_brain),
+            "hive_brain_graph.json": brain_graph,
+            "hive_brain_clusters.json": brain_graph.get("meta", {}),
+            "hive_brain_edges.json": brain_graph.get("edges", [])[:100],
+            "training_cycle_decisions.json": pl.list_decisions(),
+            "training_execution_queue.json": [
+                _serialize_row(r)
+                for r in session.exec(select(PaperExperimentDecision).where(PaperExperimentDecision.decision == "approved")).all()
+            ],
+            "training_orders.json": [_serialize_row(r) for r in session.exec(select(OrderRecord)).all()],
+            "training_open_positions.json": train_svc.open_training_positions(),
+            "training_exit_monitor.json": {"status": "skipped", "training_mode_enabled": bool(pl.cfg.get("mode_enabled")), "message": "Run monitor-exits when training enabled"},
+            "training_outcomes.json": [_serialize_row(r) for r in session.exec(select(PaperExperimentOutcome)).all()],
+            "training_memories.json": train_svc.list_training_memories(40),
+            "meme_spike_evaluations.json": meme_recent,
+            "meme_spike_recent.json": meme_recent,
+            "live_lock_tripwire_status.json": live_lock_tripwire_status(cfg_brain),
+            "open_position_reviews.json": pos_review,
+            "stale_position_memories.json": [
+                _lesson_row(r)
+                for r in session.exec(select(LessonNode).where(LessonNode.memory_type == "stale_position_memory").limit(20)).all()
+            ],
+            "brain_bundle.json": {
+                "hive_brain_graph_meta": brain_graph.get("meta"),
+                "consolidation": cons_svc.status(),
+                "ai_learning_count": len(ai_svc.list_ai_learning(100)),
+            },
         }
     except Exception as exc:
         strategy_registry_exports = {"strategy_registry_error.json": {"error": str(exc)}}
+
+    brain_exports = strategy_registry_exports if "hive_brain_graph.json" in strategy_registry_exports else {}
 
     return {
         "activity.json": activity_data,
@@ -676,7 +722,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         "system_health.json": [_serialize_row(health)] if health else [],
         "system_summary.md": "\n".join(summary_lines),
         "dashboard_snapshot.json": dashboard,
-        "memory_graph.json": memory_graph,
+        "memory_graph.json": brain_exports.get("hive_brain_graph.json", memory_graph) if brain_exports else memory_graph,
         "lesson_nodes.json": [_lesson_row(r) for r in lesson_rows],
         "memory_edges.json": [_serialize_row(r) for r in edge_rows],
         "memory_evidence.json": [_serialize_row(r) for r in evidence_rows],

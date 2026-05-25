@@ -99,3 +99,62 @@ def paper_learning_outcomes(session: Session = Depends(get_session)):
 @router.get("/memories")
 def paper_learning_memories(session: Session = Depends(get_session)):
     return {"status": "ok", "memories": AggressivePaperLearningService(session).list_memories()}
+
+
+@router.post("/run-training-cycle")
+def run_training_cycle(body: dict = Body(default={}), session: Session = Depends(get_session)):
+    _block_ai(body)
+    from app.services.training_execution_service import TrainingExecutionService
+
+    orders_before = len(session.exec(select(OrderRecord)).all())
+    out = TrainingExecutionService(session).run_training_cycle()
+    session.commit()
+    out["orders_before"] = orders_before
+    out["orders_after"] = len(session.exec(select(OrderRecord)).all())
+    out["broker_mode"] = "paper"
+    out["live_trading_locked"] = True
+    return out
+
+
+@router.post("/execute-approved")
+def execute_approved(body: dict = Body(default={}), session: Session = Depends(get_session)):
+    _block_ai(body)
+    from app.services.training_execution_service import TrainingExecutionService
+
+    svc = TrainingExecutionService(session)
+    decision_id = body.get("decision_id")
+    if decision_id:
+        out = svc.execute_approved_decision(int(decision_id))
+    else:
+        out = svc.execute_pending_approved(limit=int(body.get("limit", 1)))
+    session.commit()
+    return out
+
+
+@router.get("/open-training-positions")
+def open_training_positions(session: Session = Depends(get_session)):
+    from app.services.training_execution_service import TrainingExecutionService
+
+    return {
+        "status": "ok",
+        "positions": TrainingExecutionService(session).open_training_positions(),
+        "broker_mode": "paper",
+        "live_trading_locked": True,
+    }
+
+
+@router.post("/monitor-exits")
+def monitor_exits(body: dict = Body(default={}), session: Session = Depends(get_session)):
+    _block_ai(body)
+    from app.services.training_execution_service import TrainingExecutionService
+
+    out = TrainingExecutionService(session).monitor_exits()
+    session.commit()
+    return out
+
+
+@router.get("/training-memories")
+def training_memories(session: Session = Depends(get_session)):
+    from app.services.training_execution_service import TrainingExecutionService
+
+    return {"status": "ok", "memories": TrainingExecutionService(session).list_training_memories()}

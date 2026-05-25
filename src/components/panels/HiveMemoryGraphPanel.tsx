@@ -6,7 +6,7 @@ import { GlassPanel } from "@/components/ui/GlassPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PanelError } from "@/components/ui/PanelError";
 import { MemoryLessonDrawer, type LessonDetail } from "@/components/panels/MemoryLessonDrawer";
-import { apiGet } from "@/lib/apiClient";
+import { apiGet, apiPost } from "@/lib/apiClient";
 import { isLessonGraphNode, lessonNodeIdForApi, normalizeMemoryGraph } from "@/lib/apiNormalize";
 import type { MemoryGraphNode } from "@/types/api";
 import type { PanelLoadMeta } from "@/types/api";
@@ -81,6 +81,9 @@ export function HiveMemoryGraphPanel({
   const [archived, setArchived] = useState(showArchived);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [graphMeta, setGraphMeta] = useState<Record<string, unknown> | null>(null);
+  const [showRaw, setShowRaw] = useState(false);
+  const [clusterDetail, setClusterDetail] = useState<MemoryGraphNode | null>(null);
+  const [brainBusy, setBrainBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -98,6 +101,8 @@ export function HiveMemoryGraphPanel({
     } else {
       params.set("graph_default", filter === "all" ? "true" : "false");
     }
+    params.set("brain", "true");
+    if (showRaw) params.set("show_raw", "true");
     const path = `/api/memory/graph?${params}`;
     const result = await apiGet<unknown>(path);
     if (result.ok && result.data) {
@@ -123,7 +128,7 @@ export function HiveMemoryGraphPanel({
       });
     }
     setLoading(false);
-  }, [filter, archived]);
+  }, [filter, archived, showRaw]);
 
   useEffect(() => {
     load();
@@ -177,7 +182,7 @@ export function HiveMemoryGraphPanel({
   return (
     <>
       <GlassPanel
-        title={compact ? "Memory graph" : "Hive Memory Graph"}
+        title={compact ? "Hive Brain" : "Hive Brain — Collective Intelligence"}
         icon={<Network className="h-4 w-4" />}
         action={
           <span className="text-[9px] text-slate-600">
@@ -208,7 +213,32 @@ export function HiveMemoryGraphPanel({
             <input type="checkbox" checked={archived} onChange={(e) => setArchived(e.target.checked)} />
             Archived
           </label>
+          <label className="flex items-center gap-1 text-[9px] text-slate-500 cursor-pointer">
+            <input type="checkbox" checked={showRaw} onChange={(e) => setShowRaw(e.target.checked)} />
+            Raw memories
+          </label>
+          <button
+            type="button"
+            disabled={brainBusy}
+            className="text-[9px] text-amber-300"
+            onClick={async () => {
+              setBrainBusy(true);
+              await apiPost("/api/memory/consolidation/run", { force: true });
+              await apiPost("/api/memory/ai-learning/generate", {});
+              await load();
+              setBrainBusy(false);
+            }}
+          >
+            Consolidate
+          </button>
         </div>
+        {graphMeta && (
+          <p className="text-[9px] text-slate-600 mb-2 text-center">
+            compression {String(graphMeta.compression_ratio ?? "—")} · AI lessons{" "}
+            {String(graphMeta.ai_learning_memory_count ?? 0)} · hidden raw{" "}
+            {String(graphMeta.hidden_raw_memories ?? 0)} · nodes {String(graphMeta.visible_nodes ?? nodeCount)}
+          </p>
+        )}
 
         {loading ? (
           <EmptyState message="Loading memory graph…" className="min-h-[200px]" />
@@ -309,7 +339,10 @@ export function HiveMemoryGraphPanel({
                     <g
                       key={node.id}
                       className="cursor-pointer"
-                      onClick={() => onNodeClick(node)}
+                      onClick={() => {
+                        if (node.type === "cluster") setClusterDetail(node);
+                        else onNodeClick(node);
+                      }}
                       onMouseEnter={() => setHoverId(node.id)}
                       onMouseLeave={() => setHoverId(null)}
                       role="button"
@@ -340,6 +373,21 @@ export function HiveMemoryGraphPanel({
           </>
         )}
       </GlassPanel>
+      {clusterDetail && (
+        <aside className="mt-2 p-3 rounded-lg border border-violet-500/20 bg-violet-950/20 text-[10px]">
+          <p className="text-violet-200 font-semibold">{clusterDetail.label}</p>
+          <p className="text-slate-400 mt-1">
+            Memories: {String((clusterDetail as unknown as { count?: number }).count ?? 0)} · confidence{" "}
+            {String((clusterDetail as unknown as { confidence?: number }).confidence ?? "—")}
+          </p>
+          <p className="text-slate-500 mt-1">
+            Latest: {String((clusterDetail as unknown as { latest_lesson?: string }).latest_lesson ?? "—")}
+          </p>
+          <button type="button" className="text-hive-cyan mt-2" onClick={() => setClusterDetail(null)}>
+            Close
+          </button>
+        </aside>
+      )}
       <MemoryLessonDrawer detail={selected} onClose={() => setSelected(null)} onUpdated={load} />
     </>
   );

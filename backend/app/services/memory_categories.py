@@ -16,7 +16,42 @@ CATEGORY_BROKER = "broker_behavior"
 CATEGORY_SYSTEM = "system_issue"
 CATEGORY_OPERATOR = "operator_note"
 CATEGORY_AI = "ai_review_memory"
+CATEGORY_AI_LEARNING = "ai_learning_memory"
+CATEGORY_STRATEGY_LEARNING = "strategy_learning_memory"
 CATEGORY_LEGACY = "legacy_reference"
+
+MEMORY_LEVEL_RAW = "raw_experience"
+MEMORY_LEVEL_PATTERN = "pattern_memory"
+MEMORY_LEVEL_CONSOLIDATED = "consolidated_lesson"
+MEMORY_LEVEL_CORE = "core_ai_lesson"
+
+CONSOLIDATED_TYPES = frozenset(
+    {
+        "consolidated_learning",
+        "consolidated_training_lesson",
+        "core_ai_lesson",
+    }
+)
+
+TRAINING_MEMORY_TYPES = frozenset(
+    {
+        "training_entry_memory",
+        "training_outcome_memory",
+        "training_blocked_memory",
+        "experiment_entry_memory",
+        "experiment_outcome_memory",
+        "experiment_blocked_memory",
+        "stale_position_memory",
+    }
+)
+
+AI_LEARNING_TYPES = frozenset(
+    {
+        "core_ai_lesson",
+        "ai_learning_lesson",
+        "consolidated_learning",
+    }
+)
 
 # Legacy type → new memory_type + category defaults
 LEGACY_TYPE_MAP: dict[str, tuple[str, str]] = {
@@ -170,7 +205,31 @@ def memory_graph_cluster(memory_type: str) -> str:
     return "cluster-research"
 
 
+HIVE_BRAIN_CLUSTERS = {
+    "cluster-broker-truth": "Broker Truth",
+    "cluster-active-positions": "Active Positions",
+    "cluster-strategy-lessons": "Strategy Lessons",
+    "cluster-risk-rules": "Risk Rules",
+    "cluster-loss-patterns": "Loss Patterns",
+    "cluster-growth-targets": "Growth Targets",
+    "cluster-backtests": "Backtests",
+    "cluster-market-signals": "Market Signals",
+    "cluster-operator-actions": "Operator Actions",
+    "cluster-critical-notes": "Critical Notes",
+    "cluster-experiments": "Training Trades",
+    "cluster-meme-volatility": "Meme Volatility Lessons",
+    "cluster-exit-lessons": "Exit Lessons",
+    "cluster-cost": "Cost / Spread",
+    "cluster-rejected": "Rejected Strategies",
+    "cluster-ai-core": "AI Core Lessons",
+    "cluster-staleness": "Position Staleness",
+    "cluster-failure": "Strategy Failures",
+    "cluster-candidates": "Strategy Candidates",
+    "cluster-research": "Research Memory",
+}
+
 CLUSTER_LABELS = {
+    **HIVE_BRAIN_CLUSTERS,
     "cluster-research": "Research Memory",
     "cluster-failure": "Strategy Failures",
     "cluster-rejected": "Rejected Strategies",
@@ -179,7 +238,7 @@ CLUSTER_LABELS = {
     "cluster-data-stale": "Data Staleness",
     "cluster-do-not-promote": "Do Not Promote",
     "cluster-walk-forward": "Walk-Forward",
-    "cluster-experiments": "Paper Experiments",
+    "cluster-experiments": "Training Trades",
     "cluster-trading": "Trading Lessons",
     "cluster-active-paper": "Active Paper Position",
     "cluster-strategy": "Strategy Registry",
@@ -199,8 +258,8 @@ def classify_memory_type(memory_type: str) -> str:
         return CATEGORY_SYSTEM
     if memory_type in OPERATOR_TYPES:
         return CATEGORY_OPERATOR
-    if memory_type in AI_TYPES:
-        return CATEGORY_AI
+    if memory_type in AI_TYPES or memory_type in AI_LEARNING_TYPES or memory_type in CONSOLIDATED_TYPES:
+        return CATEGORY_AI_LEARNING if memory_type in AI_LEARNING_TYPES or memory_type in CONSOLIDATED_TYPES else CATEGORY_AI
     if memory_type in LEGACY_TYPES:
         return CATEGORY_LEGACY
     if memory_type in LEGACY_TYPE_MAP:

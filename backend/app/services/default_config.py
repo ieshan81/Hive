@@ -250,6 +250,24 @@ DEFAULT_CONFIG = {
         "daily_loss_limit_pct": 0.05,
         "live_trading_enabled": False,
     },
+    "memory_policy": {
+        "consolidation_threshold_total_raw_memories": 100,
+        "consolidation_threshold_per_strategy": 25,
+        "archive_raw_after_consolidation": True,
+        "graph_default_show_raw_memories": False,
+        "max_default_graph_nodes": 50,
+    },
+    "meme_spike_detector": {
+        "block_pump_dump_risk": True,
+        "allow_tiny_training_on_spike": False,
+    },
+    "training_aggressive_micro": {
+        "enabled_profile": True,
+        "max_trades_per_day": 8,
+        "default_notional_usd": 10,
+        "no_averaging_down": True,
+        "no_duplicate_symbol": True,
+    },
     "aggressive_paper_learning": {
         "mode_enabled": False,
         "max_experiment_notional_per_trade_usd": 20,

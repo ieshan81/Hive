@@ -489,8 +489,51 @@ class LessonNode(SQLModel, table=True):
     last_seen_at: datetime = Field(default_factory=datetime.utcnow)
     tags: Optional[list] = Field(default=None, sa_column=Column(JSON))
     unsupported_claim: bool = False
+    is_consolidated: bool = Field(default=False, index=True)
+    consolidated_into_memory_id: Optional[int] = Field(default=None, index=True)
+    source_memory_ids_json: Optional[list] = Field(default=None, sa_column=Column(JSON))
+    retention_until: Optional[datetime] = None
+    importance_score: float = Field(default=0.5)
+    memory_level: str = Field(default="raw_experience", index=True)  # raw_experience|pattern_memory|consolidated_lesson|core_ai_lesson
+    memory_scope: str = Field(default="strategy", index=True)  # symbol|strategy|portfolio|system|ai
+    strength: float = Field(default=0.5)
+    last_confirmed_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class MemoryPolicyConfig(SQLModel, table=True):
+    __tablename__ = "memory_policy_config"
+    id: Optional[int] = Field(default=1, primary_key=True)
+    policy_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class MemeSpikeEvaluation(SQLModel, table=True):
+    __tablename__ = "meme_spike_evaluations"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    symbol: str = Field(index=True)
+    spike_detected: bool = False
+    momentum_quality: Optional[str] = None
+    manipulation_risk: str = Field(default="low", index=True)
+    entry_quality: Optional[str] = None
+    suggested_action: str = Field(default="observe_only")
+    reason_codes_json: Optional[list] = Field(default=None, sa_column=Column(JSON))
+    metrics_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class SettingsActionAudit(SQLModel, table=True):
+    __tablename__ = "settings_actions_audit"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    action: str = Field(index=True)
+    actor: str = "operator"
+    broker_mode: str = "paper"
+    paper_broker: bool = True
+    live_trading_locked: bool = True
+    live_orders_enabled: bool = False
+    details_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class MemoryEdge(SQLModel, table=True):
@@ -905,6 +948,8 @@ class PaperExperimentDecision(SQLModel, table=True):
     reason_code: Optional[str] = None
     reason_text: Optional[str] = None
     risk_snapshot_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    execution_order_id: Optional[int] = Field(default=None, index=True)
+    execution_status: Optional[str] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -1070,6 +1115,32 @@ def _migrate_columns() -> None:
                     if default is not None:
                         ddl += f" DEFAULT {default}"
                     conn.execute(text(ddl))
+            for col, typ, default in [
+                ("is_consolidated", "BOOLEAN", "false"),
+                ("consolidated_into_memory_id", "INTEGER", None),
+                ("source_memory_ids_json", "TEXT", None),
+                ("retention_until", "TIMESTAMP", None),
+                ("importance_score", "FLOAT", "0.5"),
+                ("memory_level", "VARCHAR", "'raw_experience'"),
+                ("memory_scope", "VARCHAR", "'strategy'"),
+                ("strength", "FLOAT", "0.5"),
+                ("last_confirmed_at", "TIMESTAMP", None),
+            ]:
+                if col not in ln_cols:
+                    ddl = f"ALTER TABLE lesson_nodes ADD COLUMN {col} {typ}"
+                    if default is not None:
+                        ddl += f" DEFAULT {default}"
+                    conn.execute(text(ddl))
+
+    if insp.has_table("paper_experiment_decisions"):
+        ped_cols = {c["name"] for c in insp.get_columns("paper_experiment_decisions")}
+        with engine.begin() as conn:
+            for col, typ in [
+                ("execution_order_id", "INTEGER"),
+                ("execution_status", "VARCHAR"),
+            ]:
+                if col not in ped_cols:
+                    conn.execute(text(f"ALTER TABLE paper_experiment_decisions ADD COLUMN {col} {typ}"))
 
     if insp.has_table("historical_data_coverage"):
         cov_cols = {c["name"] for c in insp.get_columns("historical_data_coverage")}
