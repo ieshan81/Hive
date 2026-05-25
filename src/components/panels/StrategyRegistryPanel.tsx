@@ -23,14 +23,20 @@ export function StrategyRegistryPanel() {
   const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [paperLearn, setPaperLearn] = useState<Record<string, unknown> | null>(null);
+  const [experimentEligible, setExperimentEligible] = useState<RegistryRow[]>([]);
 
   const load = useCallback(async () => {
-    const [reg, act, cand, rej] = await Promise.all([
+    const [reg, act, cand, rej, plStatus, plEligible] = await Promise.all([
       apiGet<{ strategies?: RegistryRow[] }>("/api/strategies/registry"),
       apiGet<{ strategies?: RegistryRow[] }>("/api/strategies/active"),
       apiGet<{ strategies?: RegistryRow[] }>("/api/strategies/paper-candidates"),
       apiGet<{ strategies?: RegistryRow[] }>("/api/strategies/rejected"),
+      apiGet<Record<string, unknown>>("/api/paper-learning/status"),
+      apiGet<{ eligible?: RegistryRow[] }>("/api/paper-learning/eligible-strategies"),
     ]);
+    setPaperLearn(plStatus.data || null);
+    setExperimentEligible(plEligible.data?.eligible || []);
     const rows = reg.data?.strategies || [];
     setAll(rows);
     setActive(act.data?.strategies || []);
@@ -103,6 +109,71 @@ export function StrategyRegistryPanel() {
       </header>
 
       {msg && <p className="text-[10px] text-slate-500 font-mono">{msg}</p>}
+
+      <GlassPanel title="Aggressive Paper Learning">
+        <div className="flex flex-wrap gap-2 text-xs mb-2">
+          <span className={paperLearn?.mode_enabled ? "text-amber-300" : "text-slate-400"}>
+            Mode: {paperLearn?.mode_enabled ? "ENABLED" : "disabled"}
+          </span>
+          <span className="text-slate-500">Experimental paper only · Not live eligible · Learning mode</span>
+        </div>
+        <p className="text-[10px] text-slate-500 mb-2">
+          Decisions today: {String(paperLearn?.decisions_today ?? 0)} · Eligible experiments:{" "}
+          {experimentEligible.length}
+        </p>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            className="text-[10px] border border-amber-500/40 text-amber-300 rounded px-2 py-0.5"
+            onClick={async () => {
+              setBusy(true);
+              await apiPost("/api/paper-learning/enable", { operator: "operator" });
+              setMsg("Paper learning enabled (caged — no live)");
+              await load();
+              setBusy(false);
+            }}
+          >
+            Enable learning
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            className="text-[10px] border border-white/10 text-slate-400 rounded px-2 py-0.5"
+            onClick={async () => {
+              setBusy(true);
+              await apiPost("/api/paper-learning/disable", { operator: "operator" });
+              setMsg("Paper learning disabled");
+              await load();
+              setBusy(false);
+            }}
+          >
+            Disable
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            className="text-[10px] border border-hive-cyan/30 text-hive-cyan rounded px-2 py-0.5"
+            onClick={async () => {
+              setBusy(true);
+              await apiPost("/api/strategies/experiment-eligibility/scan", {});
+              await load();
+              setBusy(false);
+            }}
+          >
+            Scan eligibility
+          </button>
+        </div>
+        {experimentEligible.length > 0 && (
+          <ul className="mt-2 text-[10px] text-slate-400 max-h-24 overflow-auto">
+            {experimentEligible.slice(0, 8).map((e) => (
+              <li key={String(e.strategy_id)}>
+                {String(e.strategy_id)} — {String(e.reason || "eligible")}
+              </li>
+            ))}
+          </ul>
+        )}
+      </GlassPanel>
 
       <GlassPanel title="System Strategy Banner">
         <div className="flex flex-wrap gap-3 text-xs">

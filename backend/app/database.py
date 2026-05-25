@@ -477,6 +477,9 @@ class LessonNode(SQLModel, table=True):
     visible_to_ai: bool = Field(default=True)
     can_influence_ranking: bool = Field(default=True)
     human_review_status: str = Field(default="pending", index=True)
+    system_validation_status: str = Field(default="pending", index=True)
+    system_validated_at: Optional[datetime] = None
+    system_validator_rule: Optional[str] = None
     archive_reason: Optional[str] = None
     deleted_at: Optional[datetime] = None
     deleted_by: Optional[str] = None
@@ -880,6 +883,59 @@ class StrategyEligibilityWindow(SQLModel, table=True):
     closed_at: Optional[datetime] = None
 
 
+class PaperExperimentConfig(SQLModel, table=True):
+    __tablename__ = "paper_experiment_config"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    profile: str = Field(default="aggressive_paper_learning", index=True)
+    config_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    mode_enabled: bool = False
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class PaperExperimentDecision(SQLModel, table=True):
+    __tablename__ = "paper_experiment_decisions"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    strategy_id: str = Field(index=True)
+    signal_id: Optional[int] = Field(default=None, index=True)
+    symbol: str = Field(index=True)
+    side: str = "buy"
+    requested_notional: float = 0.0
+    approved_notional: float = 0.0
+    decision: str = Field(index=True)
+    reason_code: Optional[str] = None
+    reason_text: Optional[str] = None
+    risk_snapshot_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class PaperExperimentRun(SQLModel, table=True):
+    __tablename__ = "paper_experiment_runs"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    strategy_id: str = Field(index=True)
+    symbol: str
+    status: str = "pending"
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    ended_at: Optional[datetime] = None
+
+
+class PaperExperimentOutcome(SQLModel, table=True):
+    __tablename__ = "paper_experiment_outcomes"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    strategy_id: str = Field(index=True)
+    symbol: str
+    entry_order_id: Optional[int] = None
+    exit_order_id: Optional[int] = None
+    entry_price: Optional[float] = None
+    exit_price: Optional[float] = None
+    qty: Optional[float] = None
+    realized_pnl: Optional[float] = None
+    fees_estimated: Optional[float] = None
+    hold_minutes: Optional[float] = None
+    exit_reason: Optional[str] = None
+    lesson_created: bool = False
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class SystemValidationAudit(SQLModel, table=True):
     __tablename__ = "system_validation_audit"
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -1002,6 +1058,9 @@ def _migrate_columns() -> None:
                 ("visible_to_ai", "BOOLEAN", "true"),
                 ("can_influence_ranking", "BOOLEAN", "true"),
                 ("human_review_status", "VARCHAR", "'pending'"),
+                ("system_validation_status", "VARCHAR", "'pending'"),
+                ("system_validated_at", "TIMESTAMP", None),
+                ("system_validator_rule", "VARCHAR", None),
                 ("archive_reason", "VARCHAR", None),
                 ("deleted_at", "TIMESTAMP", None),
                 ("deleted_by", "VARCHAR", None),

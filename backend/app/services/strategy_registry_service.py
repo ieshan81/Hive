@@ -222,6 +222,64 @@ class StrategyRegistryService:
         ).first()
         return self._serialize(r) if r else None
 
+    def mark_paper_experiment(self, strategy_id: str, reason: str = "operator") -> dict:
+        from app.database import StrategyLifecycleEvent
+        from app.services.strategy_stages import can_transition
+
+        r = self.session.exec(
+            select(StrategyRegistry).where(StrategyRegistry.strategy_id == strategy_id)
+        ).first()
+        if not r:
+            return {"status": "error", "message": "unknown strategy"}
+        if not can_transition(r.current_stage, "paper_experiment"):
+            return {"status": "error", "message": f"cannot transition from {r.current_stage}"}
+        prev = r.current_stage
+        r.previous_stage = prev
+        r.current_stage = "paper_experiment"
+        r.can_trade_live = False
+        r.updated_at = datetime.utcnow()
+        self.session.add(r)
+        self.session.add(
+            StrategyLifecycleEvent(
+                strategy_id=strategy_id,
+                from_stage=prev,
+                to_stage="paper_experiment",
+                reason_code="paper_experiment",
+                reason_text=reason[:300],
+                evidence_json={"experimental_paper_only": True, "not_live_eligible": True},
+            )
+        )
+        self.session.flush()
+        return {"status": "ok", "strategy": self._serialize(r)}
+
+    def pause_experiment(self, strategy_id: str, reason: str = "experiment_paused") -> dict:
+        from app.database import StrategyLifecycleEvent
+        from app.services.strategy_stages import can_transition
+
+        r = self.session.exec(
+            select(StrategyRegistry).where(StrategyRegistry.strategy_id == strategy_id)
+        ).first()
+        if not r:
+            return {"status": "error", "message": "unknown strategy"}
+        if not can_transition(r.current_stage, "paused"):
+            return {"status": "error", "message": f"cannot pause from {r.current_stage}"}
+        prev = r.current_stage
+        r.previous_stage = prev
+        r.current_stage = "paused"
+        r.updated_at = datetime.utcnow()
+        self.session.add(r)
+        self.session.add(
+            StrategyLifecycleEvent(
+                strategy_id=strategy_id,
+                from_stage=prev,
+                to_stage="paused",
+                reason_code="experiment_paused",
+                reason_text=reason[:300],
+            )
+        )
+        self.session.flush()
+        return {"status": "ok", "strategy": self._serialize(r)}
+
     def tab_snapshot(self) -> dict[str, Any]:
         all_rows = self.list_registry()
         return {

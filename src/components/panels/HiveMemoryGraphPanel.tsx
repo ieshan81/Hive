@@ -23,7 +23,11 @@ type CategoryFilter =
   | "symbol_pattern"
   | "system_issue"
   | "ai_review_memory"
-  | "operator_note";
+  | "operator_note"
+  | "strategy"
+  | "rejected"
+  | "active_paper"
+  | "experiments";
 
 interface Props {
   compact?: boolean;
@@ -81,7 +85,13 @@ export function HiveMemoryGraphPanel({
   const load = useCallback(async () => {
     setLoading(true);
     const params = new URLSearchParams();
-    if (filter !== "all") params.set("category", filter);
+    if (filter !== "all" && !["rejected", "active_paper", "experiments", "strategy"].includes(filter)) {
+      params.set("category", filter);
+    }
+    if (filter === "rejected") params.set("graph_filter", "rejected");
+    if (filter === "active_paper") params.set("graph_filter", "active_paper");
+    if (filter === "experiments") params.set("graph_filter", "experiments");
+    if (filter === "strategy") params.set("graph_filter", "strategy");
     if (archived) {
       params.set("include_archived", "true");
       params.set("graph_default", "false");
@@ -119,11 +129,14 @@ export function HiveMemoryGraphPanel({
     load();
   }, [load]);
 
-  const lessonNodes = useMemo(
-    () => rawNodes.filter((n) => n.type === "lesson" || n.id.startsWith("lesson-")),
-    [rawNodes]
-  );
-  const positioned = useMemo(() => layoutLessonNodes(lessonNodes), [lessonNodes]);
+  const graphNodes = useMemo(() => {
+    const withCoords = rawNodes.filter((n) => typeof n.x === "number" && typeof n.y === "number");
+    if (withCoords.length > 0) return withCoords;
+    const lessons = rawNodes.filter((n) => n.type === "lesson" || n.id.startsWith("lesson-"));
+    return layoutLessonNodes(lessons);
+  }, [rawNodes]);
+
+  const positioned = graphNodes;
 
   async function onNodeClick(node: MemoryGraphNode) {
     if (!isLessonGraphNode(node.id, node.type)) return;
@@ -145,16 +158,21 @@ export function HiveMemoryGraphPanel({
     { id: "all", label: "All" },
     { id: "trading_memory", label: "Trading" },
     { id: "research_memory", label: "Research" },
-    { id: "backtest_memory", label: "Backtests" },
-    { id: "symbol_pattern", label: "Patterns" },
-    { id: "system_issue", label: "System" },
-    { id: "ai_review_memory", label: "AI" },
-    { id: "operator_note", label: "Operator" },
+    { id: "strategy_research_memory", label: "Strategy" },
+    { id: "system_issue", label: "System Issues" },
+    { id: "rejected", label: "Rejected" },
+    { id: "active_paper", label: "Active Paper" },
+    { id: "experiments", label: "Experiments" },
   ];
 
   const showError = !loading && meta.error;
-  const showEmpty = !loading && !meta.error && positioned.length === 0;
+  const nodeCount = positioned.filter((n) => n.id !== "hive-root").length;
+  const showEmpty = !loading && !meta.error && nodeCount === 0;
   const emptyReason = graphMeta?.empty_reason as string | undefined;
+  const hiddenByFilter = Number(graphMeta?.hidden_by_filter ?? 0);
+  const activeResearch = Number(graphMeta?.active_research_memories ?? 0);
+  const userFilteredResearch =
+    filter !== "all" && filter !== "research_memory" && activeResearch > 0 && nodeCount === 0;
 
   return (
     <>
@@ -203,14 +221,18 @@ export function HiveMemoryGraphPanel({
         ) : showEmpty ? (
           <div className="min-h-[200px] flex flex-col items-center justify-center text-center px-4">
             <EmptyState
-              message={emptyReason || "No active memories in this filter."}
+              message={
+                userFilteredResearch
+                  ? "Research memories exist but are hidden by filter."
+                  : emptyReason || "No active memories in this filter."
+              }
               className="min-h-0"
             />
             {graphMeta && (
               <p className="text-[10px] text-slate-500 mt-2">
                 Trading: {String(graphMeta.active_trading_memories ?? 0)} · Research:{" "}
-                {String(graphMeta.active_research_memories ?? 0)} · Hidden archived/deleted:{" "}
-                {String(graphMeta.archived_or_deleted ?? 0)}
+                {String(graphMeta.active_research_memories ?? 0)} · Rejected strategies:{" "}
+                {String(graphMeta.rejected_strategies ?? 0)} · Hidden by filter: {hiddenByFilter}
               </p>
             )}
           </div>
@@ -274,7 +296,14 @@ export function HiveMemoryGraphPanel({
                 {positioned.map((node) => {
                   const color = node.color || "#3b82f6";
                   const active = hoverId === node.id;
-                  const lbl = labelPosition(node);
+                  const lbl =
+                    "angle" in node && typeof (node as { angle?: number }).angle === "number"
+                      ? labelPosition(node as MemoryGraphNode & { angle: number })
+                      : {
+                          x: (node.x ?? CX) + 6,
+                          y: (node.y ?? CY) - 4,
+                          anchor: "start" as const,
+                        };
                   const short = node.label.length > 22 ? `${node.label.slice(0, 20)}…` : node.label;
                   return (
                     <g
@@ -305,7 +334,8 @@ export function HiveMemoryGraphPanel({
               </svg>
             </figure>
             <p className="text-[10px] text-slate-500 mt-2 text-center">
-              {positioned.length} memories · {meta.source} · click node for evidence
+              {nodeCount} nodes · research {String(graphMeta?.active_research_memories ?? 0)} ·{" "}
+              {meta.source} · click lesson for evidence
             </p>
           </>
         )}

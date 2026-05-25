@@ -39,6 +39,9 @@ class StrategyMemoryValidationService:
                 link.validator_rule = rule
                 link.validation_evidence_json = evidence
                 link.validated_at = datetime.utcnow()
+                lesson.system_validation_status = "validated"
+                lesson.system_validated_at = link.validated_at
+                lesson.system_validator_rule = rule
                 lesson.can_influence_ranking = link.can_influence_ranking
                 validated += 1
             else:
@@ -46,6 +49,9 @@ class StrategyMemoryValidationService:
                 link.can_influence_ranking = False
                 link.validator_rule = rule
                 link.validation_evidence_json = evidence
+                lesson.system_validation_status = "rejected"
+                lesson.system_validated_at = datetime.utcnow()
+                lesson.system_validator_rule = rule
                 lesson.can_influence_ranking = False
                 rejected += 1
             self.session.add(link)

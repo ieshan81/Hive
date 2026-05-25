@@ -125,6 +125,66 @@ GRAPH_FILTER_CATEGORIES = {
     "operator": CATEGORY_OPERATOR,
 }
 
+GRAPH_INTELLIGENCE_CATEGORIES = frozenset(
+    {
+        CATEGORY_TRADING,
+        CATEGORY_RESEARCH,
+        CATEGORY_BACKTEST,
+        CATEGORY_WALK_FORWARD,
+        CATEGORY_STRATEGY,
+        CATEGORY_SYMBOL_PATTERN,
+    }
+)
+
+EXPERIMENT_MEMORY_TYPES = frozenset(
+    {
+        "experiment_entry_memory",
+        "experiment_outcome_memory",
+        "experiment_blocked_memory",
+    }
+)
+
+
+def memory_graph_cluster(memory_type: str) -> str:
+    """Cluster id for graph hub nodes."""
+    if memory_type in EXPERIMENT_MEMORY_TYPES:
+        return "cluster-experiments"
+    if memory_type == "rejected_strategy_memory":
+        return "cluster-rejected"
+    if memory_type == "do_not_promote_recommendation":
+        return "cluster-do-not-promote"
+    if memory_type in ("spread_kills_edge_pattern", "cost_drag_pattern"):
+        return "cluster-cost"
+    if memory_type == "backtest_failure_pattern" or "failure" in memory_type:
+        return "cluster-failure"
+    if "drawdown" in memory_type or "mdd" in memory_type:
+        return "cluster-drawdown"
+    if memory_type in ("sample_size_warning",) or "stale" in memory_type or "insufficient" in memory_type:
+        return "cluster-data-stale"
+    if "walk_forward" in memory_type:
+        return "cluster-walk-forward"
+    if memory_type in RESEARCH_MEMORY_TYPES:
+        return "cluster-research"
+    if memory_type in TRADING_TYPES:
+        return "cluster-trading"
+    return "cluster-research"
+
+
+CLUSTER_LABELS = {
+    "cluster-research": "Research Memory",
+    "cluster-failure": "Strategy Failures",
+    "cluster-rejected": "Rejected Strategies",
+    "cluster-cost": "Cost / Spread",
+    "cluster-drawdown": "Drawdown",
+    "cluster-data-stale": "Data Staleness",
+    "cluster-do-not-promote": "Do Not Promote",
+    "cluster-walk-forward": "Walk-Forward",
+    "cluster-experiments": "Paper Experiments",
+    "cluster-trading": "Trading Lessons",
+    "cluster-active-paper": "Active Paper Position",
+    "cluster-strategy": "Strategy Registry",
+}
+
 
 def classify_memory_type(memory_type: str) -> str:
     if memory_type in RESEARCH_MEMORY_TYPES:

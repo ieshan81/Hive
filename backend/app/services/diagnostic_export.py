@@ -587,36 +587,53 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         )
         from app.services.strategy_registry_service import StrategyRegistryService
 
+        from app.database import PaperExperimentConfig, PaperExperimentDecision, PaperExperimentOutcome
+        from app.services.aggressive_paper_learning_service import AggressivePaperLearningService
+        from app.services.strategy_registry_export import (
+            ensure_strategy_rejection_records,
+            list_active_registry,
+            list_rejected_registry,
+            list_research_only_registry,
+            memory_validation_mismatches,
+        )
+        from app.services.lesson_memory_service import LessonMemoryService
+
         reg_svc = StrategyRegistryService(session)
         snap = reg_svc.tab_snapshot()
-        pending_ranking = session.exec(
-            select(StrategyMemoryLink).where(
-                StrategyMemoryLink.memory_status == "pending",
-                StrategyMemoryLink.can_influence_ranking == True,  # noqa: E712
-            )
-        ).all()
+        pl = AggressivePaperLearningService(session)
+        elig = pl.scan_experiment_eligibility()
+        graph = LessonMemoryService(session, ConfigManager(session).get_current()).build_graph(
+            graph_default=True, limit=80
+        )
+        mph = memory_validation_mismatches(session)
         strategy_registry_exports = {
             "strategy_registry.json": [_serialize_row(r) for r in session.exec(select(StrategyRegistry)).all()],
+            "all_strategies.json": reg_svc.list_registry(),
+            "active_strategies.json": list_active_registry(session),
+            "rejected_strategies.json": list_rejected_registry(session),
+            "research_only_strategies.json": list_research_only_registry(session),
+            "experiment_eligible_strategies.json": elig.get("eligible", []),
+            "experiment_blocked_strategies.json": elig.get("blocked", []),
             "strategy_lifecycle_events.json": [_serialize_row(r) for r in session.exec(select(StrategyLifecycleEvent)).all()],
             "strategy_scorecards.json": [_serialize_row(r) for r in session.exec(select(StrategyScorecard)).all()],
             "strategy_validation_results.json": [_serialize_row(r) for r in session.exec(select(StrategyValidationResult)).all()],
             "strategy_promotion_audit.json": [_serialize_row(r) for r in session.exec(select(SystemValidationAudit)).all()],
-            "strategy_rejections.json": [_serialize_row(r) for r in session.exec(select(StrategyRejection)).all()],
+            "strategy_rejections.json": ensure_strategy_rejection_records(session),
             "strategy_retirements.json": [_serialize_row(r) for r in session.exec(select(StrategyRetirement)).all()],
             "strategy_conflicts.json": [_serialize_row(r) for r in session.exec(select(StrategyConflict)).all()],
             "strategy_allocations.json": [_serialize_row(r) for r in session.exec(select(StrategyAllocation)).all()],
             "strategy_memory_links.json": [_serialize_row(r) for r in session.exec(select(StrategyMemoryLink)).all()],
             "strategy_eligibility_windows.json": [_serialize_row(r) for r in session.exec(select(StrategyEligibilityWindow)).all()],
-            "active_strategies.json": snap.get("strategies", []),
             "paper_candidates.json": reg_svc.list_registry(stage="paper_candidate"),
             "strategy_tab_snapshot.json": snap,
-            "memory_pipeline_health.json": {
-                "pending_memories": sum(1 for _ in session.exec(select(StrategyMemoryLink).where(StrategyMemoryLink.memory_status == "pending")).all()),
-                "validated_memories": sum(1 for _ in session.exec(select(StrategyMemoryLink).where(StrategyMemoryLink.memory_status == "validated")).all()),
-                "pending_influence_ranking_violations": len(pending_ranking),
-                "live_trading_locked": True,
-                "ai_direct_promotion_detected": False,
-            },
+            "paper_learning_status.json": pl.status(),
+            "paper_experiment_config.json": [_serialize_row(r) for r in session.exec(select(PaperExperimentConfig)).all()],
+            "paper_experiment_decisions.json": [_serialize_row(r) for r in session.exec(select(PaperExperimentDecision)).all()],
+            "paper_experiment_outcomes.json": [_serialize_row(r) for r in session.exec(select(PaperExperimentOutcome)).all()],
+            "paper_experiment_memories.json": pl.list_memories(40),
+            "memory_graph_clusters.json": graph.get("meta", {}),
+            "memory_validation_mismatches.json": mph,
+            "memory_pipeline_health.json": mph,
             "system_validation_audit.json": [_serialize_row(r) for r in session.exec(select(SystemValidationAudit)).all()],
             "ai_advisory_history.json": [_serialize_row(r) for r in session.exec(select(AIReview)).all()[:30]],
         }

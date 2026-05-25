@@ -11,13 +11,20 @@ from sqlmodel import Session, select
 from app.database import LessonNode, MemoryEdge, MemoryEvidence
 from app.services.engine_config import cfg_get
 from app.services.memory_categories import (
+    CATEGORY_BACKTEST,
+    CATEGORY_RESEARCH,
     CATEGORY_SYSTEM,
     CATEGORY_TRADING,
+    CATEGORY_WALK_FORWARD,
     CATEGORY_COLORS,
+    CLUSTER_LABELS,
     GRAPH_FILTER_CATEGORIES,
+    GRAPH_INTELLIGENCE_CATEGORIES,
+    RESEARCH_MEMORY_TYPES,
     classify_memory_type,
     default_visibility,
     drawer_title,
+    memory_graph_cluster,
     normalize_memory_type,
     node_badge,
     system_impact,
@@ -136,6 +143,7 @@ class LessonMemoryService:
             if can_influence_ranking is not None
             else vis["can_influence_ranking"],
             human_review_status="pending",
+            system_validation_status="pending",
             pattern_key=pk,
             occurrence_count=1,
             first_seen_at=now,
@@ -265,7 +273,7 @@ class LessonMemoryService:
                     continue
                 if r.category == CATEGORY_SYSTEM:
                     continue
-                if r.category not in (CATEGORY_TRADING,):
+                if r.category not in GRAPH_INTELLIGENCE_CATEGORIES:
                     continue
             if category and r.category != category:
                 continue
@@ -328,6 +336,9 @@ class LessonMemoryService:
             "action_status": row.action_status,
             "status": row.status,
             "human_review_status": row.human_review_status,
+            "system_validation_status": getattr(row, "system_validation_status", "pending"),
+            "system_validated_at": row.system_validated_at.isoformat() + "Z" if getattr(row, "system_validated_at", None) else None,
+            "system_validator_rule": getattr(row, "system_validator_rule", None),
             "visible_to_ai": row.visible_to_ai,
             "visible_in_graph": row.visible_in_graph,
             "can_influence_ranking": row.can_influence_ranking,
@@ -366,6 +377,7 @@ class LessonMemoryService:
         self,
         limit: int = 80,
         category: Optional[str] = None,
+        graph_filter: Optional[str] = None,
         severity: Optional[str] = None,
         include_archived: bool = False,
         graph_default: bool = True,
@@ -375,13 +387,14 @@ class LessonMemoryService:
                 select(LessonNode).order_by(LessonNode.last_seen_at.desc()).limit(limit * 3)
             ).all()
         )
+        intelligence_mode = graph_default and not category and not include_archived
         lessons = self._filter_rows(
             all_rows,
             category=category,
             severity=severity,
             include_archived=include_archived,
-            graph_default=graph_default and not category and not include_archived,
-        )[:limit]
+            graph_default=intelligence_mode,
+        )[: limit * 2 if intelligence_mode else limit]
 
         nodes: list[dict] = [
             {
@@ -398,12 +411,49 @@ class LessonMemoryService:
             }
         ]
         edges_out: list[dict] = []
+        cluster_ids: set[str] = set()
         positions = self._layout_positions(len(lessons))
+
+        def _ensure_cluster(cid: str) -> None:
+            if cid in cluster_ids:
+                return
+            cluster_ids.add(cid)
+            idx = len(cluster_ids)
+            import math
+
+            angle = (2 * math.pi * idx) / max(len(CLUSTER_LABELS), 8)
+            nodes.append(
+                {
+                    "id": cid,
+                    "label": CLUSTER_LABELS.get(cid, cid),
+                    "type": "cluster",
+                    "severity": "LOW",
+                    "confidence": 0.9,
+                    "status": "active",
+                    "count": 0,
+                    "x": 50 + 22 * math.cos(angle),
+                    "y": 50 + 22 * math.sin(angle),
+                    "color": "#8b5cf6",
+                }
+            )
+            edges_out.append(
+                {
+                    "id": f"e-hive-{cid}",
+                    "source": "hive",
+                    "target": cid,
+                    "relation": "cluster",
+                    "weight": 1.0,
+                    "evidence_count": 1,
+                }
+            )
 
         for i, lesson in enumerate(lessons):
             nid = f"lesson-{lesson.id}"
             x, y = positions[i] if i < len(positions) else (50, 50)
             cat_color = CATEGORY_COLORS.get(lesson.category, SEVERITY_COLORS.get(lesson.severity, "#64748b"))
+            cid = memory_graph_cluster(lesson.memory_type or "")
+            if intelligence_mode:
+                _ensure_cluster(cid)
             nodes.append(
                 {
                     "id": nid,
@@ -418,6 +468,7 @@ class LessonMemoryService:
                     "symbol": lesson.symbol,
                     "strategy_name": lesson.strategy_name,
                     "memory_type": lesson.memory_type,
+                    "system_validation_status": getattr(lesson, "system_validation_status", "pending"),
                     "color": cat_color,
                     "x": x,
                     "y": y,
@@ -425,16 +476,28 @@ class LessonMemoryService:
                     "last_seen_at": lesson.last_seen_at.isoformat() + "Z" if lesson.last_seen_at else None,
                 }
             )
-            edges_out.append(
-                {
-                    "id": f"e-hive-{lesson.id}",
-                    "source": "hive",
-                    "target": nid,
-                    "relation": "learned_from",
-                    "weight": lesson.confidence,
-                    "evidence_count": lesson.occurrence_count,
-                }
-            )
+            if intelligence_mode:
+                edges_out.append(
+                    {
+                        "id": f"e-{cid}-{lesson.id}",
+                        "source": cid,
+                        "target": nid,
+                        "relation": "evidence",
+                        "weight": lesson.confidence,
+                        "evidence_count": lesson.occurrence_count,
+                    }
+                )
+            else:
+                edges_out.append(
+                    {
+                        "id": f"e-hive-{lesson.id}",
+                        "source": "hive",
+                        "target": nid,
+                        "relation": "learned_from",
+                        "weight": lesson.confidence,
+                        "evidence_count": lesson.occurrence_count,
+                    }
+                )
             if lesson.symbol:
                 sid = f"symbol-{lesson.symbol.replace('/', '')}"
                 if not any(n["id"] == sid for n in nodes):
@@ -480,27 +543,43 @@ class LessonMemoryService:
                         }
                     )
 
+        if intelligence_mode:
+            self._append_registry_graph_nodes(nodes, edges_out, cluster_ids)
+
+        if graph_filter:
+            nodes, edges_out = self._apply_graph_filter(nodes, edges_out, graph_filter)
+
         active_trading = sum(
             1 for r in all_rows if r.category == CATEGORY_TRADING and r.status == "active" and r.visible_in_graph
         )
         active_research = sum(
             1
             for r in all_rows
-            if r.category in ("strategy_research_memory", "backtest_memory", "walk_forward_memory")
+            if r.category in (CATEGORY_RESEARCH, CATEGORY_BACKTEST, CATEGORY_WALK_FORWARD)
+            or (r.memory_type in RESEARCH_MEMORY_TYPES)
             and r.status == "active"
+        )
+        validated_research = sum(
+            1
+            for r in all_rows
+            if (r.memory_type in RESEARCH_MEMORY_TYPES or r.category in (CATEGORY_RESEARCH, CATEGORY_BACKTEST))
+            and getattr(r, "system_validation_status", "pending") == "validated"
         )
         active_system = sum(
             1 for r in all_rows if r.category == CATEGORY_SYSTEM and r.status == "active"
         )
         archived_or_deleted = sum(1 for r in all_rows if r.status in ("archived", "deleted"))
+        hidden_by_filter = max(0, len(all_rows) - len(lessons) - archived_or_deleted)
         empty_reason = None
-        if not lessons:
+        if not lessons and len(nodes) <= 1:
             if archived_or_deleted:
                 empty_reason = f"No active memories in this filter. {archived_or_deleted} archived/deleted hidden."
             elif active_trading == 0 and active_research == 0:
                 empty_reason = "No active trading or research memories. Run Research Lab or complete paper cycles."
             else:
                 empty_reason = "No memories match current filter."
+        elif category and active_research > 0 and len(lessons) == 0:
+            empty_reason = "Research memories exist but are hidden by filter."
 
         return {
             "status": "ok",
@@ -509,12 +588,150 @@ class LessonMemoryService:
             "meta": {
                 "active_trading_memories": active_trading,
                 "active_research_memories": active_research,
+                "validated_research_memories": validated_research,
+                "rejected_strategies": sum(1 for n in nodes if n.get("type") == "strategy" and "rejected" in str(n.get("stage", ""))),
+                "active_paper_strategies": sum(1 for n in nodes if n.get("type") == "strategy" and n.get("stage") == "paper_active"),
+                "experiment_eligible_strategies": 0,
                 "active_system_issues": active_system,
                 "archived_or_deleted": archived_or_deleted,
-                "filters_applied": category or ("default_trading_only" if graph_default else "all"),
+                "hidden_by_filter": hidden_by_filter,
+                "filters_applied": category or ("intelligence_default" if intelligence_mode else "all"),
                 "empty_reason": empty_reason,
+                "cluster_count": len(cluster_ids),
             },
         }
+
+    def _apply_graph_filter(
+        self, nodes: list[dict], edges_out: list[dict], graph_filter: str
+    ) -> tuple[list[dict], list[dict]]:
+        gf = graph_filter.lower().replace("-", "_")
+        keep_ids = {"hive"}
+
+        def _keep_node(n: dict) -> bool:
+            if n.get("id") == "hive":
+                return True
+            if gf == "rejected":
+                return (
+                    n.get("id", "").startswith("cluster-rejected")
+                    or n.get("stage") == "rejected"
+                    or n.get("memory_type") == "rejected_strategy_memory"
+                )
+            if gf == "active_paper":
+                return (
+                    n.get("id", "").startswith("cluster-active-paper")
+                    or n.get("stage") == "paper_active"
+                    or n.get("type") == "position"
+                )
+            if gf == "experiments":
+                return (
+                    n.get("id", "").startswith("cluster-experiment")
+                    or n.get("stage") == "paper_experiment"
+                    or (n.get("memory_type") or "").startswith("experiment_")
+                )
+            if gf == "strategy":
+                return n.get("type") in ("strategy", "cluster") and "strategy" in str(n.get("id", ""))
+            return True
+
+        for n in nodes:
+            if _keep_node(n):
+                keep_ids.add(n["id"])
+        for e in edges_out:
+            if e.get("source") in keep_ids or e.get("target") in keep_ids:
+                keep_ids.add(e.get("source", ""))
+                keep_ids.add(e.get("target", ""))
+        filtered_nodes = [n for n in nodes if n["id"] in keep_ids]
+        filtered_edges = [
+            e for e in edges_out if e.get("source") in keep_ids and e.get("target") in keep_ids
+        ]
+        return filtered_nodes, filtered_edges
+
+    def _append_registry_graph_nodes(
+        self, nodes: list[dict], edges_out: list[dict], cluster_ids: set[str]
+    ) -> None:
+        try:
+            from app.database import PositionEnrichedState, PositionSnapshot, StrategyRegistry
+
+            regs = list(self.session.exec(select(StrategyRegistry)).all())
+            for reg in regs[:12]:
+                sid = f"strategy-{reg.strategy_id}"
+                if any(n["id"] == sid for n in nodes):
+                    continue
+                nodes.append(
+                    {
+                        "id": sid,
+                        "label": reg.name[:24],
+                        "type": "strategy",
+                        "stage": reg.current_stage,
+                        "strategy_id": reg.strategy_id,
+                        "severity": "HIGH" if reg.current_stage == "rejected" else "MEDIUM",
+                        "confidence": 0.8,
+                        "status": "active",
+                        "count": reg.memory_count,
+                        "color": "#ef4444" if reg.current_stage == "rejected" else "#22c55e",
+                        "x": 72,
+                        "y": 30 + (hash(reg.strategy_id) % 40),
+                    }
+                )
+                cid = "cluster-rejected" if reg.current_stage == "rejected" else "cluster-active-paper"
+                if reg.current_stage == "paper_experiment":
+                    cid = "cluster-experiments"
+                if cid not in cluster_ids:
+                    cluster_ids.add(cid)
+                    nodes.append(
+                        {
+                            "id": cid,
+                            "label": CLUSTER_LABELS.get(cid, cid),
+                            "type": "cluster",
+                            "severity": "LOW",
+                            "confidence": 0.9,
+                            "status": "active",
+                            "count": 0,
+                            "x": 78,
+                            "y": 50,
+                            "color": "#8b5cf6",
+                        }
+                    )
+                    edges_out.append(
+                        {"id": f"e-hive-{cid}", "source": "hive", "target": cid, "relation": "cluster", "weight": 1.0, "evidence_count": 1}
+                    )
+                edges_out.append(
+                    {
+                        "id": f"e-{cid}-{reg.strategy_id}",
+                        "source": cid,
+                        "target": sid,
+                        "relation": "strategy_stage",
+                        "weight": 1.0,
+                        "evidence_count": 1,
+                    }
+                )
+            open_pos = list(self.session.exec(select(PositionSnapshot).where(PositionSnapshot.qty > 0)).all())
+            for p in open_pos:
+                st = self.session.exec(
+                    select(PositionEnrichedState).where(PositionEnrichedState.broker_symbol == p.symbol)
+                ).first()
+                state = (st.state_json if st else {}) or {}
+                psid = f"position-{p.symbol}"
+                nodes.append(
+                    {
+                        "id": psid,
+                        "label": f"{p.symbol} open",
+                        "type": "position",
+                        "severity": "MEDIUM",
+                        "confidence": 0.9,
+                        "status": "active",
+                        "symbol": p.symbol,
+                        "strategy_name": state.get("strategy_name"),
+                        "x": 28,
+                        "y": 62,
+                        "color": "#06b6d4",
+                    }
+                )
+                cid = "cluster-active-paper"
+                edges_out.append(
+                    {"id": f"e-{psid}-paper", "source": psid, "target": cid, "relation": "open_position", "weight": 1.0, "evidence_count": 1}
+                )
+        except Exception:
+            pass
 
     def _layout_positions(self, n: int) -> list[tuple[float, float]]:
         if n <= 0:

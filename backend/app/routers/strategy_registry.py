@@ -41,13 +41,9 @@ def get_registry(session: Session = Depends(get_session)):
 
 @router.get("/active")
 def get_active(session: Session = Depends(get_session)):
-    svc = StrategyRegistryService(session)
-    return {
-        "status": "ok",
-        "strategies": svc.list_registry(stage="paper_active")
-        + svc.list_registry(stage="tiny_live")
-        + svc.list_registry(stage="standard_live"),
-    }
+    from app.services.strategy_registry_export import list_active_registry
+
+    return {"status": "ok", "strategies": list_active_registry(session)}
 
 
 @router.get("/paper-candidates")
@@ -245,5 +241,32 @@ def pause_strategy(strategy_id: str, body: dict = Body(default={}), session: Ses
 def resume_strategy(strategy_id: str, body: dict = Body(default={}), session: Session = Depends(get_session)):
     _block_ai_actor(body)
     out = StrategyValidationGate(session).resume(strategy_id)
+    session.commit()
+    return out
+
+
+@router.post("/experiment-eligibility/scan")
+def experiment_eligibility_scan(session: Session = Depends(get_session)):
+    from app.services.aggressive_paper_learning_service import AggressivePaperLearningService
+
+    return AggressivePaperLearningService(session).scan_experiment_eligibility()
+
+
+@router.post("/{strategy_id}/mark-paper-experiment")
+def mark_paper_experiment(strategy_id: str, body: dict = Body(default={}), session: Session = Depends(get_session)):
+    _block_ai_actor(body)
+    out = StrategyRegistryService(session).mark_paper_experiment(
+        strategy_id, body.get("reason", "operator_mark_experiment")
+    )
+    session.commit()
+    return out
+
+
+@router.post("/{strategy_id}/pause-experiment")
+def pause_experiment(strategy_id: str, body: dict = Body(default={}), session: Session = Depends(get_session)):
+    _block_ai_actor(body)
+    out = StrategyRegistryService(session).pause_experiment(
+        strategy_id, body.get("reason", "experiment_daily_cap")
+    )
     session.commit()
     return out

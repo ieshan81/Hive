@@ -283,6 +283,7 @@ def promotion_request(target_stage: str = "PRE_LIVE", session: Session = Depends
 @router.get("/memory/graph")
 def memory_graph(
     category: str | None = None,
+    graph_filter: str | None = None,
     severity: str | None = None,
     include_archived: bool = False,
     graph_default: bool = True,
@@ -294,6 +295,7 @@ def memory_graph(
     config = ConfigManager(session).get_current()
     graph = LessonMemoryService(session, config).build_graph(
         category=category,
+        graph_filter=graph_filter,
         severity=severity,
         include_archived=include_archived,
         graph_default=graph_default,
