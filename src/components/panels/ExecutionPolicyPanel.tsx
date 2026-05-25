@@ -25,7 +25,10 @@ export function ExecutionPolicyPanel({ data }: { data: ExecutionPolicyData }) {
         </div>
         <div className="flex justify-between">
           <span className="text-zinc-400">Order type</span>
-          <span>{orderTypeLabel(data.orderTypeDefault ?? "marketable_limit_ioc")}</span>
+          <span>
+            {(data as { orderTypeLabel?: string }).orderTypeLabel ??
+              orderTypeLabel(data.orderTypeDefault ?? "marketable_limit_ioc")}
+          </span>
         </div>
         {data.selectedSymbol && (
           <div className="flex justify-between">
@@ -37,7 +40,11 @@ export function ExecutionPolicyPanel({ data }: { data: ExecutionPolicyData }) {
         {data.latestLog && (
           <p className="text-xs text-zinc-400">
             Latest: {data.latestLog.symbol} —{" "}
-            {orderStatusLabel(String((data.latestLog as Record<string, unknown>).status_label ?? data.latestLog.status))}
+            {String(
+              (data.latestLog as Record<string, unknown>).statusLabel ??
+                (data.latestLog as Record<string, unknown>).status_label ??
+                orderStatusLabel(data.latestLog.status)
+            )}
             {data.latestLog.rejectReason || (data.latestLog as Record<string, unknown>).reject_reason_plain
               ? ` — ${rejectReasonPlain(
                   String(

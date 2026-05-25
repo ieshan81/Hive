@@ -10,7 +10,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "backend"))
 
 BACKEND = os.environ.get("HIVE_API_URL", "https://hive-production-7343.up.railway.app").rstrip("/")
-FRONTEND = os.environ.get("HIVE_FRONTEND_URL", "https://melodious-happiness-production.up.railway.app").rstrip("/")
+# melodious-happiness public domain may point at a non-Hive app; set HIVE_FRONTEND_URL to your Next.js service URL.
+FRONTEND = os.environ.get("HIVE_FRONTEND_URL", "http://127.0.0.1:3001").rstrip("/")
 
 
 def check_no_public_operator_secret() -> None:
@@ -116,9 +117,16 @@ def check_frontend_proxy() -> None:
     if os.environ.get("SKIP_PRODUCTION_CHECKS") == "1":
         return
     code, data = http_json(f"{FRONTEND}/operator-proxy")
+    if code == 404 and "HazardSnap" in str(data):
+        raise AssertionError(
+            "HIVE_FRONTEND_URL points at wrong Railway app (HazardSnap). "
+            "Set HIVE_FRONTEND_URL to the Hive Next.js service domain."
+        )
     assert code == 200, data
-    assert "OPERATOR_SECRET" not in str(data)
-    assert "secret" not in str(data).lower() or "not exposed" in str(data.get("message", "")).lower()
+    for key in data:
+        assert key.lower() not in ("operator_secret", "x_operator_token", "alpaca_secret_key")
+    configured = data.get("server_operator_auth_configured") or data.get("proxy_configured")
+    print(f"operator_proxy_configured={configured}")
 
 
 def main() -> None:

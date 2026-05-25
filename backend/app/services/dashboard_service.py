@@ -38,6 +38,7 @@ from app.services.backtest_engine import BacktestEngine
 from app.services.session_engine import SessionEngine
 from app.services.strategy_engine import StrategyEngine
 from app.services.order_metrics import order_summary
+from app.services.order_display import order_type_label
 
 
 def _empty_state(message: str) -> dict[str, Any]:
@@ -659,7 +660,7 @@ def build_dashboard(session: Session) -> dict[str, Any]:
             "paperOrdersEnabled": paper_status.get("paper_orders_enabled", False),
             "liveOrdersEnabled": paper_status.get("live_orders_enabled", False),
             "brokerMode": paper_status.get("broker_mode_detected"),
-            "orderTypeDefault": exec_cfg.get("order_type_default", "marketable_limit_ioc"),
+            "orderTypeLabel": order_type_label(exec_cfg.get("order_type_default", "marketable_limit_ioc")),
             "maxOrdersPerCycle": exec_cfg.get("max_orders_per_cycle", 1),
             "latestLog": serialize_exec(exec_logs[0]) if exec_logs else None,
             "whyNoOrder": truth_message,
@@ -722,7 +723,7 @@ def _safety_banner(session: Session, config: dict, paper_status: dict) -> dict:
 def _enrich_dashboard_order(o) -> dict:
     from app.services.order_display import enrich_order_record
 
-    return enrich_order_record(
+    row = enrich_order_record(
         {
             "symbol": o.symbol,
             "side": o.side,
@@ -734,12 +735,13 @@ def _enrich_dashboard_order(o) -> dict:
             "orderType": o.order_type,
         }
     )
+    return {k: v for k, v in row.items() if k not in ("status", "orderType", "order_type", "outcome_bucket")}
 
 
 def serialize_exec(row: ExecutionLog) -> dict:
-    from app.services.order_display import enrich_execution_row
+    from app.services.order_display import enrich_execution_row, reject_reason_plain, order_status_label
 
-    return enrich_execution_row(
+    enriched = enrich_execution_row(
         {
             "eventId": row.event_id,
             "symbol": row.symbol,
@@ -751,3 +753,13 @@ def serialize_exec(row: ExecutionLog) -> dict:
             "order_type": "marketable_limit_ioc",
         }
     )
+    return {
+        "eventId": enriched.get("eventId"),
+        "symbol": enriched.get("symbol"),
+        "statusLabel": enriched.get("status_label"),
+        "rejectReasonPlain": enriched.get("reject_reason_plain"),
+        "limitPriceDisplay": enriched.get("limit_price_display"),
+        "tif": enriched.get("tif"),
+        "side": enriched.get("side"),
+        "isRejected": enriched.get("is_rejected"),
+    }
