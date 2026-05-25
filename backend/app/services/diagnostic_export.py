@@ -75,7 +75,6 @@ def _paper_learning_status_export(
         "scheduler_enabled": bool(sched.get("scheduler_enabled")),
         "current_mode": display.get("current_mode"),
         "scheduler": sched,
-        "autonomous_status": apl_svc.status(),
     }
 
 

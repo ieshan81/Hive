@@ -95,6 +95,7 @@ class PromotionReadinessService:
 
         return {
             "status": "ok",
+            "live_promotion_locked": checks["live_lock_locked"],
             "ready_for_tiny_live_request": ready,
             "gaps": gaps,
             "checks": checks,
