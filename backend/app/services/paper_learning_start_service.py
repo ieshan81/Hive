@@ -91,7 +91,7 @@ def start_fresh_paper_learning(session: Session, operator: str = "operator") -> 
     return {
         "status": "ok",
         "message": "Fresh paper learning started. Scheduler will run push-pull ticks. Live remains locked.",
-        "current_mode": "paper_learning",
+        "current_mode": "push_pull_paper_learning",
         "paper_orders_enabled": True,
         "mode_enabled": True,
         "scheduler_enabled": True,

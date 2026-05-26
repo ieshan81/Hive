@@ -266,13 +266,28 @@ class PushPullEngineService:
             .order_by(SettingsActionAudit.created_at.desc())
         ).first()
         details = dict(audit.details_json or {}) if audit and audit.details_json else {}
-        reason = details.get("reason") or details.get("action") or "scan_complete"
+        plain = details.get("plain_summary")
+        reason = details.get("reason") or details.get("action") or "no_approved_candidate"
+        if not plain:
+            scanned = details.get("symbols_scanned_count")
+            if scanned is not None:
+                plain = f"Scanned {scanned} symbols."
+                rb = details.get("reason_breakdown") or {}
+                if rb:
+                    parts = [f"{v} {k.replace('_', ' ')}" for k, v in rb.items()]
+                    plain += f" No approved candidate: {', '.join(parts[:6])}."
+            else:
+                plain = OPERATOR_LABELS.get(reason, f"Last tick: {reason.replace('_', ' ')}")
         return {
             "tick_at": tick_at,
-            "result": details.get("status", "ok"),
-            "plain": OPERATOR_LABELS.get(reason, f"Last tick: {reason}"),
+            "result": details.get("result") or reason,
+            "plain": plain,
             "orders_created": int(details.get("orders_created") or details.get("new_orders") or 0),
             "reason": reason,
+            "symbols_scanned_count": details.get("symbols_scanned_count"),
+            "reason_breakdown": details.get("reason_breakdown"),
+            "approved_count": details.get("approved_count"),
+            "skipped_count": details.get("skipped_count"),
         }
 
 

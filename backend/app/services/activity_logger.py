@@ -14,9 +14,14 @@ def log_activity(
     event_type: str,
     message: str,
     details: Optional[dict[str, Any]] = None,
+    *,
+    commit: bool = True,
 ) -> ActivityLog:
     row = ActivityLog(event_type=event_type, message=message, details=details)
     session.add(row)
-    session.commit()
-    session.refresh(row)
+    if commit:
+        session.commit()
+        session.refresh(row)
+    else:
+        session.flush()
     return row

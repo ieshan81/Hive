@@ -14,14 +14,15 @@ from app.services.paper_learning_blockers import compute_push_pull_blockers
 
 
 def paper_learning_display_status(session: Session, config: Optional[dict] = None) -> dict[str, Any]:
-    """Push-pull paper learning truth — not legacy fast-training blockers."""
-    from app.services.autonomous_paper_scheduler import AutonomousPaperScheduler
+    """Push-pull paper learning truth — unified product_truth model."""
+    from app.services.product_truth_service import product_truth
 
     cfg = config or ConfigManager(session).get_current()
+    truth = product_truth(session, cfg)
     block = compute_push_pull_blockers(session, cfg)
-    sched = AutonomousPaperScheduler(session, cfg).status()
-    mode_on = bool(block.get("mode_enabled"))
-    can_place = bool(block.get("can_place_paper_orders"))
+    sched = truth.get("scheduler") or {}
+    mode_on = bool(truth.get("operator_desired_paper_learning"))
+    can_place = bool(truth.get("effective_can_place_paper_orders"))
 
     try:
         from app.services.safe_responses import safe_confidence_summary
@@ -45,21 +46,17 @@ def paper_learning_display_status(session: Session, config: Optional[dict] = Non
     ghosts = recon.ghost_position_candidates()
     broker_truth = "Synced" if not ghosts else "Needs Review"
 
+    current_mode = truth.get("current_mode") or "off"
+    plain = truth.get("operator_next_action") or ""
     if not mode_on:
-        current_mode = "paper_learning_off"
         plain = "Paper learning is OFF. Use Start Fresh Paper Learning on Mission Control."
     elif can_place:
-        current_mode = "paper_learning"
         plain = (
             "Push-pull paper learning is ON. The bot may place small paper trades under strict limits. "
             "Live trading remains locked."
         )
-    elif mode_on and sched.get("scheduler_enabled"):
-        current_mode = "paper_learning"
-        plain = "Paper learning is ON. Waiting for next push-pull tick or a stronger entry signal."
-    else:
-        current_mode = "paper_learning"
-        plain = "Paper learning is ON but execution is blocked — see Mission Control for the exact reason."
+    elif mode_on:
+        plain = plain or "Paper learning is ON. Waiting for next push-pull tick or a stronger entry signal."
 
     open_n = len(list(session.exec(select(PositionSnapshot).where(PositionSnapshot.qty > 0)).all()))
     allocator = block.get("allocator") or {}

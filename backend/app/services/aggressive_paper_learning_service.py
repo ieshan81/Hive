@@ -347,6 +347,11 @@ class AggressivePaperLearningService:
             return "spread_check", "Spread too wide for paper experiment"
         if self.cfg.get("require_liquidity_check") and not self._liquidity_ok(symbol):
             return "liquidity_check", "Insufficient liquidity for paper experiment"
+        from app.services.bar_freshness_service import BarFreshnessService
+
+        fresh = BarFreshnessService(self.session, self.config).check(symbol)
+        if not fresh.get("executable"):
+            return "data_stale", fresh.get("plain") or "Price data stale"
         from app.services.account_pair_eligibility_service import AccountPairEligibilityService
         from app.services.session_engine import SessionEngine
 

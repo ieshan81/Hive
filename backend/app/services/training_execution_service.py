@@ -391,70 +391,34 @@ class TrainingExecutionService:
             return {"status": "blocked", "blockers": pf["blockers"]}
 
         monitor = self.monitor_exits()
-        scan = self.pl.scan_experiment_eligibility()
-        decisions = []
-        from app.database import StrategyRegistry
-        from app.services.account_pair_eligibility_service import AccountPairEligibilityService
+        from app.services.push_pull_scan_service import PushPullScanService
 
-        elig_svc = AccountPairEligibilityService(self.session, self.config)
-        tried_any_symbol = False
-
-        for row in scan.get("eligible", [])[:3]:
-            reg = self.session.exec(
-                select(StrategyRegistry).where(StrategyRegistry.strategy_id == row.get("strategy_id"))
-            ).first()
-            symbols = (reg.symbols if reg else None) or ["BTC/USD"]
-            if not isinstance(symbols, list):
-                symbols = [str(symbols)]
-            tradeable = elig_svc.filter_tradeable_symbols(symbols, strategy_id=row.get("strategy_id", ""))
-            if not tradeable:
-                continue
-            sym = tradeable[0]
-            tried_any_symbol = True
-            ev = self.pl.evaluate(row["strategy_id"], sym, side="buy")
-            if ev.get("reason_code") == "account_pair_eligibility":
-                continue
-            if ev.get("decision") == "approved":
-                dec_row = self.session.exec(
-                    select(PaperExperimentDecision)
-                    .where(PaperExperimentDecision.strategy_id == row["strategy_id"])
-                    .order_by(PaperExperimentDecision.created_at.desc())
-                ).first()
-                if dec_row:
-                    ex = self.execute_approved_decision(dec_row.id)
-                    decisions.append({"evaluate": ev, "execute": ex})
-                    break
-
-        if not decisions:
-            if scan.get("eligible") and not tried_any_symbol:
-                return {
-                    "status": "ok",
-                    "action": "no_trade",
-                    "reason": "no_account_eligible_symbols",
-                    "message": "No account-eligible symbols for paper buy in current balances.",
-                    "monitor": monitor,
-                    "decisions": [],
-                    "broker_mode": "paper",
-                    "live_trading_locked": True,
-                    "orders_submitted": False,
-                }
+        tick = PushPullScanService(self.session, self.config).run_tick_scan()
+        orders_submitted = tick.get("order_count", 0) > 0
+        if orders_submitted:
             return {
                 "status": "ok",
-                "action": "no_trade",
-                "reason": "no_approved_candidate",
+                "action": "trade",
+                "reason": "entry_executed",
+                "message": tick.get("plain_summary"),
                 "monitor": monitor,
-                "decisions": [],
+                "tick_summary": tick,
+                "decisions": tick.get("decisions", []),
                 "broker_mode": "paper",
                 "live_trading_locked": True,
-                "orders_submitted": False,
+                "orders_submitted": True,
             }
-
         return {
             "status": "ok",
+            "action": "no_trade",
+            "reason": tick.get("result") or "no_approved_candidate",
+            "message": tick.get("plain_summary"),
             "monitor": monitor,
-            "decisions": decisions,
+            "tick_summary": tick,
+            "decisions": tick.get("decisions", []),
             "broker_mode": "paper",
             "live_trading_locked": True,
+            "orders_submitted": False,
         }
 
     def _training_memory(self, mtype: str, dec: PaperExperimentDecision, codes: list) -> None:

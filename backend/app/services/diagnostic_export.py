@@ -1268,6 +1268,13 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             ).universe_status(session, cfg_brain),
             export_errors,
         ),
+        "universe_scan_summary.json": safe_export_section(
+            "universe_scan_summary.json",
+            lambda: __import__(
+                "app.services.universe_service", fromlist=["universe_scan_summary"]
+            ).universe_scan_summary(session, cfg_brain),
+            export_errors,
+        ),
         "push_pull_signals.json": safe_export_section(
             "push_pull_signals.json",
             lambda: __import__(

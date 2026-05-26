@@ -231,6 +231,10 @@ class AutonomousPaperLearningService:
                 "orders_created": 0,
             }
 
+        from app.services.activity_logger import log_activity
+
+        log_activity(self.session, "tick_started", "Push-pull tick started", {"operator": operator}, commit=False)
+
         orders_before = self._order_count()
         result = self.ft.run_once(actor=operator)
         orders_after = self._order_count()
@@ -250,9 +254,38 @@ class AutonomousPaperLearningService:
             out["message"] = entries.get("message") or "No account-eligible symbols for paper buy."
             out["orders_submitted"] = False
         self.lease.release(holder, out)
-        self._audit("autonomous_run_one_cycle", operator, {"new_orders": out["orders_created"]})
+        entries = result.get("entries") or {}
+        tick_summary = entries.get("tick_summary") or result.get("tick_summary") or {}
+        audit_payload = {
+            "new_orders": out["orders_created"],
+            "orders_created": out["orders_created"],
+            "action": out.get("action") or entries.get("action"),
+            "reason": out.get("reason") or entries.get("reason") or tick_summary.get("result"),
+            "plain_summary": tick_summary.get("plain_summary") or out.get("message"),
+            **{k: tick_summary[k] for k in (
+                "symbols_scanned_count",
+                "active_symbols_count",
+                "blocked_symbols_count",
+                "push_signals_found",
+                "approved_count",
+                "skipped_count",
+                "order_count",
+                "reason_breakdown",
+            ) if k in tick_summary},
+        }
+        self._audit("autonomous_run_one_cycle", operator, audit_payload)
+        from app.services.activity_logger import log_activity
+
+        plain = tick_summary.get("plain_summary") or f"Tick complete — {out.get('orders_created', 0)} orders"
+        log_activity(
+            self.session,
+            "tick",
+            plain,
+            {"operator": operator, **audit_payload},
+            commit=False,
+        )
         self.session.flush()
-        return out
+        return {**out, "tick_summary": tick_summary}
 
     def run_backtest_lab_now(self, *, operator: str = "operator", limit: int = 3) -> dict[str, Any]:
         lab = ResearchLabService(self.session)

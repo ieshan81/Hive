@@ -63,11 +63,15 @@ class PromotionReadinessService:
             gaps.append(f"Need {min_trades} closed paper trades (have {len(closed)})")
 
         conf = ConfidenceEngine(self.session, self.config).summary()
-        overall = conf.get("overall", 0)
+        overall_raw = conf.get("overall")
+        overall = float(overall_raw) if overall_raw is not None else 0.0
         min_conf = float(self.criteria.get("min_confidence_for_tiny_live", 61))
-        checks["confidence_threshold"] = overall >= min_conf
-        if not checks["confidence_threshold"]:
-            gaps.append(f"Confidence {overall} below {min_conf}")
+        no_evidence = conf.get("confidence_state") == "no_evidence"
+        checks["confidence_threshold"] = (not no_evidence) and overall >= min_conf
+        if no_evidence:
+            gaps.append("No post-reset paper evidence yet — confidence cannot support live promotion")
+        elif not checks["confidence_threshold"]:
+            gaps.append(f"Confidence {overall:.0f} below {min_conf}")
 
         sess = SessionEngine().detect()
         checks["market_calendar_ok"] = sess.calendar_available

@@ -104,9 +104,30 @@ def test_universe_and_activity_apis():
         u = universe_status(session)
         assert u["status"] == "ok"
         assert "groups" in u
+        assert "total_symbols" in u
         a = activity_feed(session)
         assert a["status"] == "ok"
         assert "events" in a
+
+
+def test_universe_merge_from_radar_when_db_empty():
+    from unittest.mock import patch
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+
+    def fake_scan(self, limit=25):
+        return {
+            "items": [
+                {"symbol": "BTC/USD", "broker_supported": True, "price": 1.0, "source": "alpaca"},
+                {"symbol": "ETH/USD", "broker_supported": True, "price": 2.0, "source": "alpaca"},
+            ]
+        }
+
+    with patch("app.services.universe_builder.AttentionRadarService.scan", fake_scan):
+        with Session(engine) as session:
+            u = universe_status(session)
+            assert u["total_symbols"] >= 2
 
 
 def test_performance_fresh_baseline():
@@ -136,6 +157,7 @@ def main():
     run("mission_control_blockers", test_mission_control_no_legacy_blockers)
     run("primary_blocker", test_mission_control_primary_blocker_when_off)
     run("universe_activity", test_universe_and_activity_apis)
+    run("universe_radar_merge", test_universe_merge_from_radar_when_db_empty)
     run("performance_baseline", test_performance_fresh_baseline)
     run("blockers_plain", test_blockers_plain_language)
     print("ALL POST-NUKE PRODUCT CHECKS PASSED")
