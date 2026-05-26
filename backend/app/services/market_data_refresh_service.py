@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from typing import Any, Optional
 
@@ -65,7 +66,9 @@ class MarketDataRefreshService:
         failed: list[dict] = []
         provider_errors: list[str] = []
 
-        for sym in target:
+        for idx, sym in enumerate(target):
+            if idx > 0:
+                time.sleep(0.35)  # Alpaca rate-limit spacing
             try:
                 asset = "crypto" if "/" in sym else "stock"
                 fetch = self.hist.fetch_and_store(
@@ -85,7 +88,7 @@ class MarketDataRefreshService:
                     if fetch.get("message"):
                         provider_errors.append(f"{sym}: {fetch['message'][:120]}")
                     continue
-                chk = self.freshness.check(sym, timeframe=timeframe)
+                chk = self.freshness.check_db_only(sym, timeframe=timeframe)
                 refreshed.append(
                     {
                         "symbol": sym,
@@ -96,10 +99,17 @@ class MarketDataRefreshService:
                     }
                 )
             except Exception as exc:
+                try:
+                    self.session.rollback()
+                except Exception:
+                    pass
                 failed.append({"symbol": sym, "reason": str(exc)[:200]})
                 provider_errors.append(f"{sym}: {str(exc)[:120]}")
 
-        self.session.flush()
+        try:
+            self.session.flush()
+        except Exception:
+            self.session.rollback()
         fresh_n = sum(1 for r in refreshed if r.get("fresh"))
         stale_n = sum(1 for r in refreshed if not r.get("fresh")) + len(
             [s for s in target if s not in [r["symbol"] for r in refreshed]]
@@ -132,7 +142,7 @@ class MarketDataRefreshService:
         target = self._resolve_symbols(asset_type, symbols)
         rows: list[dict] = []
         for sym in target:
-            chk = self.freshness.check(sym, timeframe=timeframe)
+            chk = self.freshness.check_db_only(sym, timeframe=timeframe)
             age_min = None
             if chk.get("staleness_hours") is not None:
                 age_min = round(float(chk["staleness_hours"]) * 60, 1)
@@ -188,7 +198,7 @@ class MarketDataRefreshService:
                     continue
                 out.append(sym)
 
-        return out[:40]
+        return out[:25]
 
     def _log_refresh_done(self, out: dict, operator: str) -> None:
         msg = (

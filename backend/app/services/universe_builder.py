@@ -145,7 +145,11 @@ def build_merged_universe(session: Session, config: Optional[dict] = None, *, li
         pair = pair_map.get(sym, {})
         eligible = pair.get("status") == "eligible"
         blocked_reason = pair.get("reason")
-        fresh = bar_svc.check(sym) if "/" in sym or sym.endswith("USD") else {"fresh": True, "executable": True, "bar_freshness": "unknown", "plain": ""}
+        fresh = (
+            bar_svc.check_db_only(sym)
+            if "/" in sym or sym.endswith("USD")
+            else {"fresh": True, "executable": True, "bar_freshness": "unknown", "plain": ""}
+        )
         bar_ok = bool(fresh.get("executable"))
         broker_ok = bool(base.get("broker_supported", True)) and eligible
 
