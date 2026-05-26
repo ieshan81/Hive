@@ -40,6 +40,9 @@ export function DangerZonePanel() {
       setMsg(`Confirmation failed. Type exactly: ${data.required ?? "NUKE CAGED HIVE"}`);
       return;
     }
+    if (res.ok) {
+      window.dispatchEvent(new CustomEvent("hive-nuke-complete"));
+    }
     setMsg(res.ok ? String(data?.message ?? "Nuke complete.") : res.error ?? "Failed");
   }
 

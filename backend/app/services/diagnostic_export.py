@@ -537,7 +537,12 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         recon = {"status": "degraded", "error": type(recon_exc).__name__, "message": str(recon_exc)[:200]}
     from app.services.lesson_memory_service import LessonMemoryService
 
-    lesson_rows = list(session.exec(select(LessonNode).order_by(LessonNode.last_seen_at.desc())).all())
+    from app.services.nuke_epoch_service import filter_lessons_post_nuke, filter_rows_post_nuke, nuke_status_export
+
+    lesson_rows = filter_lessons_post_nuke(
+        session,
+        list(session.exec(select(LessonNode).order_by(LessonNode.last_seen_at.desc())).all()),
+    )
     edge_rows = list(session.exec(select(MemoryEdge)).all())
     evidence_rows = list(session.exec(select(MemoryEvidence)).all())
     memory_graph = LessonMemoryService(session, config).build_graph()
@@ -591,7 +596,10 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
     ai_bundle = {
         "ai_reviews.json": ai_reviews_all,
         "ai_usage_logs.json": [_serialize_row(r) for r in session.exec(select(AIUsageLog)).all()],
-        "ai_memories.json": [_serialize_row(r) for r in session.exec(select(AIMemory)).all()],
+        "ai_memories.json": [
+            _serialize_row(r)
+            for r in filter_rows_post_nuke(session, list(session.exec(select(AIMemory)).all()))
+        ],
         "ai_config_proposals.json": [_serialize_row(r) for r in session.exec(select(AIConfigProposal)).all()],
         "ai_strategy_notes.json": [],
         "ai_review_freshness.json": {
@@ -1169,7 +1177,10 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         "blocked_trades.json": blocked_data,
         "risk_events.json": risk_data,
         "ai_reviews.json": [_serialize_row(r) for r in session.exec(select(AIReview)).all()],
-        "ai_memories.json": [_serialize_row(r) for r in session.exec(select(AIMemory)).all()],
+        "ai_memories.json": [
+            _serialize_row(r)
+            for r in filter_rows_post_nuke(session, list(session.exec(select(AIMemory)).all()))
+        ],
         "ai_config_proposals.json": [_serialize_row(r) for r in session.exec(select(AIConfigProposal)).all()],
         "ai_usage_logs.json": [_serialize_row(r) for r in session.exec(select(AIUsageLog)).all()],
         "positions.json": [_serialize_row(r) for r in session.exec(select(PositionSnapshot)).all()],
@@ -1196,6 +1207,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         "system_summary.md": "\n".join(summary_lines),
         "dashboard_snapshot.json": dashboard,
         "memory_graph.json": brain_exports.get("hive_brain_graph.json", memory_graph) if brain_exports else memory_graph,
+        "ai_memory_graph.json": brain_exports.get("hive_brain_graph.json", memory_graph) if brain_exports else memory_graph,
         "lesson_nodes.json": [_lesson_row(r) for r in lesson_rows],
         "memory_edges.json": [_serialize_row(r) for r in edge_rows],
         "memory_evidence.json": [_serialize_row(r) for r in evidence_rows],

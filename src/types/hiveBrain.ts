@@ -41,6 +41,7 @@ export interface HiveBrainGraphEdge {
 
 export interface HiveBrainGraphResponse {
   status: string;
+  fresh_brain?: boolean;
   center?: HiveBrainGraphNode | null;
   clusters?: { id: string; label: string; shape?: string; color?: string; child_count?: number }[];
   nodes: HiveBrainGraphNode[];

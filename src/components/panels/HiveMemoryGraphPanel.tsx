@@ -66,6 +66,15 @@ export function HiveMemoryGraphPanel({ compact = false }: Props) {
     load();
   }, [load]);
 
+  useEffect(() => {
+    const onNuke = () => {
+      setGraph(null);
+      void load();
+    };
+    window.addEventListener("hive-nuke-complete", onNuke);
+    return () => window.removeEventListener("hive-nuke-complete", onNuke);
+  }, [load]);
+
   async function openNodeDrawer(nodeId: string) {
     setDrawerLoading(true);
     setDrawerNode(null);
@@ -91,9 +100,11 @@ export function HiveMemoryGraphPanel({ compact = false }: Props) {
   }
 
   const graphMeta = graph?.meta;
-  const nodeCount = graph?.nodes?.filter((n) => n.id !== "hive").length ?? 0;
+  const learnedNodes = Number(graphMeta?.learned_memory_nodes ?? 0);
+  const skeletonNodes = Number(graphMeta?.system_skeleton_nodes ?? 0);
+  const freshBrain = graph?.fresh_brain === true || graphMeta?.fresh_brain === true;
   const showError = !loading && meta.error;
-  const showEmpty = !loading && !meta.error && nodeCount === 0;
+  const showEmpty = !loading && !meta.error && (freshBrain || learnedNodes === 0);
 
   return (
     <>
@@ -130,10 +141,9 @@ export function HiveMemoryGraphPanel({ compact = false }: Props) {
           </button>
           <span className="text-[9px] text-slate-600 ml-auto">Click cluster to expand/collapse · pan/zoom/minimap</span>
         </div>
-        {graphMeta && (
+        {graphMeta && !freshBrain && (
           <p className="text-[9px] text-slate-600 mb-2 text-center">
-            compression {String(graphMeta.compression_ratio ?? "—")} · AI lessons{" "}
-            {String(graphMeta.ai_learning_memory_count ?? 0)} · nodes {String(graphMeta.visible_nodes ?? nodeCount)} ·{" "}
+            learned {String(learnedNodes)} · skeleton {String(skeletonNodes)} ·{" "}
             {String(graphMeta.layout_mode ?? "hierarchical")}
           </p>
         )}
@@ -147,8 +157,21 @@ export function HiveMemoryGraphPanel({ compact = false }: Props) {
             expectedShape='{ status: "ok", nodes: [...], edges: [...], legend: [...] }'
           />
         ) : showEmpty ? (
-          <EmptyState message="No nodes in Hive Brain graph." className="min-h-[200px]" />
-        ) : graph ? (
+          <div className="min-h-[200px] flex flex-col items-center justify-center text-center px-4">
+            <EmptyState
+              message={String(
+                graphMeta?.empty_state_headline ?? "Fresh brain. No learned memories yet."
+              )}
+              className="min-h-0"
+            />
+            <p className="text-[11px] text-slate-500 mt-2 max-w-md">
+              {String(
+                graphMeta?.empty_state_subtext ??
+                  "Paper learning is available. The next push-pull tick will create new lessons."
+              )}
+            </p>
+          </div>
+        ) : graph && !freshBrain ? (
           <>
             <HiveBrainCanvas
               graphNodes={graph.nodes}
@@ -161,7 +184,7 @@ export function HiveMemoryGraphPanel({ compact = false }: Props) {
               heightClass={compact ? "min-h-[280px] h-[280px]" : "min-h-[360px] h-[360px]"}
             />
             <p className="text-[10px] text-slate-500 mt-2 text-center">
-              {nodeCount} nodes · pan/zoom · minimap · fit-view · fullscreen · position drawer shows broker proof
+              {learnedNodes} learned · pan/zoom · minimap · fit-view · fullscreen
             </p>
           </>
         ) : null}

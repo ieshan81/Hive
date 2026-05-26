@@ -97,11 +97,17 @@ class PushPullEngineService:
         return {"status": "ok", "decisions": out[:limit], "count": len(out[:limit])}
 
     def lessons(self, limit: int = 40) -> dict[str, Any]:
+        from app.services.nuke_epoch_service import filter_lessons_post_nuke, get_latest_nuke_epoch
+
         rows = list(
-            self.session.exec(select(LessonNode).order_by(LessonNode.created_at.desc()).limit(limit)).all()
+            self.session.exec(select(LessonNode).order_by(LessonNode.created_at.desc()).limit(limit * 3)).all()
         )
+        rows = filter_lessons_post_nuke(self.session, rows)[:limit]
+        nuke = get_latest_nuke_epoch(self.session)
         return {
             "status": "ok",
+            "fresh_brain": bool(nuke and len(rows) == 0),
+            "nuke_epoch": nuke,
             "lessons": [
                 {
                     "id": r.id,

@@ -22,6 +22,15 @@ export function AIManagerLearningPanel() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    const onNuke = () => {
+      setMemories([]);
+      void load();
+    };
+    window.addEventListener("hive-nuke-complete", onNuke);
+    return () => window.removeEventListener("hive-nuke-complete", onNuke);
+  }, [load]);
+
   return (
     <section className="space-y-4">
       <GlassPanel title="AI Manager" icon={<Brain className="h-4 w-4" />}>
@@ -38,7 +47,9 @@ export function AIManagerLearningPanel() {
 
       <GlassPanel title="Human memory summaries">
         {memories.length === 0 ? (
-          <p className="text-sm text-slate-500">No lessons yet — run paper push-pull learning.</p>
+          <p className="text-sm text-slate-500">
+            {String(status?.headline ?? "Fresh brain. No learned memories yet. Paper learning is available.")}
+          </p>
         ) : (
           <ul className="space-y-2 max-h-[400px] overflow-y-auto">
             {memories.map((m) => (

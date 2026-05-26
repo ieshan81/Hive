@@ -49,6 +49,12 @@ export function HiveMindSection() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    const onNuke = () => void load();
+    window.addEventListener("hive-nuke-complete", onNuke);
+    return () => window.removeEventListener("hive-nuke-complete", onNuke);
+  }, [load]);
+
   const fr = mind?.ai_review_freshness;
 
   return (

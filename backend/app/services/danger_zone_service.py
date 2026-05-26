@@ -9,24 +9,30 @@ from sqlmodel import Session, delete, select
 
 from app.database import (
     AIReview,
+    AIMemory,
     ActivityLog,
     BlockedTrade,
     BrokerError,
     ExecutionLog,
     LessonNode,
+    MemoryEdge,
+    MemoryEvidence,
     OrderRecord,
     PaperExperimentDecision,
     PaperExperimentOutcome,
     PositionSnapshot,
     ResearchBacktestRun,
     SettingsActionAudit,
-    StrategyRegistry,
+    StrategyMemory,
+    StrategyMemoryLink,
+    SymbolMemory,
     SystemHealth,
     TradeRecord,
 )
 from app.services.config_manager import ConfigManager
 from app.services.env_pause_service import env_pause_status
 from app.services.live_lock_tripwire import live_lock_tripwire_status
+from app.services.nuke_epoch_service import NUKE_EPOCH_ACTION, record_nuke_epoch
 
 
 KEEP_TABLES = frozenset({"system_health"})
@@ -76,6 +82,12 @@ class DangerZoneService:
         deleted = {}
         tables = [
             (LessonNode, "lessons"),
+            (AIMemory, "ai_memories"),
+            (MemoryEdge, "memory_edges"),
+            (MemoryEvidence, "memory_evidence"),
+            (StrategyMemory, "strategy_memories"),
+            (StrategyMemoryLink, "strategy_memory_links"),
+            (SymbolMemory, "symbol_memories"),
             (PaperExperimentDecision, "paper_decisions"),
             (PaperExperimentOutcome, "paper_outcomes"),
             (ExecutionLog, "execution_logs"),
@@ -87,14 +99,20 @@ class DangerZoneService:
             (ActivityLog, "activity_logs"),
             (AIReview, "ai_reviews"),
             (ResearchBacktestRun, "backtest_runs"),
-            (SettingsActionAudit, "settings_audits"),
         ]
         for model, name in tables:
             result = self.session.exec(delete(model))
             deleted[name] = result.rowcount if hasattr(result, "rowcount") else "ok"
 
+        # Clear operator audits but keep nuke epoch markers and scheduler state rows.
+        audit_del = self.session.exec(
+            delete(SettingsActionAudit).where(SettingsActionAudit.action != NUKE_EPOCH_ACTION)
+        )
+        deleted["settings_audits"] = audit_del.rowcount if hasattr(audit_del, "rowcount") else "ok"
+
         # Do not mutate learning/scheduler/pause config — env vars are the only global pause.
         self._ensure_health_row()
+        epoch = record_nuke_epoch(self.session, operator, deleted=deleted)
         env = env_pause_status()
         apl = dict((self.config.get("autonomous_paper_learning") or {}))
         desired_learning = bool(apl.get("mode_enabled"))
@@ -108,7 +126,11 @@ class DangerZoneService:
                 paper_broker=True,
                 live_trading_locked=True,
                 live_orders_enabled=False,
-                details_json={"deleted": deleted, "at": datetime.utcnow().isoformat() + "Z"},
+                details_json={
+                    "deleted": deleted,
+                    "at": datetime.utcnow().isoformat() + "Z",
+                    **epoch,
+                },
             )
         )
         self.session.flush()
@@ -124,6 +146,7 @@ class DangerZoneService:
             "status": "ok",
             "fresh_brain": True,
             "deleted": deleted,
+            "nuke_epoch": epoch,
             "env_pause": env,
             "desired_learning_enabled": desired_learning,
             "desired_scheduler_enabled": desired_scheduler,

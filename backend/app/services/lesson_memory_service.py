@@ -945,12 +945,18 @@ class LessonMemoryService:
         return sum(1 for lid in lesson_ids if self.set_category(lid, category))
 
     def hive_mind_summary(self) -> dict[str, Any]:
+        from app.services.nuke_epoch_service import filter_lessons_post_nuke, get_latest_nuke_epoch
+
         rows = list(self.session.exec(select(LessonNode).order_by(LessonNode.last_seen_at.desc()).limit(200)).all())
+        rows = filter_lessons_post_nuke(self.session, rows)
+        nuke = get_latest_nuke_epoch(self.session)
         trading = [r for r in rows if r.category == CATEGORY_TRADING and r.status == "active"][:8]
         system = [r for r in rows if r.category == CATEGORY_SYSTEM and r.status == "active"][:5]
         ai_rows = [r for r in rows if r.category == "ai_review_memory"][:5]
         patterns = [r for r in rows if r.occurrence_count >= 2 and r.status == "active"][:8]
         return {
+            "fresh_brain": bool(nuke and not rows),
+            "nuke_epoch": nuke,
             "trading_recent": [self._lesson_detail(r) for r in trading],
             "system_recent": [self._lesson_detail(r) for r in system],
             "ai_recent": [self._lesson_detail(r) for r in ai_rows],

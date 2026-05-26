@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from app.database import LessonNode
+from app.database import LessonNode, SettingsActionAudit
 from app.services.config_manager import ConfigManager
 from app.services.danger_zone_service import DangerZoneService
 from app.services.env_pause_service import env_pause_status
@@ -65,6 +65,91 @@ def test_nuke_preview():
         p = DangerZoneService(session).nuke_preview()
         assert p["confirmation_phrase"] == "NUKE CAGED HIVE"
         assert p["live_trading_enabled"] is False
+
+
+def test_nuke_clears_memory_tables_and_epoch():
+    from app.database import AIMemory, MemoryEdge, MemoryEvidence, SettingsActionAudit, StrategyMemory
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(LessonNode(memory_type="trade_lesson", title="t", summary="s", detailed_lesson="d"))
+        session.add(AIMemory(memory_type="ai", event="e", lesson="m"))
+        session.add(MemoryEdge(source_id="a", target_id="b", relation="rel"))
+        session.add(MemoryEvidence(lesson_id=1, evidence_type="note", payload={}))
+        session.add(StrategyMemory(strategy="s1", memory_key="k", lesson="sm"))
+        session.commit()
+        out = DangerZoneService(session).nuke_everything()
+        session.commit()
+        assert len(list(session.exec(select(LessonNode)).all())) == 0
+        assert len(list(session.exec(select(AIMemory)).all())) == 0
+        assert len(list(session.exec(select(MemoryEdge)).all())) == 0
+        assert len(list(session.exec(select(MemoryEvidence)).all())) == 0
+        assert len(list(session.exec(select(StrategyMemory)).all())) == 0
+        assert out.get("nuke_epoch", {}).get("nuke_completed_at")
+        epochs = list(
+            session.exec(
+                select(SettingsActionAudit).where(SettingsActionAudit.action == "nuke_epoch")
+            ).all()
+        )
+        assert len(epochs) >= 1
+
+
+def test_hive_brain_fresh_after_nuke():
+    from app.services.config_manager import ConfigManager
+    from app.services.hive_brain_graph_service import HiveBrainGraphService
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(
+            LessonNode(
+                memory_type="trade_lesson",
+                title="old",
+                summary="s",
+                detailed_lesson="d",
+                memory_level="core_ai_lesson",
+                status="active",
+                visible_in_graph=True,
+            )
+        )
+        session.commit()
+        cfg = ConfigManager(session).get_current()
+        DangerZoneService(session, cfg).nuke_everything()
+        session.commit()
+        graph = HiveBrainGraphService(session, cfg).build_full()
+        assert graph.get("fresh_brain") is True
+        assert len(graph.get("nodes") or []) == 0
+        assert graph.get("meta", {}).get("learned_memory_nodes") == 0
+
+
+def test_pre_nuke_lessons_hidden_by_epoch_filter():
+    from datetime import datetime, timedelta
+
+    from app.services.nuke_epoch_service import NUKE_EPOCH_ACTION, filter_lessons_post_nuke, record_nuke_epoch
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        old = LessonNode(
+            memory_type="trade_lesson",
+            title="ghost",
+            summary="s",
+            detailed_lesson="d",
+            created_at=datetime.utcnow() - timedelta(hours=2),
+        )
+        session.add(old)
+        session.commit()
+        record_nuke_epoch(session, "test", deleted={"lessons": 0})
+        session.commit()
+        visible = filter_lessons_post_nuke(session, list(session.exec(select(LessonNode)).all()))
+        assert len(visible) == 0
+        epochs = list(
+            session.exec(
+                select(SettingsActionAudit).where(SettingsActionAudit.action == NUKE_EPOCH_ACTION)
+            ).all()
+        )
+        assert len(epochs) == 1
 
 
 def test_nuke_deletes_lessons():
@@ -136,6 +221,9 @@ def main():
     run("push_pull", test_push_pull_status)
     run("execution_logs_scopes", test_execution_logs_scopes)
     run("nuke_preview", test_nuke_preview)
+    run("nuke_memory_tables", test_nuke_clears_memory_tables_and_epoch)
+    run("hive_brain_fresh", test_hive_brain_fresh_after_nuke)
+    run("nuke_epoch_filter", test_pre_nuke_lessons_hidden_by_epoch_filter)
     run("nuke_deletes", test_nuke_deletes_lessons)
     run("nuke_preserves_config", test_nuke_does_not_disable_learning_or_scheduler)
     run("diagnostic_sections", test_diagnostic_has_push_pull_sections)

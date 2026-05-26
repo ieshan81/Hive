@@ -9,6 +9,7 @@ from sqlmodel import Session, select
 from app.database import LessonNode
 from app.services.confidence_engine import ConfidenceEngine
 from app.services.config_manager import ConfigManager
+from app.services.nuke_epoch_service import filter_lessons_post_nuke, get_latest_nuke_epoch, nuke_status_export
 from app.services.push_pull_engine_service import PushPullEngineService
 
 
@@ -21,13 +22,21 @@ class AIManagerService:
     def status(self) -> dict[str, Any]:
         conf = self.confidence.summary()
         lessons = self.lessons(limit=5)
+        nuke = get_latest_nuke_epoch(self.session)
+        count = lessons.get("count", 0)
+        if nuke and count == 0:
+            headline = "Fresh brain. No memories yet. Paper learning available."
+        else:
+            headline = "What the bot learned from paper push-pull trading"
         return {
             "status": "ok",
-            "headline": "What the bot learned from paper push-pull trading",
+            "headline": headline,
+            "fresh_brain": bool(nuke and count == 0),
+            "nuke_status": nuke_status_export(self.session),
             "confidence_overall": conf.get("overall"),
             "confidence_label": conf.get("overall_label"),
             "can_unlock_live": False,
-            "recent_lessons_count": lessons.get("count", 0),
+            "recent_lessons_count": count,
             "questions_answered": [
                 "What did I do?",
                 "Why did I do it?",
@@ -39,10 +48,14 @@ class AIManagerService:
 
     def memories(self, limit: int = 40) -> dict[str, Any]:
         rows = list(
-            self.session.exec(select(LessonNode).order_by(LessonNode.created_at.desc()).limit(limit)).all()
+            self.session.exec(select(LessonNode).order_by(LessonNode.created_at.desc()).limit(limit * 3)).all()
         )
+        rows = filter_lessons_post_nuke(self.session, rows)[:limit]
+        nuke = get_latest_nuke_epoch(self.session)
         return {
             "status": "ok",
+            "fresh_brain": bool(nuke and len(rows) == 0),
+            "nuke_epoch": nuke,
             "memories": [
                 {
                     "id": r.id,

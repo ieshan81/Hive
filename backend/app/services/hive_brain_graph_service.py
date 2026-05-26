@@ -21,8 +21,14 @@ from app.services.memory_categories import (
 )
 from app.services.memory_consolidation_service import MemoryConsolidationService
 from app.services.memory_policy import load_memory_policy
+from app.services.nuke_epoch_service import filter_lessons_post_nuke, get_latest_nuke_epoch
 from app.services.position_hold_time_service import build_position_truth
 from app.services.symbol_normalize import broker_symbol as to_broker_sym
+
+FRESH_BRAIN_HEADLINE = "Fresh brain. No learned memories yet."
+FRESH_BRAIN_SUBTEXT = (
+    "Paper learning is available. The next push-pull tick will create new lessons."
+)
 
 
 def _cluster_for_lesson(lesson: LessonNode) -> str:
@@ -44,6 +50,107 @@ class HiveBrainGraphService:
         self.config = config
         self.policy = load_memory_policy(session, config)
 
+    def _build_fresh_brain_empty_payload(
+        self, nuke_epoch: dict[str, Any], *, show_raw: bool, expand_cluster: Optional[str]
+    ) -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "fresh_brain": True,
+            "nodes": [],
+            "edges": [],
+            "meta": {
+                "graph_mode": "hive_brain",
+                "fresh_brain": True,
+                "learned_memory_nodes": 0,
+                "system_skeleton_nodes": 0,
+                "visible_nodes": 0,
+                "show_raw": show_raw,
+                "expand_cluster": expand_cluster,
+                "empty_state_headline": FRESH_BRAIN_HEADLINE,
+                "empty_state_subtext": FRESH_BRAIN_SUBTEXT,
+                "nuke_epoch_id": nuke_epoch.get("nuke_epoch_id"),
+                "nuke_completed_at": nuke_epoch.get("nuke_completed_at"),
+                "post_nuke": True,
+            },
+        }
+
+    def _build_post_nuke_lesson_graph(
+        self,
+        lessons: list[LessonNode],
+        nuke_epoch: dict[str, Any],
+        *,
+        max_n: int,
+    ) -> dict[str, Any]:
+        nodes: list[dict] = [
+            {
+                "id": "hive",
+                "label": "HIVE BRAIN",
+                "type": "hive",
+                "severity": "LOW",
+                "confidence": 1.0,
+                "status": "active",
+                "count": len(lessons),
+                "x": 50,
+                "y": 50,
+                "color": "#00d1ff",
+                "stability": "core",
+            }
+        ]
+        edges: list[dict] = []
+        slots = max(0, max_n - 1)
+        for i, lesson in enumerate(lessons[:slots]):
+            angle = (2 * math.pi * i) / max(len(lessons[:slots]), 1)
+            nid = f"lesson-{lesson.id}"
+            nodes.append(
+                {
+                    "id": nid,
+                    "label": lesson.title[:24] + ("…" if len(lesson.title) > 24 else ""),
+                    "type": "lesson",
+                    "memory_level": lesson.memory_level,
+                    "memory_type": lesson.memory_type,
+                    "severity": lesson.severity,
+                    "confidence": lesson.confidence,
+                    "strength": getattr(lesson, "strength", 0.5),
+                    "status": lesson.status,
+                    "symbol": lesson.symbol,
+                    "strategy_name": lesson.strategy_name,
+                    "x": 50 + 22 * math.cos(angle),
+                    "y": 50 + 22 * math.sin(angle),
+                    "color": "#22d3ee" if lesson.memory_level == MEMORY_LEVEL_CORE else "#a78bfa",
+                    "evidence_count": lesson.occurrence_count,
+                    "post_nuke": True,
+                }
+            )
+            edges.append(
+                {
+                    "id": f"e-hive-{lesson.id}",
+                    "source": "hive",
+                    "target": nid,
+                    "relation": "learned_from",
+                    "weight": lesson.confidence,
+                    "weight_tier": "medium",
+                    "evidence_count": lesson.occurrence_count,
+                }
+            )
+        learned = sum(1 for n in nodes if n.get("type") == "lesson")
+        return {
+            "status": "ok",
+            "fresh_brain": False,
+            "nodes": nodes,
+            "edges": edges,
+            "meta": {
+                "graph_mode": "hive_brain",
+                "fresh_brain": False,
+                "learned_memory_nodes": learned,
+                "system_skeleton_nodes": 1,
+                "visible_nodes": len(nodes),
+                "post_nuke": True,
+                "nuke_epoch_id": nuke_epoch.get("nuke_epoch_id"),
+                "nuke_completed_at": nuke_epoch.get("nuke_completed_at"),
+                "empty_state_headline": None,
+            },
+        }
+
     def build(
         self,
         *,
@@ -52,6 +159,16 @@ class HiveBrainGraphService:
         max_nodes: Optional[int] = None,
     ) -> dict[str, Any]:
         max_n = max_nodes or int(self.policy.get("max_default_graph_nodes", 50))
+        nuke_epoch = get_latest_nuke_epoch(self.session)
+        lessons = self._select_lessons(show_raw, expand_cluster)
+        if nuke_epoch:
+            lessons = filter_lessons_post_nuke(self.session, lessons)
+            if not lessons:
+                return self._build_fresh_brain_empty_payload(
+                    nuke_epoch, show_raw=show_raw, expand_cluster=expand_cluster
+                )
+            return self._build_post_nuke_lesson_graph(lessons, nuke_epoch, max_n=max_n)
+
         nodes: list[dict] = [
             {
                 "id": "hive",
@@ -70,7 +187,6 @@ class HiveBrainGraphService:
         edges: list[dict] = []
         cluster_stats: dict[str, dict] = {}
 
-        lessons = self._select_lessons(show_raw, expand_cluster)
         raw_total = len(
             list(
                 self.session.exec(
@@ -391,6 +507,27 @@ class HiveBrainGraphService:
     ) -> dict[str, Any]:
         """Full hive-brain API contract."""
         base = self.build(show_raw=show_raw, expand_cluster=expand_cluster, max_nodes=max_nodes)
+        if base.get("fresh_brain"):
+            meta = base.get("meta") or {}
+            return {
+                "status": "ok",
+                "fresh_brain": True,
+                "center": None,
+                "clusters": [],
+                "nodes": [],
+                "edges": [],
+                "legend": COLOR_LEGEND,
+                "shape_legend": SHAPE_LEGEND,
+                "color_legend": COLOR_LEGEND,
+                "meta": {
+                    **meta,
+                    "layout_mode": "empty",
+                    "visible_labels": 0,
+                    "last_built_at": datetime.utcnow().isoformat() + "Z",
+                    "source_truth_status": "post_nuke_fresh",
+                    "data_freshness": "live",
+                },
+            }
         nodes = base["nodes"]
         edges = base["edges"]
         meta = base["meta"]
