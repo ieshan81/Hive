@@ -109,12 +109,13 @@ class PushPullEngineService:
                     "summary": r.summary or r.detailed_lesson,
                     "memory_type": r.memory_type,
                     "symbol": r.symbol,
-                    "strategy_name": r.strategy_id,
+                    "strategy_name": r.strategy_name,
                     "created_at": r.created_at.isoformat() + "Z" if r.created_at else None,
                     "lesson_plain": _lesson_plain(r),
                 }
                 for r in rows
             ],
+            "count": len(rows),
         }
 
     def export_tick_bundle(self) -> dict[str, Any]:
