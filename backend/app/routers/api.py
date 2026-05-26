@@ -155,8 +155,22 @@ def get_portfolio_decisions(cycle_run_id: str = "latest", session: Session = Dep
 
 
 @router.get("/execution/logs")
-def get_execution_logs(cycle_run_id: str = "latest", session: Session = Depends(get_session)):
+def get_execution_logs(
+    cycle_run_id: str = "latest",
+    scope: str | None = None,
+    limit: int = 100,
+    session: Session = Depends(get_session),
+):
+    from app.services.execution_logs_query_service import list_execution_logs
     from app.services.query_service import execution_logs_for_cycle
+
+    if scope:
+        return list_execution_logs(
+            session,
+            scope=scope,
+            cycle_run_id=cycle_run_id if cycle_run_id != "latest" else None,
+            limit=min(limit, 200),
+        )
 
     cid = resolve_cycle_run_id(session, cycle_run_id)
     rows = execution_logs_for_cycle(session, cycle_run_id)
@@ -654,12 +668,35 @@ def decisions_deferred(cycle_run_id: str = "latest", session: Session = Depends(
 
 
 @router.get("/decisions/orders")
-def decisions_orders(cycle_run_id: str = "latest", session: Session = Depends(get_session)):
+def decisions_orders(
+    cycle_run_id: str = "latest",
+    scope: str | None = "latest_tick",
+    limit: int = 100,
+    session: Session = Depends(get_session),
+):
     from app.services.decisions_service import orders_decisions
+    from app.services.execution_logs_query_service import list_execution_logs
+
+    if scope and scope not in ("cycle", "legacy"):
+        out = list_execution_logs(session, scope=scope, limit=min(limit, 200))
+        return {
+            "status": out.get("status", "ok"),
+            "scope": out.get("scope"),
+            "count": out.get("count", 0),
+            "orders": out.get("execution_logs", []),
+            "scheduler_windows": out.get("scheduler_windows"),
+            "empty_reason": out.get("empty_reason"),
+        }
 
     cid = resolve_cycle_run_id(session, cycle_run_id)
     rows = orders_decisions(session, cycle_run_id)
-    return {"status": "ok", "cycle_run_id": cid, "count": len(rows), "orders": rows}
+    return {
+        "status": "ok",
+        "cycle_run_id": cid,
+        "scope": "cycle",
+        "count": len(rows),
+        "orders": rows,
+    }
 
 
 @router.get("/decisions/lessons")

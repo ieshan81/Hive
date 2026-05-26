@@ -94,7 +94,7 @@ export function normalizeDeferred(response: unknown): DeferredDecision[] {
 }
 
 export function normalizeDecisionOrders(response: unknown): unknown[] {
-  return normalizeArrayResponse(response, ["orders", "orders_submitted"]);
+  return normalizeArrayResponse(response, ["orders", "orders_submitted", "execution_logs"]);
 }
 
 export function normalizeLessons(response: unknown): unknown[] {

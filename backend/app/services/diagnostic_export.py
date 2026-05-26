@@ -916,6 +916,30 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
                 ._allocator_confidence_score(),
                 export_errors,
             ),
+            "latest_tick_execution_logs.json": safe_export_section(
+                "latest_tick_execution_logs.json",
+                lambda: __import__(
+                    "app.services.execution_logs_query_service",
+                    fromlist=["list_execution_logs"],
+                ).list_execution_logs(session, scope="latest_tick", limit=100),
+                export_errors,
+            ),
+            "since_scheduler_enable_execution_logs.json": safe_export_section(
+                "since_scheduler_enable_execution_logs.json",
+                lambda: __import__(
+                    "app.services.execution_logs_query_service",
+                    fromlist=["list_execution_logs"],
+                ).list_execution_logs(session, scope="since_scheduler_enable", limit=200),
+                export_errors,
+            ),
+            "historical_execution_logs.json": safe_export_section(
+                "historical_execution_logs.json",
+                lambda: __import__(
+                    "app.services.execution_logs_query_service",
+                    fromlist=["list_execution_logs"],
+                ).list_execution_logs(session, scope="historical", limit=200),
+                export_errors,
+            ),
             "paper_experiment_config.json": [_serialize_row(r) for r in session.exec(select(PaperExperimentConfig)).all()],
             "paper_experiment_decisions.json": _annotate_source_window(
                 [_serialize_row(r) for r in session.exec(select(PaperExperimentDecision)).all()],
