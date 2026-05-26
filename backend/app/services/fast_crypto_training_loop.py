@@ -324,7 +324,24 @@ class FastCryptoTrainingLoop:
         entries_skipped = True
         entry_result: dict[str, Any] = {"status": "skipped", "reason": "entries_blocked"}
 
+        from app.services.push_pull_scan_service import PushPullScanService
+
+        score_only = PushPullScanService(self.session, self.config).run_tick_scan(max_evaluate=0)
+        score_only["result"] = "entries_blocked"
+        score_only["plain_summary"] = score_only.get("plain_summary") or "Scan complete — entries blocked by safety rules."
+
         if blockers:
+            plain_block = _blocker_plain(blockers)
+            score_only["plain_summary"] = (
+                f"{score_only.get('plain_summary', '')} Entries blocked: {plain_block}."
+            ).strip()
+            score_only["entry_blockers"] = blockers
+            entry_result = {
+                **entry_result,
+                "tick_summary": score_only,
+                "reason": blockers[0],
+                "message": plain_block,
+            }
             self._block_memory(
                 "fast_training_blocked",
                 {
@@ -337,7 +354,7 @@ class FastCryptoTrainingLoop:
             )
             return {
                 "status": "blocked" if not exit_only else "exit_only",
-                "message": "Paper cycle blocked — entries skipped; lesson recorded"
+                "message": f"Paper cycle blocked — {plain_block}"
                 if not exit_only
                 else "Exit monitor run — exits checked, new entries blocked",
                 "blockers": blockers,
@@ -346,6 +363,7 @@ class FastCryptoTrainingLoop:
                 "exit_monitor": exit_out,
                 "stale_reviews": stale_reviews,
                 "entries": entry_result,
+                "tick_summary": score_only,
                 "exit_only_enabled": exit_only,
                 "training_mode_enabled": bool(self.pl.cfg.get("mode_enabled")),
                 "fast_training_loop_enabled": bool(self.ft.get("fast_training_loop_enabled")),
@@ -364,6 +382,7 @@ class FastCryptoTrainingLoop:
             "exit_monitor": exit_out,
             "stale_reviews": stale_reviews,
             "entries": entry_result,
+            "tick_summary": entry_result.get("tick_summary") or score_only,
             "training_mode_enabled": True,
             "fast_training_loop_enabled": True,
             "orders_submitted": bool(entry_result.get("decisions")),
@@ -396,3 +415,18 @@ class FastCryptoTrainingLoop:
             "recommended": "/api/fast-training/run-once",
             "fast_training_loop_enabled": bool(self.ft.get("fast_training_loop_enabled")),
         }
+
+
+def _blocker_plain(blockers: list[str]) -> str:
+    labels = {
+        "open_position_blocks_duplicate_entry": "open position already held — duplicate entry protection",
+        "stale_open_position_blocks_entry": "stale open position blocks new entry",
+        "data_stale": "stale bar or quote data",
+        "spread_too_wide": "spread too wide",
+        "no_edge_after_cost": "no edge after cost",
+        "allocator_block": "allocator block",
+        "training_mode_disabled": "paper learning mode off",
+        "fast_training_loop_disabled": "scheduler loop disabled",
+    }
+    parts = [labels.get(b, b.replace("_", " ")) for b in blockers[:4]]
+    return ", ".join(parts) if parts else "safety blockers active"
