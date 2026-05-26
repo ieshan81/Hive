@@ -63,6 +63,13 @@ def paper_learning_display_status(session: Session, config: Optional[dict] = Non
         plain = "Paper learning is on but preflight blockers prevent new orders right now."
 
     open_n = len(list(session.exec(select(PositionSnapshot).where(PositionSnapshot.qty > 0)).all()))
+    allocator: dict[str, Any] = {}
+    try:
+        from app.services.capital_allocator import CapitalAllocatorService
+
+        allocator = CapitalAllocatorService(session, cfg).status_summary()
+    except Exception:
+        allocator = {"status": "error"}
 
     return {
         "mode_enabled": mode_on,
@@ -84,4 +91,10 @@ def paper_learning_display_status(session: Session, config: Optional[dict] = Non
         "plainMessage": plain,
         "blockers": blockers,
         "scheduler": sched,
+        "learning_capacity": {
+            "paper_trade_frequency": "opportunity_based",
+            "daily_paper_trade_cap": "no_fixed_cap",
+            "position_control": "allocator_exposure",
+        },
+        "capital_allocator": allocator,
     }

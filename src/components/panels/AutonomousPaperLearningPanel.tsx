@@ -54,7 +54,8 @@ export function AutonomousPaperLearningPanel() {
   }
 
   const sched = (status?.scheduler as Record<string, unknown>) || {};
-  const caps = (status?.caps as Record<string, unknown>) || {};
+  const capacity = (status?.learning_capacity as Record<string, unknown>) || (status?.caps as Record<string, unknown>) || {};
+  const allocator = (status?.capital_allocator as Record<string, unknown>) || {};
   const blockers = (status?.blockers as string[]) || [];
   const paperOn = Boolean(status?.paper_learning_on);
 
@@ -97,11 +98,33 @@ export function AutonomousPaperLearningPanel() {
         </ul>
       )}
 
-      <div className="text-[9px] text-slate-500 mb-3">
-        Caps: {String(caps.max_paper_trades_per_day ?? "—")} trades/day · $
-        {String(caps.max_paper_notional_per_trade_usd ?? "—")} notional ·{" "}
-        {String(caps.max_open_paper_positions ?? "—")} open
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3 text-[10px]">
+        <div className="rounded border border-white/10 p-2">
+          <div className="text-slate-500">Paper trade frequency</div>
+          <div className="font-semibold">{String(capacity.paper_trade_frequency || "opportunity_based")}</div>
+        </div>
+        <div className="rounded border border-white/10 p-2">
+          <div className="text-slate-500">Daily paper trade cap</div>
+          <div className="font-semibold">
+            {capacity.daily_paper_trade_cap == null ? "No fixed cap" : String(capacity.daily_paper_trade_cap)}
+          </div>
+        </div>
+        <div className="rounded border border-white/10 p-2">
+          <div className="text-slate-500">Position control</div>
+          <div className="font-semibold">{String(capacity.position_control || "allocator_exposure")}</div>
+        </div>
+        <div className="rounded border border-white/10 p-2">
+          <div className="text-slate-500">Live trading</div>
+          <div className="font-semibold text-rose-300/90">LOCKED</div>
+        </div>
       </div>
+
+      {allocator && (
+        <div className="text-[9px] text-slate-500 mb-3">
+          Allocator mode: {String(allocator.current_market_mode || "—")} · Deployable: $
+          {String(allocator.deployable_capital ?? "—")} · Broker: {String(allocator.broker_data_freshness || "—")}
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-2 mb-4">
         <button

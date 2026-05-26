@@ -21,6 +21,7 @@ const CARDS: DimCard[] = [
   { key: "risk", title: "Risk", scoreKey: "risk_discipline" },
   { key: "data_quality", title: "Data Quality", scoreKey: "data_quality" },
   { key: "broker", title: "Broker Compatibility", scoreKey: "broker_compatibility" },
+  { key: "allocator", title: "Allocator", scoreKey: "allocator_confidence" },
 ];
 
 export function ConfidenceLevelPanel() {

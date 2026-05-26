@@ -179,11 +179,10 @@ class FastCryptoTrainingLoop:
 
         self.pl.update_config(
             {
-                "max_experiment_trades_per_day": 1,
-                "max_experiment_trades_per_strategy_per_day": 1,
-                "max_open_experiment_positions": 1,
-                "max_experiment_notional_per_trade_usd": 10,
-                "default_experiment_notional_usd": 5,
+                "max_experiment_trades_per_day": 0,
+                "max_experiment_trades_per_strategy_per_day": 0,
+                "max_open_experiment_positions": 0,
+                "use_capital_allocator": True,
             }
         )
 
@@ -198,8 +197,8 @@ class FastCryptoTrainingLoop:
                     "fast_training_execute_orders": True,
                     "fast_training_max_notional_usd": 10,
                     "fast_training_default_notional_usd": 5,
-                    "fast_training_max_trades_per_day": 1,
-                    "fast_training_max_open_positions": 1,
+                    "fast_training_max_trades_per_day": 0,
+                    "fast_training_max_open_positions": 0,
                     "fast_training_require_exit_monitor": True,
                 },
                 "live_trading_enabled": False,

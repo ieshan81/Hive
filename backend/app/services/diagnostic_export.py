@@ -766,6 +766,69 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             "promotion_readiness.json": safe_export_section(
                 "promotion_readiness.json", promo_svc.checklist, export_errors
             ),
+            "capital_allocator_plan.json": safe_export_section(
+                "capital_allocator_plan.json",
+                lambda: __import__(
+                    "app.services.capital_allocator", fromlist=["CapitalAllocatorService"]
+                ).CapitalAllocatorService(session, cfg_brain).build_plan(),
+                export_errors,
+            ),
+            "capital_allocator_settings.json": safe_export_section(
+                "capital_allocator_settings.json",
+                lambda: __import__(
+                    "app.services.capital_allocator", fromlist=["CapitalAllocatorService"]
+                ).CapitalAllocatorService(session, cfg_brain).settings(),
+                export_errors,
+            ),
+            "capital_allocator_decisions.json": safe_export_section(
+                "capital_allocator_decisions.json",
+                lambda: {
+                    "decisions": __import__(
+                        "app.services.capital_allocator", fromlist=["CapitalAllocatorService"]
+                    ).CapitalAllocatorService(session, cfg_brain).recent_decisions(),
+                },
+                export_errors,
+            ),
+            "capital_allocator_errors.json": safe_export_section(
+                "capital_allocator_errors.json",
+                lambda: {
+                    "status": __import__(
+                        "app.services.capital_allocator", fromlist=["CapitalAllocatorService"]
+                    )
+                    .CapitalAllocatorService(session, cfg_brain)
+                    .status_summary()
+                    .get("status"),
+                    "warnings": __import__(
+                        "app.services.capital_allocator", fromlist=["CapitalAllocatorService"]
+                    )
+                    .CapitalAllocatorService(session, cfg_brain)
+                    .build_plan()
+                    .get("degraded_warnings", []),
+                },
+                export_errors,
+            ),
+            "paper_learning_capacity.json": safe_export_section(
+                "paper_learning_capacity.json",
+                lambda: __import__(
+                    "app.services.autonomous_paper_learning_service",
+                    fromlist=["AutonomousPaperLearningService"],
+                )
+                .AutonomousPaperLearningService(session, cfg_brain)
+                ._learning_capacity(),
+                export_errors,
+            ),
+            "paper_learning_scheduler.json": safe_export_section(
+                "paper_learning_scheduler.json", apl_sched.status, export_errors
+            ),
+            "allocator_confidence.json": safe_export_section(
+                "allocator_confidence.json",
+                lambda: __import__(
+                    "app.services.confidence_engine", fromlist=["ConfidenceEngine"]
+                )
+                .ConfidenceEngine(session, cfg_brain)
+                ._allocator_confidence_score(),
+                export_errors,
+            ),
             "paper_experiment_config.json": [_serialize_row(r) for r in session.exec(select(PaperExperimentConfig)).all()],
             "paper_experiment_decisions.json": [_serialize_row(r) for r in session.exec(select(PaperExperimentDecision)).all()],
             "paper_experiment_outcomes.json": [_serialize_row(r) for r in session.exec(select(PaperExperimentOutcome)).all()],

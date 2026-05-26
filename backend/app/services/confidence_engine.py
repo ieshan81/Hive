@@ -181,6 +181,24 @@ class ConfidenceEngine:
             "evidence": [f"{blocked} pairs blocked by account balance."],
         }
 
+    def _allocator_confidence_score(self) -> dict[str, Any]:
+        try:
+            from app.services.capital_allocator import CapitalAllocatorService
+
+            st = CapitalAllocatorService(self.session, self.config).status_summary()
+            div = st.get("diversification_health") or {}
+            score = float(div.get("concentration_score") or st.get("allocator_confidence") or 50)
+            if st.get("broker_data_freshness") != "fresh":
+                score = min(score, 40.0)
+            return {
+                "score": round(score, 1),
+                "market_mode": st.get("current_market_mode"),
+                "deployable_capital": st.get("deployable_capital"),
+                "evidence": [f"Diversification health: {div.get('healthy', False)}"],
+            }
+        except Exception as exc:
+            return {"score": 40.0, "evidence": [f"Allocator unavailable: {exc}"]}
+
     def compute_dimensions(self) -> dict[str, Any]:
         dims = {
             "trade_performance": self._trade_performance_score(),
@@ -190,6 +208,7 @@ class ConfidenceEngine:
             "risk_discipline": self._risk_score(),
             "data_quality": self._data_quality_score(),
             "broker_compatibility": self._broker_compatibility_score(),
+            "allocator_confidence": self._allocator_confidence_score(),
         }
         overall = (
             dims["trade_performance"]["score"] * self._w("trade_performance", 0.25)
@@ -198,6 +217,7 @@ class ConfidenceEngine:
             + dims["memory_learning"]["score"] * self._w("memory_learning", 0.15)
             + dims["risk_discipline"]["score"] * self._w("risk_discipline", 0.15)
             + dims["data_quality"]["score"] * self._w("data_quality", 0.1)
+            + dims["allocator_confidence"]["score"] * 0.05
         )
         market_regime = (dims["data_quality"]["score"] + dims["risk_discipline"]["score"]) / 2
         return {

@@ -9,6 +9,7 @@ from app.routers import (
     account_eligibility,
     api,
     autonomous_paper_learning,
+    capital_allocator,
     candle_lab,
     confidence,
     fast_training,
@@ -51,6 +52,7 @@ app.include_router(candle_lab.router)
 app.include_router(market_meme.router)
 app.include_router(settings_brain.router)
 app.include_router(autonomous_paper_learning.router)
+app.include_router(capital_allocator.router)
 app.include_router(confidence.router)
 app.include_router(account_eligibility.router)
 app.include_router(strategy_proposals.router)

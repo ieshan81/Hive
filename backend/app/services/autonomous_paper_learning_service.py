@@ -49,6 +49,28 @@ class AutonomousPaperLearningService:
     def _order_count(self) -> int:
         return len(list(self.session.exec(select(OrderRecord)).all()))
 
+    def _learning_capacity(self) -> dict[str, Any]:
+        from app.services.capital_allocator import _unlimited
+
+        max_trades = self.cfg.get("max_paper_trades_per_day", 0)
+        max_pos = self.cfg.get("max_open_paper_positions", 0)
+        return {
+            "paper_trade_frequency": "opportunity_based",
+            "daily_paper_trade_cap": None if _unlimited(max_trades) else max_trades,
+            "max_open_paper_positions": None if _unlimited(max_pos) else max_pos,
+            "position_control": "allocator_exposure",
+            "max_paper_trades_per_day": None if _unlimited(max_trades) else max_trades,
+            "max_open_paper_positions_legacy": None if _unlimited(max_pos) else max_pos,
+        }
+
+    def _allocator_summary(self) -> dict[str, Any]:
+        try:
+            from app.services.capital_allocator import CapitalAllocatorService
+
+            return CapitalAllocatorService(self.session, self.config).status_summary()
+        except Exception as exc:
+            return {"status": "error", "message": str(exc)}
+
     def status(self) -> dict[str, Any]:
         from app.services.autonomous_paper_scheduler import AutonomousPaperScheduler
 
@@ -81,11 +103,9 @@ class AutonomousPaperLearningService:
             "blockers": display.get("blockers") or ft_st.get("blockers") or [],
             "current_mode": current_mode,
             "plain_message": display.get("plainMessage") or display.get("plain_message"),
-            "caps": {
-                "max_paper_trades_per_day": self.cfg.get("max_paper_trades_per_day"),
-                "max_paper_notional_per_trade_usd": self.cfg.get("max_paper_notional_per_trade_usd"),
-                "max_open_paper_positions": self.cfg.get("max_open_paper_positions"),
-            },
+            "learning_capacity": self._learning_capacity(),
+            "capital_allocator": self._allocator_summary(),
+            "caps": self._learning_capacity(),
             **live_lock_status(self.config),
         }
 

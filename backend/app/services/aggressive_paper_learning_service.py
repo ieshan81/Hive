@@ -289,20 +289,46 @@ class AggressivePaperLearningService:
             "reason": reason,
         }
 
+    def _allocator_active(self) -> bool:
+        if bool(self.cfg.get("use_capital_allocator", True)):
+            return True
+        apl = dict(self.config.get("autonomous_paper_learning") or {})
+        return bool(apl.get("mode_enabled")) and bool(apl.get("use_capital_allocator", True))
+
+    def _unlimited_cap(self, key: str, default: int = 0) -> bool:
+        if self._allocator_active():
+            return True
+        val = self.cfg.get(key, default)
+        if val is None:
+            return True
+        try:
+            return int(val) <= 0
+        except (TypeError, ValueError):
+            return False
+
     def _preflight_block(self, symbol: str, notional: float, strategy_id: str = "", side: str = "buy") -> Optional[tuple[str, str]]:
         if not is_paper_broker_url():
             return "broker_not_paper", "Broker must be paper"
         if cfg_get(self.config, "live_trading_enabled", False):
             return "live_locked", "Live trading must stay off"
-        if self._decisions_today() >= int(self.cfg.get("max_experiment_trades_per_day", 5)):
-            return "daily_trade_cap", "Max experiment trades per day"
+        allocator_on = self._allocator_active()
+        if not allocator_on and not self._unlimited_cap("max_experiment_trades_per_day", 5):
+            if self._decisions_today() >= int(self.cfg.get("max_experiment_trades_per_day", 5)):
+                return "daily_trade_cap", "Max experiment trades per day"
         if self._rejects_today() >= int(self.cfg.get("max_rejected_orders_per_day", 10)):
             return "rejection_cap", "Max rejected orders per day — cooldown"
         if self._in_rejection_cooldown():
             return "rejection_cooldown", "Cooldown after broker rejection"
+        from app.services.capital_allocator import _cfg as alloc_cfg_fn
+
+        alloc_cfg = alloc_cfg_fn(self.config)
+        emergency_max = int(alloc_cfg.get("operator_emergency_max_open_positions", 0))
         open_exp = len(list(self.session.exec(select(PositionSnapshot).where(PositionSnapshot.qty > 0)).all()))
-        if open_exp >= int(self.cfg.get("max_open_experiment_positions", 1)):
-            return "max_open_positions", "Max open experiment positions"
+        if emergency_max > 0 and open_exp >= emergency_max:
+            return "operator_emergency_position_guard", "Operator emergency max open positions"
+        if not allocator_on and not self._unlimited_cap("max_open_experiment_positions", 1):
+            if open_exp >= int(self.cfg.get("max_open_experiment_positions", 1)):
+                return "max_open_positions", "Max open experiment positions"
         if self._daily_loss_exceeded():
             return "daily_loss_cap", "Daily paper loss cap reached"
         if self._weekly_loss_exceeded():
@@ -314,8 +340,9 @@ class AggressivePaperLearningService:
         tier = self.symbol_tier(symbol)
         if tier == "UNSUPPORTED_WATCH_ONLY":
             return "symbol_tier", "Symbol tier not supported for experiments"
-        if notional > float(self.cfg.get("max_experiment_notional_per_trade_usd", 20)):
-            return "notional_cap", "Exceeds experiment notional cap"
+        if not allocator_on and not self._unlimited_cap("max_experiment_notional_per_trade_usd", 20):
+            if notional > float(self.cfg.get("max_experiment_notional_per_trade_usd", 20)):
+                return "notional_cap", "Exceeds experiment notional cap"
         if self.cfg.get("require_spread_check") and not self._spread_ok(symbol):
             return "spread_check", "Spread too wide for paper experiment"
         if self.cfg.get("require_liquidity_check") and not self._liquidity_ok(symbol):
@@ -329,6 +356,17 @@ class AggressivePaperLearningService:
         elig = AccountPairEligibilityService(self.session, self.config).preflight_block(symbol, side, strategy_id)
         if elig:
             return elig[0], elig[1]
+        if allocator_on and side.lower() == "buy":
+            from app.services.capital_allocator import CapitalAllocatorService
+
+            approval = CapitalAllocatorService(self.session, self.config).approve_trade(
+                symbol, side, strategy_id, notional
+            )
+            if not approval.get("approved"):
+                return (
+                    approval.get("reason_code") or "allocator_blocked",
+                    approval.get("reason") or "Capital allocator blocked trade",
+                )
         return None
 
     def _rejects_today(self) -> int:

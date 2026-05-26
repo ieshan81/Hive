@@ -143,23 +143,24 @@ class AutonomousPaperScheduler:
             self._persist_state(operator)
             return {"status": "stopped", "reason": "daily_tick_cap_reached"}
 
-        max_trades = int(apl_cfg.get("max_paper_trades_per_day", 5))
-        start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-        filled_today = len(
-            list(
-                self.session.exec(
-                    select(ExecutionLog).where(
-                        ExecutionLog.created_at >= start,
-                        ExecutionLog.status == "paper_order_filled",
-                    )
-                ).all()
+        max_trades = int(apl_cfg.get("max_paper_trades_per_day", 0) or 0)
+        if max_trades > 0:
+            start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+            filled_today = len(
+                list(
+                    self.session.exec(
+                        select(ExecutionLog).where(
+                            ExecutionLog.created_at >= start,
+                            ExecutionLog.status == "paper_order_filled",
+                        )
+                    ).all()
+                )
             )
-        )
-        if filled_today >= max_trades:
-            self._state["paused"] = True
-            self._state["paused_reason"] = "daily_trade_cap"
-            self._persist_state(operator)
-            return {"status": "stopped", "reason": "daily_paper_trade_cap"}
+            if filled_today >= max_trades:
+                self._state["paused"] = True
+                self._state["paused_reason"] = "daily_trade_cap"
+                self._persist_state(operator)
+                return {"status": "stopped", "reason": "daily_paper_trade_cap"}
 
         svc = AutonomousPaperLearningService(self.session, self.config)
         result = svc.run_one_cycle(operator=operator)
