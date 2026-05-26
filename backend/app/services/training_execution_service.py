@@ -177,6 +177,8 @@ class TrainingExecutionService:
                 "expected_hold_time": f"{max_hold_h}h",
                 "exit_strategy": "time_stop_and_momentum",
                 "spread_pct": quote.get("spread_pct"),
+                "expected_move_pct": expected_move_pct,
+                "edge_over_cost": float(cpp.get("edge_min_over_cost", 1.2)),
                 "paper_experiment_decision_id": dec.id,
                 "broker_mode": "paper",
                 "live_trading_locked": True,
@@ -217,6 +219,9 @@ class TrainingExecutionService:
         positions = alpaca.sync_positions_cached()
         open_syms = {o.get("symbol") for o in alpaca.get_open_orders()}
         cand = self.paper.candidate_from_signal(sig, pdec)
+        cand.expected_move_pct = expected_move_pct
+        cand.meta["expected_move_pct"] = expected_move_pct
+        cand.meta["strategy_id"] = dec.strategy_id
         log = self.paper.submit_candidate(
             cand,
             cycle_run_id=cycle_run_id,

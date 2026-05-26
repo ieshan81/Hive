@@ -223,9 +223,13 @@ def run_preflight(
     if spread is not None and spread > max_spread:
         return PreflightResult(False, "SPREAD_WIDENED", f"Spread {spread:.4f} > max", evidence)
 
-    cost = evaluate_cost_edge(
+        exp_move = cand.expected_move_pct or meta.get("expected_move_pct")
+        if exp_move is None and meta.get("training_trade"):
+            cpp = config.get("crypto_push_pull") or {}
+            exp_move = float(cpp.get("take_profit_pct", 0.03)) * 100.0
+        cost = evaluate_cost_edge(
         config,
-        expected_move_pct=cand.expected_move_pct or meta.get("expected_move_pct"),
+        expected_move_pct=exp_move,
         spread_pct=spread,
         tier=cand.tier,
     )
