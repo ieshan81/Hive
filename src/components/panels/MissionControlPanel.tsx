@@ -5,6 +5,7 @@ import { Shield, Activity, Zap, Wallet, AlertTriangle, Play } from "lucide-react
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { apiGet, apiPostOperator, checkServerOperatorProxy } from "@/lib/apiClient";
+import { hasSessionOperatorToken } from "@/lib/operatorAuth";
 import { onHiveNukeComplete } from "@/lib/hiveRefresh";
 
 type MissionStatus = {
@@ -68,9 +69,9 @@ export function MissionControlPanel() {
   const startFresh = async () => {
     setStarting(true);
     setStartMsg(null);
-    const proxy = await checkServerOperatorProxy();
-    if (!proxy.ok) {
-      setStartMsg(proxy.error || "Operator proxy not configured");
+    const proxyOk = await checkServerOperatorProxy();
+    if (!proxyOk && !hasSessionOperatorToken()) {
+      setStartMsg("Operator token required — set token in Settings.");
       setStarting(false);
       return;
     }
