@@ -139,7 +139,7 @@ class MarketDataRefreshService:
         timeframe: str = PUSH_PULL_TIMEFRAME,
         symbols: Optional[list[str]] = None,
     ) -> dict[str, Any]:
-        target = self._resolve_symbols(asset_type, symbols)
+        target = self._resolve_symbols(asset_type, symbols, fast=True)
         rows: list[dict] = []
         for sym in target:
             chk = self.freshness.check_db_only(sym, timeframe=timeframe)
@@ -167,11 +167,22 @@ class MarketDataRefreshService:
             "count": len(rows),
         }
 
-    def _resolve_symbols(self, asset_type: str, symbols: Optional[list[str]]) -> list[str]:
+    def _resolve_symbols(self, asset_type: str, symbols: Optional[list[str]], *, fast: bool = False) -> list[str]:
         if symbols:
             return [normalize_crypto_symbol(s) if "/" in s else s for s in symbols if s]
 
-        universe = build_merged_universe(self.session, self.config, limit=80)
+        priority = ["BTC/USD", "ETH/USD", "SOL/USD", "DOGE/USD", "AVAX/USD", "LINK/USD"]
+        if fast or asset_type == "crypto":
+            elig = AccountPairEligibilityService(self.session, self.config)
+            out: list[str] = []
+            for p in priority:
+                row = elig.classify_symbol(p, asset_class="crypto")
+                if row.get("status") == "eligible":
+                    out.append(p)
+            if fast:
+                return out
+
+        universe = build_merged_universe(self.session, self.config, limit=50, lightweight=True)
         elig = AccountPairEligibilityService(self.session, self.config)
 
         out: list[str] = []

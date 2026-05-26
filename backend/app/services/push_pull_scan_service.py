@@ -27,7 +27,7 @@ class PushPullScanService:
         """Full push-pull scan with reason breakdown (called each training cycle)."""
         ensure_crypto_push_pull_baseline(self.session, self.config)
 
-        universe = build_merged_universe(self.session, self.config, limit=60)
+        universe = build_merged_universe(self.session, self.config, limit=60, lightweight=True)
         reason_counts: Counter[str] = Counter()
         candidates_created = 0
         approved_count = 0

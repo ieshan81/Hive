@@ -14,7 +14,7 @@ from app.services.universe_builder import build_merged_universe
 
 def universe_status(session: Session, config: Optional[dict] = None) -> dict[str, Any]:
     epoch = get_latest_reset_epoch(session)
-    rows = build_merged_universe(session, config, limit=80)
+    rows = build_merged_universe(session, config, limit=80, lightweight=True)
 
     stock = [r for r in rows if r.get("asset_type") == "Stock"]
     crypto = [r for r in rows if r.get("asset_type") == "Crypto"]

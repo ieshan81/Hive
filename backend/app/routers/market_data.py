@@ -11,12 +11,14 @@ router = APIRouter(prefix="/api/market-data", tags=["market-data"])
 def freshness(
     asset_type: str = "crypto",
     timeframe: str = "5Min",
+    symbols: str | None = None,
     session: Session = Depends(get_session),
 ):
     from app.services.market_data_refresh_service import MarketDataRefreshService
 
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()] if symbols else None
     return MarketDataRefreshService(session).freshness_report(
-        asset_type=asset_type, timeframe=timeframe
+        asset_type=asset_type, timeframe=timeframe, symbols=sym_list
     )
 
 

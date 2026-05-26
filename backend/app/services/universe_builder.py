@@ -17,10 +17,36 @@ from app.services.session_engine import SessionEngine
 from app.services.symbol_discovery_service import SymbolDiscoveryService
 
 
-def build_merged_universe(session: Session, config: Optional[dict] = None, *, limit: int = 80) -> list[dict[str, Any]]:
+def build_merged_universe(
+    session: Session,
+    config: Optional[dict] = None,
+    *,
+    limit: int = 80,
+    lightweight: bool = False,
+) -> list[dict[str, Any]]:
     cfg = config or ConfigManager(session).get_current()
     sess = SessionEngine().detect()
     by_sym: dict[str, dict[str, Any]] = {}
+
+    priority_crypto = [
+        "BTC/USD",
+        "ETH/USD",
+        "SOL/USD",
+        "DOGE/USD",
+        "AVAX/USD",
+        "LINK/USD",
+        "LTC/USD",
+        "UNI/USD",
+    ]
+    if lightweight:
+        for sym in priority_crypto:
+            by_sym[sym] = {
+                "symbol": sym,
+                "asset_type": "Crypto",
+                "source": "priority_universe",
+                "broker_supported": True,
+                "push_pull_enabled": True,
+            }
 
     def upsert(row: dict[str, Any]) -> None:
         sym = row.get("symbol")
@@ -34,54 +60,54 @@ def build_merged_universe(session: Session, config: Optional[dict] = None, *, li
             if v is not None and v != "" and (prev.get(k) in (None, "", "unknown")):
                 prev[k] = v
 
-    # Attention radar (always include — fixes empty universe when DB candidates empty)
-    try:
-        radar = AttentionRadarService(session).scan(limit=min(limit, 50))
-        for item in radar.get("items") or []:
-            sym = item.get("symbol")
-            ac = "crypto" if "/" in sym else "stock"
-            upsert(
-                {
-                    "symbol": sym,
-                    "asset_type": "Crypto" if ac == "crypto" else "Stock",
-                    "source": item.get("source") or "attention_radar",
-                    "price": item.get("price"),
-                    "spread_pct": item.get("spread_pct"),
-                    "spread": item.get("spread_display"),
-                    "liquidity_score": item.get("liquidity_score"),
-                    "broker_supported": item.get("broker_supported", True),
-                    "push_pull_enabled": bool(item.get("broker_supported")),
-                }
-            )
-    except Exception:
-        pass
-
-    # Discovery — crypto night + stocks when open
-    disc = SymbolDiscoveryService(session)
-    modes = ["crypto_night"]
-    if sess.stock_trading_allowed:
-        modes.append("us_stock_open")
-    for mode in modes:
-        ac = "crypto" if "crypto" in mode else "stock"
+    # Attention radar + discovery (skipped on lightweight paths — avoids Alpaca rate limits)
+    if not lightweight:
         try:
-            found = disc.discover(asset_class=ac, limit=40, session_mode=mode, refresh=False)
-            for item in found.get("symbols") or []:
-                sym = item.get("symbol") or item.get("display_symbol")
+            radar = AttentionRadarService(session).scan(limit=min(limit, 50))
+            for item in radar.get("items") or []:
+                sym = item.get("symbol")
+                ac = "crypto" if "/" in sym else "stock"
                 upsert(
                     {
                         "symbol": sym,
                         "asset_type": "Crypto" if ac == "crypto" else "Stock",
-                        "source": "symbol_discovery",
+                        "source": item.get("source") or "attention_radar",
                         "price": item.get("price"),
                         "spread_pct": item.get("spread_pct"),
                         "spread": item.get("spread_display"),
                         "liquidity_score": item.get("liquidity_score"),
-                        "broker_supported": item.get("tradable", True),
-                        "push_pull_enabled": True,
+                        "broker_supported": item.get("broker_supported", True),
+                        "push_pull_enabled": bool(item.get("broker_supported")),
                     }
                 )
         except Exception:
             pass
+
+        disc = SymbolDiscoveryService(session)
+        modes = ["crypto_night"]
+        if sess.stock_trading_allowed:
+            modes.append("us_stock_open")
+        for mode in modes:
+            ac = "crypto" if "crypto" in mode else "stock"
+            try:
+                found = disc.discover(asset_class=ac, limit=40, session_mode=mode, refresh=False)
+                for item in found.get("symbols") or []:
+                    sym = item.get("symbol") or item.get("display_symbol")
+                    upsert(
+                        {
+                            "symbol": sym,
+                            "asset_type": "Crypto" if ac == "crypto" else "Stock",
+                            "source": "symbol_discovery",
+                            "price": item.get("price"),
+                            "spread_pct": item.get("spread_pct"),
+                            "spread": item.get("spread_display"),
+                            "liquidity_score": item.get("liquidity_score"),
+                            "broker_supported": item.get("tradable", True),
+                            "push_pull_enabled": True,
+                        }
+                    )
+            except Exception:
+                pass
 
     # Strategy registry symbols
     for reg in session.exec(select(StrategyRegistry)).all():
