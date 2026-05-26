@@ -337,9 +337,9 @@ class FastCryptoTrainingLoop:
             )
             return {
                 "status": "blocked" if not exit_only else "exit_only",
-                "message": "Fast training blocked — no entries; memory recorded"
+                "message": "Paper cycle blocked — entries skipped; lesson recorded"
                 if not exit_only
-                else "Exit-only run — exits monitored, entries blocked",
+                else "Exit monitor run — exits checked, new entries blocked",
                 "blockers": blockers,
                 "phases": phases,
                 "open_position_reviews": reviews,
@@ -373,7 +373,7 @@ class FastCryptoTrainingLoop:
         blockers = details.get("blockers") or [reason_code]
         self.lessons.upsert_lesson(
             memory_type="fast_training_blocked_memory",
-            title="Fast training blocked",
+            title="Paper cycle blocked",
             summary=f"Run-once blocked: {', '.join(blockers[:6])}. No broker order submitted.",
             detailed_lesson=(
                 "Fast training uses exits-first ordering and TrainingExecutionService→PaperExecutionService only. "

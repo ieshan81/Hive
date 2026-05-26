@@ -382,6 +382,17 @@ DEFAULT_CONFIG = {
         "max_drawdown_pct": 15.0,
         "min_confidence_for_tiny_live": 61,
     },
+    "universe": {
+        "mode": "curated_watchlist",
+        "dynamic_max_crypto": 36,
+        "dynamic_max_stocks": 30,
+    },
+    "sentiment": {
+        "enabled": False,
+        "finbert_enabled": False,
+        "reddit_enabled": False,
+        "news_enabled": False,
+    },
     "fast_training": {
         "exit_only_enabled": False,
         "fast_training_loop_enabled": False,

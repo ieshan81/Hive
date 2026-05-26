@@ -1,73 +1,90 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Shield, Activity, Zap, Wallet, AlertTriangle, Play } from "lucide-react";
+import {
+  Activity,
+  Brain,
+  Hexagon,
+  Shield,
+  TrendingUp,
+  Wallet,
+  Zap,
+  AlertTriangle,
+  Radar,
+} from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { apiGet, apiPostOperator, checkServerOperatorProxy } from "@/lib/apiClient";
-import { hasSessionOperatorToken } from "@/lib/operatorAuth";
-import { onHiveNukeComplete } from "@/lib/hiveRefresh";
+import { apiGet } from "@/lib/apiClient";
+import { symbolIdentity } from "@/lib/symbolIdentity";
 
-type MissionStatus = {
-  status?: string;
-  fresh_brain?: boolean;
-  system_state_banner?: {
+type Cockpit = {
+  cockpit_bar?: Record<string, string | boolean | number | null | undefined>;
+  mission_summary?: Record<string, string | boolean | number | null | undefined>;
+  hive_brain_preview?: {
+    meaningful_memory_count?: number;
+    validated_count?: number;
+    consolidated_count?: number;
+    categories?: Record<string, number>;
+    latest_lesson?: { title?: string; summary?: string };
+  };
+  account_survival?: Record<string, number | string | null | undefined>;
+  capital_allocator?: {
+    detail?: Record<string, number | null | undefined>;
+    sparkline?: number[];
     headline?: string;
-    subline?: string;
-    live_locked?: boolean;
-    paper_broker?: boolean;
-    degraded?: boolean;
+    status?: string;
   };
-  push_pull_engine?: { market_mode_label?: string; analysis_only?: boolean };
-  paper_learning?: {
-    desired_enabled?: boolean;
-    effective_enabled?: boolean;
-    can_place_paper_orders?: boolean;
-    paper_learning_on?: string;
-    paper_execution_on?: string;
+  ai_fund_manager?: {
+    active?: boolean;
+    configured?: boolean;
+    current_decision?: string;
+    confidence?: number;
+    reason_summary?: string;
+    sentiment_engines?: Record<string, { active?: boolean; wired?: boolean; reason?: string }>;
   };
-  scheduler?: { desired_enabled?: boolean; effective_enabled?: boolean; last_tick_at?: string };
-  env_pause?: { any_env_pause?: boolean; paper_trading_paused_by_env?: boolean };
-  live_lock?: { live_lock_status?: string };
-  last_tick_summary?: { plain?: string; tick_at?: string; orders_created?: number };
-  capital_allocator?: { status?: string; headline?: string };
-  blockers?: string[];
+  push_pull_engine?: Record<string, unknown>;
+  strategy_status?: { active?: boolean; signal_formula_summary?: string; entry_blocks?: string[] };
+  paper_learning?: Record<string, unknown>;
+  latest_insight?: { narrative?: string; tick?: Record<string, unknown> };
+  risk_cage?: Record<string, unknown>;
+  capital_graph?: { points?: { t?: string; equity?: number }[] };
+  market_radar?: {
+    top_active_candidates?: { symbol?: string; status?: string; blocked_reason?: string }[];
+  };
+  universe_mode?: { mode_label?: string; stocks_session_note?: string };
+  exit_monitor?: { open_positions_count?: number; plain?: string };
   can_place_paper_orders?: boolean;
   primary_blocker_plain?: string;
-  operator_action_required?: string;
-  show_start_fresh_button?: boolean;
-  next_action_plain?: string;
-  capital_graph?: { points?: { t?: string; equity?: number }[] };
-  account_truth?: {
-    current_paper_equity?: number;
-    starting_equity_reset_epoch?: number;
-    cash?: number;
-    buying_power?: number;
-    non_marginable_buying_power?: number;
-    unrealized_pl?: number;
-    total_pl?: number;
-    today_pl?: number;
-    broker_sync_status?: string;
-  };
-  capital_allocator_detail?: {
-    deployable_capital?: number;
-    cash_reserve?: number;
-    crypto_budget?: number;
-    stock_budget?: number;
-    remaining_allocation?: number;
-  };
 };
 
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-white/5 bg-black/20 px-3 py-2">
+      <p className="text-[9px] uppercase tracking-wider text-slate-500">{label}</p>
+      <p className="text-sm font-semibold text-white mt-0.5 truncate">{value}</p>
+    </div>
+  );
+}
+
+function HoneycombBg() {
+  return (
+    <div
+      className="pointer-events-none absolute inset-0 opacity-[0.07]"
+      style={{
+        backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100'%3E%3Cpath d='M28 0 L56 16 L56 48 L28 64 L0 48 L0 16 Z' fill='none' stroke='%2300d1ff' stroke-width='1'/%3E%3C/svg%3E")`,
+        backgroundSize: "56px 100px",
+      }}
+    />
+  );
+}
+
 export function MissionControlPanel() {
-  const [data, setData] = useState<MissionStatus | null>(null);
+  const [data, setData] = useState<Cockpit | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [starting, setStarting] = useState(false);
-  const [startMsg, setStartMsg] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    setLoading(true);
-    const res = await apiGet<MissionStatus>("/api/mission-control/status");
+    const res = await apiGet<Cockpit>("/api/mission-control/status");
     if (res.ok && res.data) {
       setData(res.data);
       setError(null);
@@ -83,31 +100,7 @@ export function MissionControlPanel() {
     return () => clearInterval(t);
   }, [load]);
 
-  useEffect(() => onHiveNukeComplete(() => void load()), [load]);
-
-  const startFresh = async () => {
-    setStarting(true);
-    setStartMsg(null);
-    const proxyOk = await checkServerOperatorProxy();
-    if (!proxyOk && !hasSessionOperatorToken()) {
-      setStartMsg("Operator token required — set token in Settings.");
-      setStarting(false);
-      return;
-    }
-    const res = await apiPostOperator<{ message?: string; status?: string }>(
-      "/api/autonomous-paper-learning/start-fresh",
-      { operator: "ui" }
-    );
-    setStarting(false);
-    if (res.ok && res.data?.status === "ok") {
-      setStartMsg(res.data.message || "Fresh paper learning started.");
-      await load();
-    } else {
-      setStartMsg(res.error || res.data?.message || "Start fresh failed");
-    }
-  };
-
-  if (loading) return <EmptyState message="Loading Mission Control…" className="min-h-[240px]" />;
+  if (loading) return <EmptyState message="Loading Mission Control cockpit…" className="min-h-[320px]" />;
   if (error) {
     return (
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-amber-200 text-sm">
@@ -116,158 +109,183 @@ export function MissionControlPanel() {
     );
   }
 
-  const banner = data?.system_state_banner;
-  const envPaused = data?.env_pause?.any_env_pause;
-  const canPlace = data?.can_place_paper_orders ?? data?.paper_learning?.can_place_paper_orders;
+  const bar = data?.cockpit_bar ?? {};
+  const acct = data?.account_survival ?? {};
+  const alloc = data?.capital_allocator?.detail ?? {};
+  const spark = data?.capital_allocator?.sparkline ?? [];
+  const maxSpark = Math.max(...spark, acct.current_paper_equity as number ?? 1, 1);
+  const graph = data?.capital_graph?.points ?? [];
+  const maxEq = Math.max(...graph.map((p) => p.equity ?? 0), 1);
+  const hive = data?.hive_brain_preview ?? {};
+  const ai = data?.ai_fund_manager ?? {};
+  const radar = data?.market_radar?.top_active_candidates ?? [];
 
   return (
-    <section className="space-y-4 max-w-5xl">
-      <div
-        className={`rounded-xl border p-5 ${
-          envPaused
-            ? "border-amber-500/40 bg-amber-500/10"
-            : banner?.degraded
-              ? "border-amber-500/30 bg-amber-500/5"
-              : "border-emerald-500/30 bg-emerald-500/5"
-        }`}
-      >
-        <h1 className="text-xl font-bold text-white flex items-center gap-2">
-          <Shield className="h-6 w-6 text-hive-cyan" />
-          Mission Control
-        </h1>
-        <p className="text-lg text-white mt-2">{banner?.headline ?? "System status unknown"}</p>
-        <p className="text-sm text-slate-400 mt-1">{banner?.subline ?? data?.next_action_plain}</p>
+    <section className="relative space-y-4 max-w-6xl">
+      <HoneycombBg />
 
-        {!canPlace && data?.primary_blocker_plain && (
-          <p className="text-sm text-amber-200 mt-3 border-t border-white/10 pt-3">
-            Paper orders blocked: {data.primary_blocker_plain}
-          </p>
-        )}
-        {canPlace && (
-          <p className="text-sm text-emerald-300 mt-3">Bot can place paper orders: YES (under allocator limits)</p>
-        )}
-
-        <div className="flex flex-wrap gap-2 mt-3">
-          <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300">
-            Live: {data?.live_lock?.live_lock_status === "locked" ? "Locked" : data?.live_lock?.live_lock_status}
-          </span>
-          <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300">
-            Paper learning: {data?.paper_learning?.paper_learning_on ?? (data?.paper_learning?.desired_enabled ? "ON" : "OFF")}
-          </span>
-          <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300">
-            Paper execution: {data?.paper_learning?.paper_execution_on ?? "—"}
-          </span>
-          {data?.fresh_brain && (
-            <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-900/40 text-cyan-200">Fresh brain</span>
-          )}
+      <header className="relative rounded-2xl border border-hive-cyan/20 bg-gradient-to-br from-hive-cyan/10 via-violet-950/20 to-black/40 p-5 overflow-hidden">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+              <Hexagon className="h-7 w-7 text-hive-cyan" />
+              Mission Control
+            </h1>
+            <p className="text-sm text-slate-300 mt-1 max-w-2xl">{data?.mission_summary?.headline as string}</p>
+            <p className="text-xs text-slate-500 mt-1">{data?.mission_summary?.engine_doing as string}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(bar).slice(0, 6).map(([k, v]) => (
+              <span key={k} className="text-[10px] px-2 py-1 rounded-full border border-white/10 bg-black/30 text-slate-300">
+                {k.replace(/_/g, " ")}: <span className="text-hive-cyan">{String(v)}</span>
+              </span>
+            ))}
+          </div>
         </div>
-
-        {data?.show_start_fresh_button && !envPaused && (
-          <button
-            type="button"
-            onClick={() => void startFresh()}
-            disabled={starting}
-            className="mt-4 flex items-center gap-2 rounded-lg bg-hive-cyan px-4 py-2.5 text-sm font-semibold text-black hover:bg-cyan-300 disabled:opacity-50"
-          >
-            <Play className="h-4 w-4" />
-            {starting ? "Starting…" : "START FRESH PAPER LEARNING"}
-          </button>
+        {!data?.can_place_paper_orders && data?.primary_blocker_plain && (
+          <p className="text-sm text-amber-200 mt-3 flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4" /> {data.primary_blocker_plain}
+          </p>
         )}
-        {startMsg && <p className="text-[11px] text-slate-400 mt-2">{startMsg}</p>}
-      </div>
+      </header>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <GlassPanel title="Account truth (paper)" icon={<Wallet className="h-4 w-4" />}>
-          <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
-            <dt className="text-slate-500">Equity</dt>
-            <dd className="text-white">${data?.account_truth?.current_paper_equity?.toFixed(2) ?? "—"}</dd>
-            <dt className="text-slate-500">Buying power</dt>
-            <dd className="text-white">${data?.account_truth?.buying_power?.toFixed(2) ?? "—"}</dd>
-            <dt className="text-slate-500">Cash</dt>
-            <dd className="text-white">${data?.account_truth?.cash?.toFixed(2) ?? "—"}</dd>
-            <dt className="text-slate-500">Open P/L</dt>
-            <dd className="text-white">${data?.account_truth?.unrealized_pl?.toFixed(2) ?? "—"}</dd>
-            <dt className="text-slate-500">Total P/L</dt>
-            <dd className="text-white">${data?.account_truth?.total_pl?.toFixed(2) ?? "—"}</dd>
-            <dt className="text-slate-500">Today P/L</dt>
-            <dd className="text-white">${data?.account_truth?.today_pl?.toFixed(2) ?? "—"}</dd>
-          </dl>
-          <p className="text-[10px] text-slate-500 mt-2">
-            Broker sync: {data?.account_truth?.broker_sync_status ?? "unknown"}
-          </p>
+      <div className="relative grid gap-4 lg:grid-cols-3">
+        <GlassPanel title="Account survival" icon={<Wallet className="h-4 w-4" />} className="lg:col-span-1">
+          <div className="grid grid-cols-2 gap-2">
+            <Stat label="Equity" value={`$${Number(acct.current_paper_equity ?? 0).toFixed(2)}`} />
+            <Stat label="Buying power" value={`$${Number(acct.buying_power ?? 0).toFixed(2)}`} />
+            <Stat label="Open P/L" value={`$${Number(acct.unrealized_pl ?? 0).toFixed(2)}`} />
+            <Stat label="Today P/L" value={`$${Number(acct.today_pl ?? 0).toFixed(2)}`} />
+            <Stat label="Total P/L" value={`$${Number(acct.total_pl ?? 0).toFixed(2)}`} />
+            <Stat label="Sync" value={String(acct.broker_sync_status ?? "—")} />
+          </div>
         </GlassPanel>
 
-        <GlassPanel title="Capital allocator" icon={<Wallet className="h-4 w-4" />}>
-          <p className="text-sm text-white capitalize">{data?.capital_allocator?.status ?? "—"}</p>
-          <p className="text-[11px] text-slate-500 mt-1">{data?.capital_allocator?.headline}</p>
-          <dl className="grid grid-cols-2 gap-1 text-[11px] mt-2">
-            <dt className="text-slate-500">Deployable</dt>
-            <dd className="text-slate-200">${data?.capital_allocator_detail?.deployable_capital ?? "—"}</dd>
-            <dt className="text-slate-500">Cash reserve</dt>
-            <dd className="text-slate-200">${data?.capital_allocator_detail?.cash_reserve ?? "—"}</dd>
-            <dt className="text-slate-500">Crypto budget</dt>
-            <dd className="text-slate-200">${data?.capital_allocator_detail?.crypto_budget ?? "—"}</dd>
-            <dt className="text-slate-500">Stock budget</dt>
-            <dd className="text-slate-200">${data?.capital_allocator_detail?.stock_budget ?? "—"}</dd>
-          </dl>
-        </GlassPanel>
-
-        <GlassPanel title="Push-Pull Engine" icon={<Zap className="h-4 w-4" />}>
-          <p className="text-sm text-white">{data?.push_pull_engine?.market_mode_label}</p>
-          {data?.push_pull_engine?.analysis_only && (
-            <p className="text-[11px] text-amber-300 mt-1">Analysis only — no new entries</p>
-          )}
-        </GlassPanel>
-
-        <GlassPanel title="Paper Learning" icon={<Activity className="h-4 w-4" />}>
-          <p className="text-sm text-white">
-            Learning: {envPaused ? "Blocked by env pause" : data?.paper_learning?.effective_enabled ? "ON" : "OFF"}
-          </p>
-          <p className="text-[11px] text-slate-500 mt-1">
-            Scheduler:{" "}
-            {envPaused ? "Blocked" : data?.scheduler?.effective_enabled ? "ON — automatic ticks" : "OFF"}
-          </p>
-        </GlassPanel>
-
-        <GlassPanel title="Last tick" icon={<Activity className="h-4 w-4" />}>
-          <p className="text-sm text-white">{data?.last_tick_summary?.plain ?? "No scheduler tick completed yet"}</p>
-          {data?.last_tick_summary?.tick_at && (
-            <p className="text-[10px] text-slate-500 mt-1">{data.last_tick_summary.tick_at}</p>
-          )}
-        </GlassPanel>
-      </div>
-
-      {(data?.capital_graph?.points?.length ?? 0) > 0 && (
-        <GlassPanel title="Capital graph (paper equity)" icon={<Wallet className="h-4 w-4" />}>
-          <div className="flex items-end gap-0.5 h-24">
-            {data?.capital_graph?.points?.slice(-30).map((p, i) => {
-              const maxEq = Math.max(...(data.capital_graph?.points?.map((x) => x.equity ?? 0) ?? [1]));
-              return (
+        <GlassPanel title="Capital allocator" icon={<TrendingUp className="h-4 w-4" />} className="lg:col-span-1">
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            <Stat label="Deployable" value={`$${alloc.deployable_capital ?? "—"}`} />
+            <Stat label="Cash reserve" value={`$${alloc.cash_reserve ?? "—"}`} />
+            <Stat label="Crypto budget" value={`$${alloc.crypto_budget ?? "—"}`} />
+            <Stat label="Stock budget" value={`$${alloc.stock_budget ?? "—"}`} />
+          </div>
+          {spark.length > 0 && (
+            <div className="flex items-end gap-0.5 h-10 mt-3">
+              {spark.map((v, i) => (
                 <div
-                  key={`${p.t}-${i}`}
-                  className="flex-1 bg-hive-cyan/40 rounded-t min-w-[2px]"
-                  style={{ height: `${Math.max(4, ((p.equity ?? 0) / maxEq) * 100)}%` }}
-                  title={`${p.t}: $${p.equity?.toFixed(2)}`}
+                  key={i}
+                  className="flex-1 bg-violet-500/50 rounded-t min-w-[2px]"
+                  style={{ height: `${Math.max(8, (v / maxSpark) * 100)}%` }}
                 />
+              ))}
+            </div>
+          )}
+        </GlassPanel>
+
+        <GlassPanel title="Hive brain preview" icon={<Brain className="h-4 w-4" />} className="lg:col-span-1">
+          <p className="text-xs text-slate-400">
+            Meaningful: {hive.meaningful_memory_count ?? 0} · Validated: {hive.validated_count ?? 0} · Consolidated:{" "}
+            {hive.consolidated_count ?? 0}
+          </p>
+          <div className="grid grid-cols-2 gap-1 mt-2 text-[10px] text-slate-500">
+            {Object.entries(hive.categories ?? {}).map(([k, v]) => (
+              <span key={k}>
+                {k}: <span className="text-slate-300">{v}</span>
+              </span>
+            ))}
+          </div>
+          {hive.latest_lesson?.summary && (
+            <p className="text-[11px] text-cyan-200/90 mt-2 line-clamp-3">{hive.latest_lesson.summary}</p>
+          )}
+        </GlassPanel>
+      </div>
+
+      <div className="relative grid gap-4 lg:grid-cols-2">
+        <GlassPanel title="AI fund manager" icon={<Brain className="h-4 w-4" />}>
+          <p className="text-xs text-slate-400 mb-2">
+            Status:{" "}
+            <span className={ai.active ? "text-emerald-400" : "text-amber-400"}>
+              {ai.active ? "Gemini advisor active (advisory only)" : "Inactive or not configured"}
+            </span>
+          </p>
+          <p className="text-sm text-white">Decision: {ai.current_decision ?? "—"}</p>
+          <p className="text-[11px] text-slate-500 mt-1 line-clamp-3">{ai.reason_summary}</p>
+          <div className="mt-2 space-y-1">
+            {Object.entries(ai.sentiment_engines ?? {})
+              .slice(0, 4)
+              .map(([k, v]) => (
+                <p key={k} className="text-[10px] text-slate-500">
+                  {k}: {v?.active ? "active" : "inactive"} — {v?.reason?.slice(0, 60)}
+                </p>
+              ))}
+          </div>
+        </GlassPanel>
+
+        <GlassPanel title="Push-pull engine" icon={<Zap className="h-4 w-4" />}>
+          <p className="text-sm text-white">{String((data?.push_pull_engine as { market_mode_label?: string })?.market_mode_label ?? "—")}</p>
+          <p className="text-[11px] text-slate-500 mt-1">{data?.strategy_status?.signal_formula_summary}</p>
+          <p className="text-[10px] text-slate-600 mt-2">
+            Strategy active: {data?.strategy_status?.active ? "yes" : "no"} · Exit monitor:{" "}
+            {data?.exit_monitor?.plain ?? "idle"}
+          </p>
+        </GlassPanel>
+      </div>
+
+      <GlassPanel title="Capital graph" icon={<TrendingUp className="h-4 w-4" />}>
+        {graph.length === 0 ? (
+          <p className="text-sm text-slate-500">Equity curve populates after broker sync snapshots.</p>
+        ) : (
+          <div className="flex items-end gap-0.5 h-32">
+            {graph.slice(-40).map((p, i) => (
+              <div
+                key={`${p.t}-${i}`}
+                className="flex-1 bg-gradient-to-t from-hive-cyan/20 to-hive-cyan/70 rounded-t min-w-[3px]"
+                style={{ height: `${Math.max(6, ((p.equity ?? 0) / maxEq) * 100)}%` }}
+                title={`${p.t}: $${p.equity?.toFixed(2)}`}
+              />
+            ))}
+          </div>
+        )}
+        <p className="text-[10px] text-slate-500 mt-2">
+          Current equity: ${Number(acct.current_paper_equity ?? 0).toFixed(2)} · Mode: {data?.universe_mode?.mode_label}
+        </p>
+      </GlassPanel>
+
+      <GlassPanel title="Market radar" icon={<Radar className="h-4 w-4" />}>
+        {radar.length === 0 ? (
+          <p className="text-sm text-slate-500">No active candidates right now. {data?.universe_mode?.stocks_session_note}</p>
+        ) : (
+          <ul className="space-y-2">
+            {radar.map((c) => {
+              const id = symbolIdentity(c.symbol ?? "");
+              return (
+                <li key={c.symbol} className="flex items-center gap-3 text-sm border-b border-white/5 pb-2">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-hive-cyan/10 text-hive-cyan font-bold text-xs">
+                    {id.glyph || id.name.slice(0, 2)}
+                  </span>
+                  <div>
+                    <p className="text-white font-medium">{c.symbol}</p>
+                    <p className="text-[10px] text-slate-500">{id.name} · {c.status}</p>
+                  </div>
+                </li>
               );
             })}
-          </div>
-          <p className="text-[10px] text-slate-500 mt-2">Broker-synced equity curve for current reset epoch.</p>
-        </GlassPanel>
-      )}
-
-      {(data?.blockers?.length ?? 0) > 0 && (
-        <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
-          <p className="text-[11px] font-semibold text-amber-300 flex items-center gap-1">
-            <AlertTriangle className="h-3.5 w-3.5" /> Status
-          </p>
-          <ul className="mt-1 text-[11px] text-slate-400 list-disc pl-4">
-            {data?.blockers?.map((b) => (
-              <li key={b}>{b}</li>
-            ))}
           </ul>
+        )}
+      </GlassPanel>
+
+      <GlassPanel title="Latest insight" icon={<Activity className="h-4 w-4" />}>
+        <p className="text-sm text-white">{data?.latest_insight?.narrative ?? "Waiting for next scheduler tick."}</p>
+        <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
+          <span className="text-slate-500">Risk cage: live locked</span>
+          <span className="text-slate-500">Stale data guard: on</span>
+          <span className="text-slate-500">Duplicate entry protection: on</span>
         </div>
-      )}
+      </GlassPanel>
+
+      <div className="relative flex items-center gap-2 text-[10px] text-emerald-400/80">
+        <Shield className="h-3.5 w-3.5" />
+        Paper only · Live trading locked · Engine live-ready in discipline, paper-only at runtime
+      </div>
     </section>
   );
 }

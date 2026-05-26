@@ -1230,6 +1230,62 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
                 ).universe_sources(session, cfg_brain),
                 export_errors,
             ),
+            "universe_mode.json": safe_export_section(
+                "universe_mode.json",
+                lambda: __import__(
+                    "app.services.universe_mode_service", fromlist=["universe_mode_status"]
+                ).universe_mode_status(session, cfg_brain),
+                export_errors,
+            ),
+            "sentiment_status.json": safe_export_section(
+                "sentiment_status.json",
+                lambda: __import__(
+                    "app.services.sentiment_status_service", fromlist=["sentiment_status"]
+                ).sentiment_status(session, cfg_brain),
+                export_errors,
+            ),
+            "symbol_sentiment.json": safe_export_section(
+                "symbol_sentiment.json",
+                lambda: __import__(
+                    "app.services.sentiment_status_service", fromlist=["sentiment_latest"]
+                ).sentiment_latest(session, cfg_brain),
+                export_errors,
+            ),
+            "ai_advisor_reviews.json": safe_export_section(
+                "ai_advisor_reviews.json",
+                lambda: __import__(
+                    "app.services.sentiment_status_service", fromlist=["ai_advisor_status"]
+                ).ai_advisor_status(session, cfg_brain),
+                export_errors,
+            ),
+            "sentiment_source_health.json": safe_export_section(
+                "sentiment_source_health.json",
+                lambda: __import__(
+                    "app.services.sentiment_status_service", fromlist=["sentiment_source_health"]
+                ).sentiment_source_health(session),
+                export_errors,
+            ),
+            "strategy_status.json": safe_export_section(
+                "strategy_status.json",
+                lambda: __import__(
+                    "app.services.strategy_status_service", fromlist=["strategy_status"]
+                ).strategy_status(session, cfg_brain),
+                export_errors,
+            ),
+            "candidate_rankings.json": safe_export_section(
+                "candidate_rankings.json",
+                lambda: __import__(
+                    "app.services.strategy_status_service", fromlist=["candidate_rankings"]
+                ).candidate_rankings(session, cfg_brain),
+                export_errors,
+            ),
+            "last_tick_narrative.json": safe_export_section(
+                "last_tick_narrative.json",
+                lambda: __import__(
+                    "app.services.strategy_status_service", fromlist=["last_tick_narrative"]
+                ).last_tick_narrative(session, cfg_brain),
+                export_errors,
+            ),
             "ai_strategy_lessons.json": safe_export_section(
                 "ai_strategy_lessons.json",
                 lambda: __import__(
@@ -1749,6 +1805,8 @@ def build_bundle_manifest(session: Session, bundle: dict[str, Any]) -> dict[str,
     import os
 
     from app.services.export_safe import json_safe
+    from app.services.live_lock_tripwire import live_lock_tripwire_status
+    from app.services.mission_control_cockpit_service import mission_control_cockpit
     from app.services.nuke_epoch_service import get_latest_reset_epoch
 
     epoch = get_latest_reset_epoch(session)
@@ -1759,16 +1817,33 @@ def build_bundle_manifest(session: Session, bundle: dict[str, Any]) -> dict[str,
         grouped[group] = [f for f in file_names if f in patterns or any(f.startswith(p.replace(".json", "")) for p in patterns)]
     digest_src = json.dumps(json_safe({k: bundle[k] for k in file_names}), sort_keys=True, default=str)
     bundle_hash = hashlib.sha256(digest_src.encode()).hexdigest()[:16]
+    zip_name = diagnostic_bundle_filename(session)
+    lock = live_lock_tripwire_status(ConfigManager(session).get_current())
+    cockpit = {}
+    try:
+        cockpit = mission_control_cockpit(session)
+    except Exception:
+        pass
+    acct = cockpit.get("account_survival") or {}
+    exit_mon = cockpit.get("exit_monitor") or {}
+    err_count = len(bundle.get("diagnostic_export_errors.json") or [])
     return {
         "schema_version": 1,
         "generated_at_utc": datetime.utcnow().isoformat() + "Z",
+        "zip_filename": zip_name,
         "reset_epoch_id": (epoch or {}).get("reset_epoch_id") or meta.get("reset_epoch_id"),
         "backend_commit": os.environ.get("RAILWAY_GIT_COMMIT_SHA", meta.get("backend_commit", "dev"))[:12],
         "frontend_commit": os.environ.get("FRONTEND_GIT_COMMIT_SHA", meta.get("frontend_commit", "unknown"))[:12],
+        "live_lock_status": lock.get("live_lock_status"),
+        "paper_broker_status": "paper" if lock.get("paper_broker") else lock.get("broker_base_url"),
+        "live_trading_enabled": lock.get("live_trading_enabled", False),
+        "current_equity": acct.get("current_paper_equity"),
+        "open_positions_count": exit_mon.get("open_positions_count", 0),
         "file_count": len(file_names),
+        "bundle_hash": bundle_hash,
+        "diagnostic_export_error_count": err_count,
         "grouped_file_list": grouped,
         "all_files": file_names,
-        "bundle_hash": bundle_hash,
     }
 
 

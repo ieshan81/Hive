@@ -27,6 +27,10 @@ def build_merged_universe(
 ) -> list[dict[str, Any]]:
     cfg = config or ConfigManager(session).get_current()
     sess = SessionEngine().detect()
+    from app.services.universe_mode_service import get_universe_mode
+
+    mode = get_universe_mode(cfg)
+    lightweight = mode == "curated_watchlist"
     by_sym: dict[str, dict[str, Any]] = {}
 
     priority_crypto = [
@@ -40,6 +44,19 @@ def build_merged_universe(
         "UNI/USD",
     ]
     starter_stocks = ["NVDA", "AAPL", "MSFT", "TSLA", "AMD", "META", "AMZN", "GOOGL", "SPY", "QQQ"]
+
+    def upsert(row: dict[str, Any]) -> None:
+        sym = row.get("symbol")
+        if not sym:
+            return
+        prev = by_sym.get(sym)
+        if not prev:
+            by_sym[sym] = row
+            return
+        for k, v in row.items():
+            if v is not None and v != "" and (prev.get(k) in (None, "", "unknown")):
+                prev[k] = v
+
     for sym in priority_crypto:
         by_sym[sym] = {
             "symbol": sym,
@@ -58,17 +75,44 @@ def build_merged_universe(
             "quote_currency": "USD",
         }
 
-    def upsert(row: dict[str, Any]) -> None:
-        sym = row.get("symbol")
-        if not sym:
-            return
-        prev = by_sym.get(sym)
-        if not prev:
-            by_sym[sym] = row
-            return
-        for k, v in row.items():
-            if v is not None and v != "" and (prev.get(k) in (None, "", "unknown")):
-                prev[k] = v
+    if mode == "dynamic_tradable":
+        try:
+            from app.services.alpaca_crypto_assets import fetch_crypto_assets
+
+            assets = fetch_crypto_assets(force=False)
+            for sym, meta in assets.items():
+                if not str(sym).endswith("/USD") or not meta.get("tradable"):
+                    continue
+                upsert(
+                    {
+                        "symbol": sym,
+                        "asset_type": "Crypto",
+                        "source": "alpaca_crypto_assets_api",
+                        "broker_supported": True,
+                        "push_pull_enabled": True,
+                        "quote_currency": meta.get("quote_currency") or "USD",
+                    }
+                )
+        except Exception:
+            pass
+        try:
+            from app.services.alpaca_adapter import AlpacaAdapter
+
+            stocks = AlpacaAdapter(session).get_tradable_assets(asset_class="stock", limit=30) or []
+            for item in stocks:
+                sym = item.get("symbol")
+                if sym:
+                    upsert(
+                        {
+                            "symbol": sym,
+                            "asset_type": "Stock",
+                            "source": "alpaca_stock_assets_api",
+                            "broker_supported": bool(item.get("tradable", True)),
+                            "push_pull_enabled": sess.stock_trading_allowed,
+                        }
+                    )
+        except Exception:
+            pass
 
     # Attention radar + discovery (skipped on lightweight paths — avoids Alpaca rate limits)
     if not lightweight:

@@ -66,7 +66,7 @@ def _cards_for_route(route: str) -> list[str]:
 
 
 def export_all_page_snapshots(session: Session) -> dict[str, Any]:
-    from app.services.mission_control_service import mission_control_status
+    from app.services.mission_control_cockpit_service import mission_control_cockpit
     from app.services.universe_service import universe_status
     from app.services.activity_feed_service import activity_feed
     from app.services.performance_service import performance_summary, equity_curve
@@ -85,7 +85,7 @@ def export_all_page_snapshots(session: Session) -> dict[str, Any]:
         "page_mission_control.json": _snap(
             session,
             page_route="/",
-            endpoints=[("/api/mission-control/status", lambda s: mission_control_status(s, cfg))],
+            endpoints=[("/api/mission-control/status", lambda s: mission_control_cockpit(s, cfg))],
         ),
         "page_universe.json": _snap(
             session,

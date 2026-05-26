@@ -53,3 +53,24 @@ def freshness(session: Session = Depends(get_session)):
     from app.services.universe_sources_service import universe_freshness
 
     return universe_freshness(session)
+
+
+@router.get("/mode")
+def mode(session: Session = Depends(get_session)):
+    from app.services.universe_mode_service import universe_mode_status
+
+    return universe_mode_status(session)
+
+
+@router.get("/filters")
+def filters(session: Session = Depends(get_session)):
+    from app.services.universe_mode_service import universe_filters
+
+    return universe_filters(session)
+
+
+@router.get("/block-reasons")
+def block_reasons(session: Session = Depends(get_session)):
+    from app.services.universe_mode_service import universe_block_reasons
+
+    return universe_block_reasons(session)

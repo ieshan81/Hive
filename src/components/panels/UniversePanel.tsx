@@ -5,6 +5,7 @@ import { Globe } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { apiGet } from "@/lib/apiClient";
+import { symbolIdentity } from "@/lib/symbolIdentity";
 
 type SymbolRow = {
   symbol: string;
@@ -31,20 +32,23 @@ export function UniversePanel() {
   const [symbols, setSymbols] = useState<SymbolRow[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [sources, setSources] = useState<SourcesSummary | null>(null);
+  const [mode, setMode] = useState<{ mode_label?: string; mode_explanation?: string; stocks_session_note?: string; active_mode?: string } | null>(null);
   const [filter, setFilter] = useState<"all" | "active" | "crypto" | "stock" | "blocked" | "watch">("all");
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [st, src] = await Promise.all([
+    const [st, src, md] = await Promise.all([
       apiGet<{ symbols?: SymbolRow[]; counts?: Record<string, number> }>("/api/universe/status"),
       apiGet<SourcesSummary>("/api/universe/sources"),
+      apiGet<{ mode_label?: string; mode_explanation?: string; stocks_session_note?: string; active_mode?: string }>("/api/universe/mode"),
     ]);
     if (st.ok) {
       setSymbols(st.data?.symbols ?? []);
       setCounts(st.data?.counts ?? {});
     }
     if (src.ok) setSources(src.data ?? null);
+    if (md.ok) setMode(md.data ?? null);
     setLoading(false);
   }, []);
 
@@ -77,10 +81,11 @@ export function UniversePanel() {
         Universe
       </h1>
       <p className="text-sm text-slate-400">
-        Alpaca-supported universe + curated watchlist · {counts.total ?? symbols.length} displayed ·{" "}
-        {counts.active ?? 0} active · {counts.blocked ?? 0} blocked · {counts.crypto ?? 0} crypto ·{" "}
-        {counts.stock ?? 0} stocks
+        Mode: <span className="text-hive-cyan">{mode?.mode_label ?? "—"}</span> ·{" "}
+        {counts.total ?? symbols.length} displayed · {counts.active ?? 0} active · {counts.blocked ?? 0} blocked
       </p>
+      {mode?.mode_explanation && <p className="text-[11px] text-slate-500">{mode.mode_explanation}</p>}
+      {mode?.stocks_session_note && <p className="text-[11px] text-amber-300/80">{mode.stocks_session_note}</p>}
 
       <GlassPanel title="Source proof">
         <dl className="grid grid-cols-2 md:grid-cols-3 gap-2 text-[11px]">
@@ -140,17 +145,29 @@ export function UniversePanel() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r) => (
-                <tr key={r.symbol} className="border-t border-white/5 text-slate-300">
-                  <td className="py-1.5 pr-2 font-medium text-white">{r.symbol}</td>
+              {filtered.map((r) => {
+                const id = symbolIdentity(r.symbol);
+                const dimStock = r.asset_type === "Stock" && r.status === "Blocked";
+                return (
+                  <tr
+                    key={r.symbol}
+                    className={`border-t border-white/5 text-slate-300 ${dimStock ? "opacity-50" : ""}`}
+                  >
+                    <td className="py-1.5 pr-2 font-medium text-white flex items-center gap-2">
+                      <span className="inline-flex h-6 w-6 items-center justify-center rounded bg-hive-cyan/10 text-[10px] text-hive-cyan">
+                        {id.glyph || id.name.slice(0, 2)}
+                      </span>
+                      {r.symbol}
+                    </td>
                   <td className="py-1.5 pr-2">{r.asset_type}</td>
                   <td className="py-1.5 pr-2 text-slate-500">{(r.source ?? "—").replace(/_/g, " ")}</td>
                   <td className="py-1.5 pr-2">{r.status}</td>
                   <td className="py-1.5 pr-2">{r.bar_freshness ?? "—"}</td>
                   <td className="py-1.5 pr-2">{r.quote_freshness ?? "—"}</td>
-                  <td className="py-1.5 text-slate-500">{r.blocked_reason || "—"}</td>
-                </tr>
-              ))}
+                    <td className="py-1.5 text-slate-500">{r.blocked_reason || "—"}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
