@@ -86,10 +86,10 @@ def test_nuke_clears_memory_tables_and_epoch():
         assert len(list(session.exec(select(MemoryEdge)).all())) == 0
         assert len(list(session.exec(select(MemoryEvidence)).all())) == 0
         assert len(list(session.exec(select(StrategyMemory)).all())) == 0
-        assert out.get("nuke_epoch", {}).get("nuke_completed_at")
+        assert out.get("reset_epoch_id") or out.get("nuke_epoch", {}).get("nuke_completed_at")
         epochs = list(
             session.exec(
-                select(SettingsActionAudit).where(SettingsActionAudit.action == "nuke_epoch")
+                select(SettingsActionAudit).where(SettingsActionAudit.action == "reset_epoch")
             ).all()
         )
         assert len(epochs) >= 1

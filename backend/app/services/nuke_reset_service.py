@@ -396,7 +396,9 @@ def execute_nuke_reset(session: Session, operator: str = "operator") -> dict[str
                 "desired_scheduler_enabled": desired_scheduler,
                 "config_pause_flags_changed": False,
                 "ticker_may_create_post_nuke_memories": desired_learning and not env.get("any_env_pause"),
-                **lock,
+                "live_lock": lock,
+                "live_lock_status": lock.get("live_lock_status"),
+                "live_trading_enabled": lock.get("live_trading_enabled"),
             }
         except Exception as exc:
             _clear_reset_lock_rows(session)
