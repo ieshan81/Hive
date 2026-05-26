@@ -217,6 +217,7 @@ class ResearchBacktestEngine:
         parameters: Optional[dict] = None,
         parameter_set_id: Optional[str] = None,
         lookback_days: Optional[int] = None,
+        timeframe: str = "1Hour",
     ) -> dict[str, Any]:
         run_id = str(uuid.uuid4())
         params = parameters or {}
@@ -268,10 +269,12 @@ class ResearchBacktestEngine:
 
         min_bars = int(self.research_cfg.get("min_bars_for_backtest", 50))
         alpaca_tf = timeframe if timeframe in ("1Hour", "5Min", "15Min", "1Day") else "1Hour"
+        total_bars = 0
         for sym in symbols:
             bars, meta = self.hist.get_bars(
                 sym, timeframe=alpaca_tf, min_rows=min_bars, lookback_days=lb
             )
+            total_bars += len(bars)
             if meta.get("error"):
                 all_warnings.append(f"{sym}: {meta['error']}")
                 continue
@@ -297,7 +300,7 @@ class ResearchBacktestEngine:
                 warnings=all_warnings or ["No trades across symbols"],
                 metrics={},
             )
-            return {"status": "empty", "run_id": run_id, "result": self._serialize_run(row)}
+            return {"status": "empty", "run_id": run_id, "result": self._serialize_run(row), "metrics": {"result_label": "reject", "timeframe": alpaca_tf, "bars_count": total_bars}}
 
         stats = quant_math.compute_trade_stats(all_returns)
         cost = round_trip_cost_pct(symbols[0] if symbols else "BTC/USD", self.config)
@@ -308,7 +311,7 @@ class ResearchBacktestEngine:
             "parameters": params,
             "date_coverage": date_meta,
             "timeframe": alpaca_tf,
-            "bars_count": sum(len(self.hist.get_bars(s, timeframe=alpaca_tf, min_rows=1)[0]) for s in symbols),
+            "bars_count": total_bars,
             "result_label": _backtest_result_label(stats, self.config),
         }
         conf = _confidence_label(stats["num_trades"], self.research_cfg)
