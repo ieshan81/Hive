@@ -143,7 +143,8 @@ class AutonomousPaperScheduler:
             self._persist_state(operator)
             return {"status": "stopped", "reason": "daily_tick_cap_reached"}
 
-        max_trades = int(apl_cfg.get("max_paper_trades_per_day", 0) or 0)
+        use_allocator = bool(apl_cfg.get("use_capital_allocator", True))
+        max_trades = 0 if use_allocator else int(apl_cfg.get("max_paper_trades_per_day", 0) or 0)
         if max_trades > 0:
             start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
             filled_today = len(
