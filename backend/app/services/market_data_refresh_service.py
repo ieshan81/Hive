@@ -89,15 +89,25 @@ class MarketDataRefreshService:
                         provider_errors.append(f"{sym}: {fetch['message'][:120]}")
                     continue
                 chk = self.freshness.check_db_only(sym, timeframe=timeframe)
-                refreshed.append(
-                    {
-                        "symbol": sym,
-                        "rows_stored": fetch.get("rows_stored", 0),
-                        "latest_bar_time": chk.get("last_bar_at"),
-                        "fresh": chk.get("fresh"),
-                        "staleness_hours": chk.get("staleness_hours"),
-                    }
-                )
+                row = {
+                    "symbol": sym,
+                    "rows_stored": fetch.get("rows_stored", 0),
+                    "latest_bar_time": chk.get("last_bar_at"),
+                    "fresh": chk.get("fresh"),
+                    "staleness_hours": chk.get("staleness_hours"),
+                }
+                if not chk.get("fresh"):
+                    failed.append(
+                        {
+                            "symbol": sym,
+                            "reason": "still_stale_after_refresh",
+                            "latest_bar_time": chk.get("last_bar_at"),
+                        }
+                    )
+                    if chk.get("plain"):
+                        provider_errors.append(f"{sym}: {chk['plain']}")
+                else:
+                    refreshed.append(row)
             except Exception as exc:
                 try:
                     self.session.rollback()

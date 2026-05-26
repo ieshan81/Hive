@@ -370,8 +370,16 @@ class AlpacaAdapter:
                 return []
             tf = tf_map[timeframe]
             end = datetime.utcnow()
-            days = lookback_days if lookback_days else max(limit // 24 + 7, limit * 3 // 24)
-            start = end - timedelta(days=max(days, 7))
+            # Window must end at `now` — with 5Min bars, limit=500 only covers ~41h from `start`.
+            if timeframe in ("1Min", "5Min", "15Min"):
+                bar_minutes = {"1Min": 1, "5Min": 5, "15Min": 15}[timeframe]
+                window_hours = max(6, (limit * bar_minutes) / 60.0 * 1.15)
+                if lookback_days:
+                    window_hours = min(window_hours, lookback_days * 24)
+                start = end - timedelta(hours=window_hours)
+            else:
+                days = lookback_days if lookback_days else max(3, limit // 24 + 1)
+                start = end - timedelta(days=max(days, 1))
             client = CryptoHistoricalDataClient(settings.alpaca_api_key, settings.alpaca_secret_key)
             req = CryptoBarsRequest(symbol_or_symbols=quote_symbol, timeframe=tf, start=start, end=end, limit=limit)
             bars = client.get_crypto_bars(req)
@@ -389,6 +397,8 @@ class AlpacaAdapter:
                 for b in bars.data[quote_symbol]
             ]
         except Exception as exc:
+            _mark_rate_limited(exc)
+            self.broker_sync_rate_limited = _is_rate_limited()
             self._log_error("get_crypto_bars", str(exc), {"symbol": symbol})
             return []
 
