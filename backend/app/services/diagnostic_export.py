@@ -221,22 +221,43 @@ def serialize_broker_error(
     *,
     latest_cycle_id: Optional[str],
     cycle_started: Optional[str],
+    scheduler_enabled_at: Optional[str] = None,
+    scheduler_last_tick_at: Optional[str] = None,
 ) -> dict[str, Any]:
     details = row.details if isinstance(row.details, dict) else {}
     cycle_id = row.cycle_run_id or details.get("cycle_run_id")
-    is_latest = bool(latest_cycle_id and cycle_id == latest_cycle_id)
-    if not is_latest and latest_cycle_id and cycle_started and row.created_at:
-        is_latest = _iso(row.created_at) >= cycle_started
+    created_iso = _iso(row.created_at)
+
+    # "Latest" should mean "latest scheduler tick window" when scheduler is enabled.
+    # If no tick has run yet, do not mark any broker errors as latest-cycle.
+    is_latest = False
+    if scheduler_last_tick_at and created_iso:
+        is_latest = created_iso >= scheduler_last_tick_at
+    elif latest_cycle_id and cycle_id == latest_cycle_id:
+        # Fallback: legacy last-cycle heuristic (non-scheduler use cases).
+        is_latest = True
+    elif latest_cycle_id and cycle_started and created_iso:
+        is_latest = created_iso >= cycle_started
+
+    historical = True
+    source_window = "historical"
+    if scheduler_enabled_at and created_iso and created_iso >= scheduler_enabled_at:
+        historical = False
+        source_window = "since_scheduler_enable"
+    if scheduler_last_tick_at and created_iso and created_iso >= scheduler_last_tick_at:
+        historical = False
+        source_window = "since_last_tick"
     return {
         "id": row.id,
         "source": row.source,
         "operation": row.operation,
         "message": row.message,
         "details": details or None,
-        "created_at": _iso(row.created_at),
+        "created_at": created_iso,
         "cycle_run_id": cycle_id,
         "is_latest_cycle": is_latest,
-        "historical": not is_latest,
+        "historical": historical,
+        "source_window": source_window,
     }
 
 
@@ -320,6 +341,27 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
 
     latest_cycle_id = last_cycle.get("cycle_run_id") if last_cycle else None
     cycle_started = last_cycle.get("started_at") if last_cycle else None
+
+    # Scheduler/tick attribution for "latest" classification.
+    scheduler_enabled_at = None
+    try:
+        row = (
+            session.exec(
+                select(SettingsActionAudit)
+                .where(SettingsActionAudit.action == "scheduler_enable")
+                .order_by(SettingsActionAudit.created_at.desc())
+            ).first()
+        )
+        scheduler_enabled_at = _iso(row.created_at) if row and row.created_at else None
+    except Exception:
+        scheduler_enabled_at = None
+    scheduler_last_tick_at = None
+    try:
+        from app.services.autonomous_paper_scheduler import AutonomousPaperScheduler
+
+        scheduler_last_tick_at = AutonomousPaperScheduler(session, cfg_brain).status().get("last_tick_at")
+    except Exception:
+        scheduler_last_tick_at = None
     if latest_cycle_id:
         signal_rows = _filter_cycle_rows(
             signal_rows,
@@ -365,6 +407,8 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             row,
             latest_cycle_id=latest_cycle_id,
             cycle_started=cycle_started,
+            scheduler_enabled_at=scheduler_enabled_at,
+            scheduler_last_tick_at=scheduler_last_tick_at,
         )
         for row in broker_error_rows
     ]

@@ -242,6 +242,9 @@ class CapitalAllocatorService:
         if deployable <= 0 and not degraded:
             warnings.append("No deployable capital after reserves and open exposure.")
 
+        apl_cfg = dict(self.config.get("autonomous_paper_learning") or {})
+        allocator_active = bool(apl_cfg.get("use_capital_allocator", True))
+
         return {
             "status": "degraded" if degraded else "ok",
             "paper_only": True,
@@ -276,7 +279,7 @@ class CapitalAllocatorService:
             "reason_codes": self._plan_reason_codes(market_mode, deployable, diversification),
             "learning_capacity": {
                 "mode": "opportunity_based",
-                "daily_paper_trade_cap": None if _unlimited(self.config.get("autonomous_paper_learning", {}).get("max_paper_trades_per_day")) else "capped",
+                "daily_paper_trade_cap": "no_fixed_cap" if allocator_active else "configurable_cap",
                 "position_control": "allocator_exposure",
                 "max_open_positions_cap": None if _unlimited(self.cfg.get("operator_emergency_max_open_positions")) else self.cfg.get("operator_emergency_max_open_positions"),
             },

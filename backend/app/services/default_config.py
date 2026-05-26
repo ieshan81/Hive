@@ -328,7 +328,7 @@ DEFAULT_CONFIG = {
         "max_weekly_paper_loss_pct": 10.0,
         "max_rejected_orders_per_day": 10,
         "rejection_cooldown_minutes": 15,
-        "max_scheduler_ticks_per_day": 48,
+        "max_scheduler_ticks_per_day": 0,
         "broker_error_pause_after": 3,
         "no_averaging_down": True,
         "no_duplicate_symbol_buy": True,

@@ -78,7 +78,7 @@ class AutonomousPaperScheduler:
             "paused_reason": self._state.get("paused_reason"),
             "interval_seconds": interval,
             "ticks_today": int(self._state.get("ticks_today", 0)),
-            "max_ticks_per_day": int(self.cfg.get("max_scheduler_ticks_per_day", 48)),
+            "max_ticks_per_day": int(self.cfg.get("max_scheduler_ticks_per_day", 0) or 0),
             "last_tick_at": last,
             "next_planned_at_utc": next_at,
             "broker_error_streak": int(self._state.get("broker_error_streak", 0)),
@@ -136,14 +136,16 @@ class AutonomousPaperScheduler:
         if not apl_cfg.get("mode_enabled"):
             return {"status": "noop", "reason": "autonomous_paper_learning_off"}
 
-        max_ticks = int(apl_cfg.get("max_scheduler_ticks_per_day", 48))
-        if int(self._state.get("ticks_today", 0)) >= max_ticks:
+        use_allocator = bool(apl_cfg.get("use_capital_allocator", True))
+        max_ticks = int(apl_cfg.get("max_scheduler_ticks_per_day", 0) or 0)
+        if use_allocator:
+            max_ticks = 0  # opportunity-based when allocator is active
+        if max_ticks > 0 and int(self._state.get("ticks_today", 0)) >= max_ticks:
             self._state["paused"] = True
             self._state["paused_reason"] = "daily_tick_cap"
             self._persist_state(operator)
             return {"status": "stopped", "reason": "daily_tick_cap_reached"}
 
-        use_allocator = bool(apl_cfg.get("use_capital_allocator", True))
         max_trades = 0 if use_allocator else int(apl_cfg.get("max_paper_trades_per_day", 0) or 0)
         if max_trades > 0:
             start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
