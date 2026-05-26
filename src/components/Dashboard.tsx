@@ -10,7 +10,6 @@ import { PortfolioGatePanel } from "@/components/panels/PortfolioGatePanel";
 import { OrdersPanel } from "@/components/panels/OrdersPanel";
 import { PositionsPanel } from "@/components/panels/PositionsPanel";
 import { LatestCyclePanel } from "@/components/panels/LatestCyclePanel";
-import { MissionControlPanel } from "@/components/panels/MissionControlPanel";
 import type { DashboardData } from "@/types/dashboard";
 
 interface DashboardProps {
@@ -20,7 +19,6 @@ interface DashboardProps {
 export function Dashboard({ data }: DashboardProps) {
   return (
     <>
-      <MissionControlPanel data={data} />
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-4">
         <AccountSurvivalPanel data={data.accountSurvival} />
         <AIFundManagerPanel data={data.aiFundManager} />

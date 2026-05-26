@@ -111,9 +111,11 @@ function HiveBrainFlowInner({
   heightClass = "min-h-[320px]",
 }: InnerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const { fitView, zoomIn } = useReactFlow();
+  const { fitView, zoomIn, setViewport } = useReactFlow();
   const [fullscreen, setFullscreen] = useState(false);
+  const [measuredH, setMeasuredH] = useState(360);
   const [collapsedClusters, setCollapsedClusters] = useState<Set<string>>(() => new Set());
+  const layoutReady = graphNodes.length > 0;
 
   const { nodes: initialNodes, edges: initialEdges } = useMemo(
     () => graphToFlow(graphNodes, graphEdges, collapsedClusters),
@@ -127,15 +129,38 @@ function HiveBrainFlowInner({
     const { nodes: n, edges: e } = graphToFlow(graphNodes, graphEdges, collapsedClusters);
     setNodes(n);
     setEdges(e);
-    const t = setTimeout(() => fitView({ padding: 0.2, duration: 300 }), 80);
-    return () => clearTimeout(t);
-  }, [graphNodes, graphEdges, collapsedClusters, setNodes, setEdges, fitView]);
+  }, [graphNodes, graphEdges, collapsedClusters, setNodes, setEdges]);
 
   useEffect(() => {
-    const onFs = () => setFullscreen(!!document.fullscreenElement);
+    if (!layoutReady || !containerRef.current) return;
+    const el = containerRef.current;
+    const ro = new ResizeObserver((entries) => {
+      const h = entries[0]?.contentRect.height;
+      if (h && h > 40) setMeasuredH(h);
+    });
+    ro.observe(el);
+    const t = setTimeout(() => fitView({ padding: 0.15, duration: 250 }), 120);
+    return () => {
+      ro.disconnect();
+      clearTimeout(t);
+    };
+  }, [layoutReady, graphNodes.length, collapsedClusters, fullscreen, measuredH, fitView]);
+
+  useEffect(() => {
+    const onFs = () => {
+      const isFs = !!document.fullscreenElement;
+      setFullscreen(isFs);
+      setTimeout(() => {
+        if (isFs) fitView({ padding: 0.12, duration: 300 });
+        else {
+          setViewport({ x: 0, y: 0, zoom: 1 });
+          fitView({ padding: 0.15, duration: 300 });
+        }
+      }, 150);
+    };
     document.addEventListener("fullscreenchange", onFs);
     return () => document.removeEventListener("fullscreenchange", onFs);
-  }, []);
+  }, [fitView, setViewport]);
 
   const toggleFullscreen = useCallback(async () => {
     const el = containerRef.current;
@@ -172,9 +197,15 @@ function HiveBrainFlowInner({
     <div
       ref={containerRef}
       className={`relative w-full rounded-xl border border-white/5 bg-[#030508] ${heightClass} ${
-        fullscreen ? "h-screen min-h-screen" : ""
+        fullscreen ? "!fixed !inset-0 !z-[9999] !h-screen !min-h-screen !w-screen !rounded-none" : ""
       }`}
+      style={fullscreen ? { height: "100vh", width: "100vw" } : { minHeight: measuredH }}
     >
+      {!layoutReady ? (
+        <p className="absolute inset-0 flex items-center justify-center text-sm text-slate-500">
+          No graph data
+        </p>
+      ) : null}
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -182,9 +213,9 @@ function HiveBrainFlowInner({
         onEdgesChange={onEdgesChange}
         nodeTypes={nodeTypes}
         onNodeClick={onNodeClick}
-        fitView
-        minZoom={0.2}
-        maxZoom={2}
+        style={{ width: "100%", height: fullscreen ? "100vh" : measuredH }}
+        minZoom={0.15}
+        maxZoom={2.5}
         panOnDrag
         panOnScroll
         zoomOnScroll

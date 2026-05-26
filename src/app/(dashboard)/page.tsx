@@ -1,7 +1,5 @@
-import { Dashboard } from "@/components/Dashboard";
-import { getDashboardData } from "@/lib/dashboard";
+import { MissionControlPanel } from "@/components/panels/MissionControlPanel";
 
-export default async function OverviewPage() {
-  const data = await getDashboardData();
-  return <Dashboard data={data} />;
+export default function MissionControlPage() {
+  return <MissionControlPanel />;
 }

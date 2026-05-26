@@ -1,86 +1,148 @@
 "use client";
 
-import type { DashboardData } from "@/types/dashboard";
+import { useCallback, useEffect, useState } from "react";
+import { Shield, Activity, Zap, Wallet, AlertTriangle } from "lucide-react";
+import { GlassPanel } from "@/components/ui/GlassPanel";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { apiGet } from "@/lib/apiClient";
 
-type OrderSummary = {
-  orders_attempted?: number;
-  orders_sent_to_broker?: number;
-  orders_filled?: number;
-  orders_rejected?: number;
-  orders_blocked_preflight?: number;
-  last_order_user_message?: string;
+type MissionStatus = {
+  status?: string;
+  system_state_banner?: {
+    headline?: string;
+    subline?: string;
+    live_locked?: boolean;
+    paper_broker?: boolean;
+    degraded?: boolean;
+  };
+  push_pull_engine?: { market_mode_label?: string; analysis_only?: boolean };
+  paper_learning?: { desired_enabled?: boolean; effective_enabled?: boolean; can_place_paper_orders?: boolean };
+  scheduler?: { desired_enabled?: boolean; effective_enabled?: boolean; last_tick_at?: string };
+  env_pause?: { any_env_pause?: boolean; paper_trading_paused_by_env?: boolean };
+  live_lock?: { live_lock_status?: string };
+  last_tick_summary?: { plain?: string; tick_at?: string; orders_created?: number };
+  capital_allocator?: { status?: string; headline?: string };
+  blockers?: string[];
+  next_action_plain?: string;
 };
 
-type SafetyBanner = {
-  liveTradingLocked?: boolean;
-  paperLearning?: string;
-  trainingMode?: string;
-  confidenceScore?: number;
-  confidenceLabel?: string;
-  currentMode?: string;
-  botCanPlaceOrders?: string;
-  openPositions?: number;
-  brokerTruth?: string;
-  plainMessage?: string;
-};
+export function MissionControlPanel() {
+  const [data, setData] = useState<MissionStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-export function MissionControlPanel({
-  data,
-}: {
-  data: DashboardData & { safetyBanner?: SafetyBanner; orderSummary?: OrderSummary };
-}) {
-  const sb = data.safetyBanner;
-  const os = data.orderSummary;
-  const paperOff = (sb?.paperLearning ?? sb?.trainingMode) === "OFF";
-  const trainingOff = paperOff || sb?.botCanPlaceOrders === "NO";
-  const botStatus = trainingOff ? "PAUSED" : sb?.botCanPlaceOrders === "YES" ? "READY" : "WATCHING";
-  const modeLabel =
-    sb?.currentMode === "paper_learning"
-      ? "Paper Learning"
-      : sb?.currentMode === "paused"
-        ? "Paused"
-        : "Watching";
+  const load = useCallback(async () => {
+    setLoading(true);
+    const res = await apiGet<MissionStatus>("/api/mission-control/status");
+    if (res.ok && res.data) {
+      setData(res.data);
+      setError(null);
+    } else {
+      setError(res.error || `HTTP ${res.status}`);
+    }
+    setLoading(false);
+  }, []);
 
-  const cards = [
-    { title: "Safety status", value: sb?.liveTradingLocked ? "Live locked" : "Check live lock", sub: "Paper training only" },
-    { title: "Mode", value: modeLabel, sub: `Paper learning ${sb?.paperLearning ?? sb?.trainingMode ?? "OFF"}` },
-    {
-      title: "Confidence",
-      value: sb?.confidenceScore != null ? String(Math.round(sb.confidenceScore)) : "—",
-      sub: sb?.confidenceLabel || "Evidence only — not live permission",
-    },
-    { title: "Bot status", value: botStatus, sub: sb?.plainMessage || "—" },
-    { title: "Broker truth", value: sb?.brokerTruth || "—", sub: "Synced with Alpaca paper" },
-    { title: "Open positions", value: String(sb?.openPositions ?? 0), sub: "Broker-confirmed only" },
-    {
-      title: "Orders (lifetime)",
-      value: `Attempted ${os?.orders_attempted ?? 0}`,
-      sub: `Filled ${os?.orders_filled ?? 0} · Rejected ${os?.orders_rejected ?? 0} · Sent ${os?.orders_sent_to_broker ?? 0}`,
-    },
-    {
-      title: "Safe next action",
-      value: trainingOff ? "Enable training when ready" : "Run once (operator only)",
-      sub: os?.last_order_user_message || "No orders yet",
-    },
-  ];
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 30000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  if (loading) return <EmptyState message="Loading Mission Control…" className="min-h-[240px]" />;
+  if (error) {
+    return (
+      <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-amber-200 text-sm">
+        Mission Control unavailable: {error}
+      </div>
+    );
+  }
+
+  const banner = data?.system_state_banner;
+  const envPaused = data?.env_pause?.any_env_pause;
 
   return (
-    <section className="mb-4 rounded-xl border border-cyan-500/15 bg-slate-900/60 p-4">
-      <h2 className="text-sm font-semibold text-white mb-1">Mission control</h2>
-      {trainingOff && (
-        <p className="text-[11px] text-amber-300/95 mb-3">
-          The bot cannot place new paper orders because Training Mode is OFF.
-        </p>
-      )}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-        {cards.map((c) => (
-          <div key={c.title} className="rounded-lg border border-white/10 bg-black/20 p-3">
-            <div className="text-[10px] text-slate-500">{c.title}</div>
-            <div className="text-sm font-semibold text-slate-100">{c.value}</div>
-            <div className="text-[9px] text-slate-500 mt-1">{c.sub}</div>
-          </div>
-        ))}
+    <section className="space-y-4 max-w-5xl">
+      <div
+        className={`rounded-xl border p-5 ${
+          envPaused
+            ? "border-amber-500/40 bg-amber-500/10"
+            : banner?.degraded
+              ? "border-amber-500/30 bg-amber-500/5"
+              : "border-emerald-500/30 bg-emerald-500/5"
+        }`}
+      >
+        <h1 className="text-xl font-bold text-white flex items-center gap-2">
+          <Shield className="h-6 w-6 text-hive-cyan" />
+          Mission Control
+        </h1>
+        <p className="text-lg text-white mt-2">{banner?.headline ?? "System status unknown"}</p>
+        <p className="text-sm text-slate-400 mt-1">{banner?.subline ?? data?.next_action_plain}</p>
+        <div className="flex flex-wrap gap-2 mt-3">
+          <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+            Live: {data?.live_lock?.live_lock_status === "locked" ? "Env lock active" : data?.live_lock?.live_lock_status}
+          </span>
+          <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+            Paper orders: {data?.paper_learning?.can_place_paper_orders ? "Allowed" : "Blocked / skipped"}
+          </span>
+          {envPaused && (
+            <span className="text-[10px] px-2 py-0.5 rounded bg-amber-900/50 text-amber-200">Env paused</span>
+          )}
+        </div>
       </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <GlassPanel title="Push-Pull Engine" icon={<Zap className="h-4 w-4" />}>
+          <p className="text-sm text-white">{data?.push_pull_engine?.market_mode_label}</p>
+          {data?.push_pull_engine?.analysis_only && (
+            <p className="text-[11px] text-amber-300 mt-1">Analysis only — no new entries</p>
+          )}
+        </GlassPanel>
+
+        <GlassPanel title="Paper Learning" icon={<Activity className="h-4 w-4" />}>
+          <p className="text-sm text-white">
+            Desired: {data?.paper_learning?.desired_enabled ? "ON" : "Off (operator setting)"} · Effective:{" "}
+            {envPaused
+              ? "Blocked by env pause"
+              : data?.paper_learning?.effective_enabled
+                ? "Learning active"
+                : "Off (operator setting)"}
+          </p>
+          <p className="text-[11px] text-slate-500 mt-1">
+            Scheduler:{" "}
+            {envPaused
+              ? "Blocked by env pause"
+              : data?.scheduler?.effective_enabled
+                ? "Running"
+                : "Off (operator setting)"}
+          </p>
+        </GlassPanel>
+
+        <GlassPanel title="Last tick" icon={<Activity className="h-4 w-4" />}>
+          <p className="text-sm text-white">{data?.last_tick_summary?.plain ?? "No tick yet"}</p>
+          {data?.last_tick_summary?.tick_at && (
+            <p className="text-[10px] text-slate-500 mt-1">{data.last_tick_summary.tick_at}</p>
+          )}
+        </GlassPanel>
+
+        <GlassPanel title="Capital allocator" icon={<Wallet className="h-4 w-4" />}>
+          <p className="text-sm text-white capitalize">{data?.capital_allocator?.status ?? "—"}</p>
+          <p className="text-[11px] text-slate-500 mt-1">{data?.capital_allocator?.headline}</p>
+        </GlassPanel>
+      </div>
+
+      {(data?.blockers?.length ?? 0) > 0 && (
+        <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
+          <p className="text-[11px] font-semibold text-amber-300 flex items-center gap-1">
+            <AlertTriangle className="h-3.5 w-3.5" /> Blockers / warnings
+          </p>
+          <ul className="mt-1 text-[11px] text-slate-400 list-disc pl-4">
+            {data?.blockers?.map((b) => (
+              <li key={b}>{b.replace(/_/g, " ")}</li>
+            ))}
+          </ul>
+        </div>
+      )}
     </section>
   );
 }

@@ -7,9 +7,14 @@ from app.config import settings
 from app.database import init_db
 from app.routers import (
     account_eligibility,
+    ai_manager,
     api,
     autonomous_paper_learning,
     capital_allocator,
+    danger_zone,
+    mission_control,
+    push_pull,
+    reports_hub,
     candle_lab,
     confidence,
     fast_training,
@@ -53,6 +58,11 @@ app.include_router(market_meme.router)
 app.include_router(settings_brain.router)
 app.include_router(autonomous_paper_learning.router)
 app.include_router(capital_allocator.router)
+app.include_router(mission_control.router)
+app.include_router(push_pull.router)
+app.include_router(ai_manager.router)
+app.include_router(danger_zone.router)
+app.include_router(reports_hub.router)
 app.include_router(confidence.router)
 app.include_router(account_eligibility.router)
 app.include_router(strategy_proposals.router)

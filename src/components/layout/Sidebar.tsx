@@ -6,8 +6,6 @@ import {
   LayoutDashboard,
   Brain,
   FlaskConical,
-  Radar,
-  Lock,
   LineChart,
   TrendingUp,
   FileText,
@@ -15,29 +13,27 @@ import {
   Settings,
   Shield,
   Hexagon,
-  BookOpen,
-  Gauge,
-  GitPullRequest,
-  ArrowUpCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
-  { href: "/", label: "Overview", icon: LayoutDashboard },
+  { href: "/", label: "Mission Control", icon: LayoutDashboard },
   { href: "/ai-manager", label: "AI Manager", icon: Brain },
-  { href: "/positions", label: "Positions", icon: Wallet },
-  { href: "/strategies", label: "Strategies", icon: FlaskConical },
-  { href: "/market-radar", label: "Market Radar", icon: Radar },
-  { href: "/paper-learning", label: "Paper Learning", icon: BookOpen },
-  { href: "/confidence", label: "Confidence", icon: Gauge },
-  { href: "/proposals", label: "Proposals", icon: GitPullRequest },
-  { href: "/live-promotion", label: "Live Promotion", icon: ArrowUpCircle },
-  { href: "/risk-cage", label: "Risk Cage", icon: Lock },
-  { href: "/backtesting", label: "Backtesting", icon: LineChart },
-  { href: "/performance", label: "Performance", icon: TrendingUp },
+  { href: "/push-pull", label: "Push-Pull Trader", icon: TrendingUp },
+  { href: "/portfolio", label: "Portfolio & Execution", icon: Wallet },
   { href: "/reports", label: "Reports", icon: FileText },
   { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/danger-zone", label: "Danger Zone", icon: Shield },
 ];
+
+/** Legacy routes — still reachable via URL for advanced tools */
+const legacyHidden = false;
+const legacyNav = legacyHidden
+  ? []
+  : [
+      { href: "/strategies", label: "Strategies (legacy)", icon: FlaskConical },
+      { href: "/backtesting", label: "Backtesting (legacy)", icon: LineChart },
+    ];
 
 interface SidebarProps {
   systemStatus?: { alpacaConnected: boolean; paperTradingOnly: boolean };
@@ -60,7 +56,7 @@ export function Sidebar({ systemStatus }: SidebarProps) {
       </div>
 
       <nav className="flex-1 overflow-y-auto scrollbar-thin px-3 py-4 space-y-0.5">
-        {navItems.map(({ href, label, icon: Icon }) => {
+        {[...navItems, ...legacyNav].map(({ href, label, icon: Icon }) => {
           const isActive = pathname === href;
           return (
             <Link

@@ -1,25 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FileArchive, AlertTriangle } from "lucide-react";
 import { apiGet, buildApiUrl } from "@/lib/apiClient";
-
-const REQUIRED_FILES = [
-  "doge_broker_availability_audit.json",
-  "broker_position_availability_audit.json",
-  "ghost_position_candidates.json",
-  "fast_training_status.json",
-  "hive_brain_node_details_sample.json",
-  "live_lock_tripwire_status.json",
-  "positions.json",
-  "orders.json",
-  "diagnostic_export_errors.json",
-];
 
 export function DiagnosticBundlePanel() {
   const [expanded, setExpanded] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [bundleStatus, setBundleStatus] = useState<Record<string, unknown> | null>(null);
+
+  useEffect(() => {
+    apiGet<Record<string, unknown>>("/api/reports/diagnostic-bundle/status").then((r) => {
+      if (r.ok) setBundleStatus(r.data);
+    });
+  }, []);
 
   async function downloadBundle() {
     setDownloading(true);
@@ -59,16 +54,25 @@ export function DiagnosticBundlePanel() {
     setDownloading(false);
   }
 
+  const expected = (bundleStatus?.expected_files as string[]) ?? [];
+
   return (
-    <section className="max-w-xl space-y-4">
+    <section className="max-w-3xl space-y-4">
       <article className="rounded-xl border border-white/10 bg-white/3 p-6">
         <h2 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
-          <FileArchive className="h-5 w-5 text-hive-cyan" /> Diagnostic bundle
+          <FileArchive className="h-5 w-5 text-hive-cyan" /> Reports — Diagnostic proof package
         </h2>
-        <p className="text-sm text-slate-400 mb-4">
-          Download a zip of API snapshots for audit. Secrets are never included. Partial exports include
-          diagnostic_export_errors.json when a section fails.
+        <p className="text-sm text-slate-400 mb-2">
+          {String(bundleStatus?.headline ?? "Health summary first, then download.")}
         </p>
+        <p className="text-sm text-slate-500 mb-4">
+          {String(bundleStatus?.description ?? "Secrets are never included.")}
+        </p>
+        {bundleStatus?.env_pause != null ? (
+          <p className="text-[11px] text-amber-300/90 mb-2">
+            Env pause: {JSON.stringify(bundleStatus.env_pause)}
+          </p>
+        ) : null}
         <button
           type="button"
           disabled={downloading}
@@ -91,10 +95,12 @@ export function DiagnosticBundlePanel() {
             {msg}
           </p>
         )}
-        <ul className="mt-4 text-[11px] text-slate-400 space-y-1">
-          {REQUIRED_FILES.map((f) => (
-            <li key={f}>✓ {f}</li>
-          ))}
+        <ul className="mt-4 text-[11px] text-slate-400 space-y-1 columns-2">
+          {(expected.length ? expected : ["bundle_meta.json", "push_pull_latest_tick.json", "ai_memory.json"]).map(
+            (f) => (
+              <li key={f}>✓ {f}</li>
+            )
+          )}
         </ul>
         <button
           type="button"

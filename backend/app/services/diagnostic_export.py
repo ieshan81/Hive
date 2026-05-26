@@ -940,6 +940,83 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
                 ).list_execution_logs(session, scope="historical", limit=200),
                 export_errors,
             ),
+            "env_pause_status.json": safe_export_section(
+                "env_pause_status.json",
+                lambda: __import__(
+                    "app.services.env_pause_service", fromlist=["env_pause_status"]
+                ).env_pause_status(),
+                export_errors,
+            ),
+            "live_lock_status.json": safe_export_section(
+                "live_lock_status.json",
+                lambda: __import__(
+                    "app.services.live_lock_tripwire", fromlist=["live_lock_tripwire_status"]
+                ).live_lock_tripwire_status(cfg_brain),
+                export_errors,
+            ),
+            "mission_control_status.json": safe_export_section(
+                "mission_control_status.json",
+                lambda: __import__(
+                    "app.services.mission_control_service", fromlist=["mission_control_status"]
+                ).mission_control_status(session, cfg_brain),
+                export_errors,
+            ),
+            "push_pull_latest_tick.json": safe_export_section(
+                "push_pull_latest_tick.json",
+                lambda: __import__(
+                    "app.services.push_pull_engine_service", fromlist=["PushPullEngineService"]
+                ).PushPullEngineService(session, cfg_brain).latest_tick(),
+                export_errors,
+            ),
+            "push_pull_candidates.json": safe_export_section(
+                "push_pull_candidates.json",
+                lambda: __import__(
+                    "app.services.push_pull_engine_service", fromlist=["PushPullEngineService"]
+                ).PushPullEngineService(session, cfg_brain).decisions(100),
+                export_errors,
+            ),
+            "push_pull_decisions.json": safe_export_section(
+                "push_pull_decisions.json",
+                lambda: __import__(
+                    "app.services.push_pull_engine_service", fromlist=["PushPullEngineService"]
+                ).PushPullEngineService(session, cfg_brain).decisions(200),
+                export_errors,
+            ),
+            "push_pull_lessons.json": safe_export_section(
+                "push_pull_lessons.json",
+                lambda: __import__(
+                    "app.services.push_pull_engine_service", fromlist=["PushPullEngineService"]
+                ).PushPullEngineService(session, cfg_brain).lessons(100),
+                export_errors,
+            ),
+            "ai_memory.json": safe_export_section(
+                "ai_memory.json",
+                lambda: __import__(
+                    "app.services.ai_manager_service", fromlist=["AIManagerService"]
+                ).AIManagerService(session, cfg_brain).memories(100),
+                export_errors,
+            ),
+            "ai_strategy_lessons.json": safe_export_section(
+                "ai_strategy_lessons.json",
+                lambda: __import__(
+                    "app.services.ai_manager_service", fromlist=["AIManagerService"]
+                ).AIManagerService(session, cfg_brain).lessons(100),
+                export_errors,
+            ),
+            "system_log.json": safe_export_section(
+                "system_log.json",
+                lambda: __import__(
+                    "app.services.reports_hub_service", fromlist=["ReportsHubService"]
+                ).ReportsHubService(session, cfg_brain).system_log(200),
+                export_errors,
+            ),
+            "audit_trail.json": safe_export_section(
+                "audit_trail.json",
+                lambda: __import__(
+                    "app.services.reports_hub_service", fromlist=["ReportsHubService"]
+                ).ReportsHubService(session, cfg_brain).audit_trail(100),
+                export_errors,
+            ),
             "paper_experiment_config.json": [_serialize_row(r) for r in session.exec(select(PaperExperimentConfig)).all()],
             "paper_experiment_decisions.json": _annotate_source_window(
                 [_serialize_row(r) for r in session.exec(select(PaperExperimentDecision)).all()],
