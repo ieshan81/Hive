@@ -23,6 +23,7 @@ from app.routers import (
     reports_hub,
     candle_lab,
     confidence,
+    backtesting,
     fast_training,
     hive_brain,
     live_promotion,
@@ -75,6 +76,7 @@ app.include_router(ai_manager.router)
 app.include_router(danger_zone.router)
 app.include_router(reports_hub.router)
 app.include_router(confidence.router)
+app.include_router(backtesting.router)
 app.include_router(account_eligibility.router)
 app.include_router(strategy_proposals.router)
 app.include_router(live_promotion.router)

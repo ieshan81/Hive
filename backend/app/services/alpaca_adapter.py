@@ -176,6 +176,10 @@ class AlpacaAdapter:
                     "status": str(account.status),
                     "currency": account.currency,
                     "pattern_day_trader": account.pattern_day_trader,
+                    "non_marginable_buying_power": float(
+                        getattr(account, "non_marginable_buying_power", account.buying_power) or 0
+                    ),
+                    "buying_power": float(account.buying_power or 0),
                 },
             )
             self.session.add(snap)
@@ -517,6 +521,27 @@ class AlpacaAdapter:
             self._log_error("get_open_orders", str(exc))
             return []
 
+    def _submit_failure(self, operation: str, exc: Exception, request_payload: dict) -> dict[str, Any]:
+        from app.services.alpaca_broker_error import parse_alpaca_exception
+
+        parsed = parse_alpaca_exception(exc)
+        self._log_error(
+            operation,
+            parsed.get("alpaca_message") or parsed.get("error_message") or str(exc),
+            {
+                **request_payload,
+                "http_status": parsed.get("http_status"),
+                "alpaca_code": parsed.get("alpaca_code"),
+                "broker_error_body": parsed.get("response_body"),
+            },
+        )
+        return {
+            "success": False,
+            "error": parsed.get("alpaca_message") or str(exc),
+            "broker_error": parsed,
+            "request_payload": request_payload,
+        }
+
     def submit_marketable_limit_ioc(
         self,
         symbol: str,
@@ -533,17 +558,27 @@ class AlpacaAdapter:
         client = self._get_trading_client()
         if client is None:
             return {"success": False, "error": "Alpaca not configured"}
+        sym = normalize_crypto_symbol(symbol)
+        request_payload = {
+            "symbol": sym,
+            "qty": qty,
+            "side": side.lower(),
+            "type": "limit",
+            "time_in_force": "ioc",
+            "limit_price": limit_price,
+            "client_order_id": client_order_id,
+        }
         try:
             from alpaca.trading.requests import LimitOrderRequest
             from alpaca.trading.enums import OrderSide, TimeInForce
 
             side_enum = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
             req = LimitOrderRequest(
-                symbol=normalize_crypto_symbol(symbol),
+                symbol=sym,
                 qty=qty,
                 side=side_enum,
                 time_in_force=TimeInForce.IOC,
-                limit_price=round(limit_price, 8),
+                limit_price=limit_price,
                 client_order_id=client_order_id,
             )
             order = client.submit_order(req)
@@ -553,15 +588,64 @@ class AlpacaAdapter:
                 "status": str(order.status),
                 "symbol": symbol,
                 "limit_price": limit_price,
+                "qty": qty,
                 "tif": "ioc",
+                "request_payload": request_payload,
             }
         except Exception as exc:
-            self._log_error(
-                "submit_marketable_limit_ioc",
-                str(exc),
-                {"symbol": symbol, "side": side, "limit_price": limit_price},
+            return self._submit_failure("submit_marketable_limit_ioc", exc, request_payload)
+
+    def submit_crypto_market_notional(
+        self,
+        symbol: str,
+        notional: float,
+        side: str,
+        *,
+        client_order_id: Optional[str] = None,
+        time_in_force: str = "gtc",
+    ) -> dict[str, Any]:
+        """Crypto market order by notional (USD quote pairs)."""
+        blocked = guard_before_submit()
+        if blocked:
+            return blocked
+        client = self._get_trading_client()
+        if client is None:
+            return {"success": False, "error": "Alpaca not configured"}
+        sym = normalize_crypto_symbol(symbol)
+        tif = time_in_force.lower()
+        request_payload = {
+            "symbol": sym,
+            "notional": round(float(notional), 2),
+            "side": side.lower(),
+            "type": "market",
+            "time_in_force": tif,
+            "client_order_id": client_order_id,
+        }
+        try:
+            from alpaca.trading.requests import MarketOrderRequest
+            from alpaca.trading.enums import OrderSide, TimeInForce
+
+            tif_enum = TimeInForce.IOC if tif == "ioc" else TimeInForce.GTC
+            side_enum = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
+            req = MarketOrderRequest(
+                symbol=sym,
+                notional=round(float(notional), 2),
+                side=side_enum,
+                time_in_force=tif_enum,
+                client_order_id=client_order_id,
             )
-            return {"success": False, "error": str(exc)}
+            order = client.submit_order(req)
+            return {
+                "success": True,
+                "order_id": str(order.id),
+                "status": str(order.status),
+                "symbol": symbol,
+                "notional": notional,
+                "tif": tif,
+                "request_payload": request_payload,
+            }
+        except Exception as exc:
+            return self._submit_failure("submit_crypto_market_notional", exc, request_payload)
 
     def submit_paper_order(
         self,

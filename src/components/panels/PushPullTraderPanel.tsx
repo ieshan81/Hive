@@ -60,14 +60,14 @@ export function PushPullTraderPanel() {
 
       <PushPullCandleCard tick={latestTick} />
       <PaperOrderProofPanel proof={orderProof} />
-      {diagnosis?.why_no_order && (
+      {Boolean(diagnosis?.why_no_order) ? (
         <GlassPanel title="Why no order?">
-          <p className="text-xs text-slate-300">{String(diagnosis.why_no_order)}</p>
-          {diagnosis.operator_next_action && (
-            <p className="text-[11px] text-hive-cyan mt-2">{String(diagnosis.operator_next_action)}</p>
-          )}
+          <p className="text-xs text-slate-300">{String(diagnosis?.why_no_order)}</p>
+          {Boolean(diagnosis?.operator_next_action) ? (
+            <p className="text-[11px] text-hive-cyan mt-2">{String(diagnosis?.operator_next_action)}</p>
+          ) : null}
         </GlassPanel>
-      )}
+      ) : null}
 
       <GlassPanel title="Market mode">
         <p className="text-white text-sm">{String(status?.market_mode_label ?? status?.market_mode)}</p>

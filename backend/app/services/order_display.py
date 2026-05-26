@@ -101,41 +101,91 @@ def is_rejected_display(status: str | None) -> bool:
     return (status or "") in REJECTED_STATUSES
 
 
+def _broker_detail_from_gates(gates_failed: dict) -> dict[str, Any]:
+    if not isinstance(gates_failed, dict):
+        return {}
+    body = gates_failed.get("broker_error_body") or gates_failed.get("response_body")
+    if body is None and gates_failed.get("broker"):
+        import json
+
+        raw = gates_failed.get("broker")
+        if isinstance(raw, str) and raw.strip().startswith("{"):
+            try:
+                body = json.loads(raw)
+            except json.JSONDecodeError:
+                body = {"raw": raw}
+        elif isinstance(raw, dict):
+            body = raw
+    return {
+        "http_status": gates_failed.get("http_status"),
+        "alpaca_code": gates_failed.get("alpaca_code"),
+        "alpaca_message": gates_failed.get("alpaca_message") or gates_failed.get("broker_message"),
+        "broker_error_body": body,
+        "request_payload": gates_failed.get("request_payload"),
+        "submitted_to_broker": gates_failed.get("submitted_to_broker"),
+        "broker_response_received": gates_failed.get("broker_response_received"),
+        "blocked_before_broker": gates_failed.get("blocked_before_broker"),
+    }
+
+
 def enrich_execution_row(row: dict[str, Any]) -> dict[str, Any]:
     status = row.get("status")
     broker_id = row.get("broker_order_id") or row.get("brokerOrderId")
     side = row.get("side") or ""
     gates_failed = row.get("gates_failed_json") or row.get("gates_failed") or {}
+    broker_detail = _broker_detail_from_gates(gates_failed) if isinstance(gates_failed, dict) else {}
     if isinstance(gates_failed, dict) and gates_failed.get("outcome_bucket"):
         bucket = gates_failed.get("outcome_bucket")
     else:
         bucket = order_outcome_bucket(status, has_broker_id=bool(broker_id))
     rejected = is_rejected_display(status)
+    broker_reject_after_submit = status == "paper_order_rejected" and (
+        gates_failed.get("preflight_stage") == "broker_rejection"
+        if isinstance(gates_failed, dict)
+        else False
+    )
     preflight = status in PREFLIGHT_STATUSES or (
-        not broker_id and status in ("preflight_blocked", "paper_order_pending")
+        not broker_id
+        and not broker_reject_after_submit
+        and status in ("preflight_blocked", "paper_order_pending")
+    )
+    submitted = bool(broker_id) or broker_reject_after_submit or (
+        isinstance(gates_failed, dict) and gates_failed.get("submitted_to_broker") is True
     )
     display_status = (
         "Blocked before broker"
-        if preflight and not broker_id
-        else order_status_label(status)
+        if preflight and not submitted
+        else (
+            "Broker rejected after submit"
+            if broker_reject_after_submit
+            else order_status_label(status)
+        )
     )
+    plain_reason = reject_reason_plain(row.get("reject_reason") or row.get("rejectReason"), status=status)
+    if broker_reject_after_submit and broker_detail.get("alpaca_message"):
+        plain_reason = str(broker_detail["alpaca_message"])
     return {
         **row,
         "status_label": display_status,
-        "blocked_before_broker": preflight and not broker_id,
-        "submitted_to_broker": bool(broker_id),
+        "blocked_before_broker": preflight and not submitted,
+        "submitted_to_broker": submitted,
+        "broker_response_received": broker_detail.get("broker_response_received")
+        if broker_detail
+        else bool(broker_reject_after_submit),
+        "broker_rejection": broker_detail if broker_detail else None,
+        "alpaca_message": broker_detail.get("alpaca_message"),
         "order_type_label": order_type_label(row.get("order_type") or row.get("orderType")),
         "limit_price_display": format_decimal(row.get("limit_price") or row.get("limitPrice")),
         "filled_avg_price_display": format_decimal(row.get("filled_avg_price") or row.get("filledAvgPrice")),
         "requested_qty_display": format_decimal(row.get("requested_qty") or row.get("qty")),
-        "reject_reason_plain": reject_reason_plain(row.get("reject_reason") or row.get("rejectReason"), status=status),
+        "reject_reason_plain": plain_reason,
         "outcome_bucket": bucket,
         "is_rejected": rejected,
         "is_filled": (status or "") in FILLED_STATUSES,
         "looks_like_closed_position": rejected and str(side).lower() == "sell",
         "user_message": (
-            f"{str(side).upper()} {row.get('symbol', '?')}: {order_status_label(status)}"
-            + (f" — {reject_reason_plain(row.get('reject_reason') or row.get('rejectReason'), status=status)}" if rejected else "")
+            f"{str(side).upper()} {row.get('symbol', '?')}: {display_status}"
+            + (f" — {plain_reason}" if rejected and plain_reason else "")
         ),
     }
 

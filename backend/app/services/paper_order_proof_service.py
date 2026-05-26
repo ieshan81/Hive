@@ -86,6 +86,7 @@ class PaperOrderProofService:
 
         latest_submit = submitted[0] if submitted else None
         latest_block = preflight_blocked[0] if preflight_blocked else None
+        latest_reject = broker_rejected[0] if broker_rejected else None
 
         return {
             "status": "ok",
@@ -102,6 +103,8 @@ class PaperOrderProofService:
             "latest_client_order_id": (latest_submit or {}).get("broker_client_order_id"),
             "latest_submit": latest_submit,
             "latest_preflight_block": latest_block,
+            "latest_broker_rejection": latest_reject,
+            "latest_order_attempt": latest_reject or latest_submit or latest_block,
             "recent_submitted": submitted[:10],
             "recent_preflight_blocked": preflight_blocked[:10],
             "recent_orders": order_rows[:15],

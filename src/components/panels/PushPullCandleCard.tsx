@@ -119,11 +119,20 @@ export function PaperOrderProofPanel({ proof }: { proof: Record<string, unknown>
           Latest broker id: {String(proof.latest_broker_order_id)}
         </p>
       )}
-      {(proof.latest_preflight_block as Record<string, unknown>)?.reject_reason && (
-        <p className="text-[10px] text-amber-300 mt-1">
-          Latest block: {String((proof.latest_preflight_block as Record<string, unknown>).reject_reason_plain || (proof.latest_preflight_block as Record<string, unknown>).reject_reason)}
-        </p>
-      )}
+      {(() => {
+        const block = proof.latest_preflight_block as Record<string, unknown> | undefined;
+        const reject = proof.latest_broker_rejection as Record<string, unknown> | undefined;
+        const reason = block?.reject_reason || reject?.reject_reason;
+        if (!reason) return null;
+        const plain =
+          String(block?.reject_reason_plain || reject?.reject_reason_plain || reject?.alpaca_message || reason);
+        const label = reject ? "Broker rejected after submit" : "Latest block";
+        return (
+          <p className="text-[10px] text-amber-300 mt-1">
+            {label}: {plain}
+          </p>
+        );
+      })()}
     </GlassPanel>
   );
 }

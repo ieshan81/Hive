@@ -12,6 +12,8 @@ from sqlmodel import Session, select
 
 from app.database import ExecutionLog, OrderRecord, PortfolioDecision, StrategySignal
 from app.services.alpaca_adapter import AlpacaAdapter, normalize_crypto_symbol
+from app.services.alpaca_broker_error import broker_rejection_detail, classify_reject_reason, parse_alpaca_exception
+from app.services.alpaca_crypto_order_validator import AlpacaCryptoOrderValidator
 from app.services.broker_safety import (
     broker_base_url,
     is_paper_broker_url,
@@ -30,10 +32,18 @@ from app.services.symbol_tier_service import EngineBoundaryBlocked, SymbolTierSe
 CODE_VERSION_SHA = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "dev")[:12]
 
 
-def _map_broker_rejection_code(error: str) -> str:
+def _map_broker_rejection_code(error: str, broker_error: Optional[dict] = None) -> str:
+    if broker_error:
+        return classify_reject_reason(broker_error)
     err = (error or "").lower()
     if "notional" in err or "minimum" in err or "min order" in err:
         return "BROKER_REJECTED_MIN_NOTIONAL"
+    if "insufficient" in err and "balance" in err:
+        return "BROKER_INSUFFICIENT_BALANCE"
+    if "increment" in err or "precision" in err or "subtick" in err:
+        if "price" in err or "limit" in err:
+            return "BROKER_LIMIT_PRICE_PRECISION"
+        return "BROKER_QTY_PRECISION"
     return "BROKER_REJECTED"
 
 
@@ -244,12 +254,53 @@ class PaperExecutionService:
                 gates_failed={"reason": str(exc)},
             )
 
+        recipe = str(cfg_get(self.config, "execution.crypto_paper_recipe", "limit_ioc_qty"))
+        validator = AlpacaCryptoOrderValidator(self.session, self.alpaca, self.config)
+        v = validator.validate_for_candidate(
+            symbol=cand.symbol,
+            side=cand.side,
+            qty=cand.position_qty,
+            limit_price=pf.limit_price or cand.entry_price,
+            client_order_id=pf.client_order_id,
+            account=account,
+            open_order_symbols=open_order_symbols,
+            recipe=recipe,
+        )
+        if not v.valid:
+            return self._log(
+                cycle_run_id,
+                cand,
+                status="preflight_blocked",
+                reject_reason=v.reject_code or "CRYPTO_VALIDATOR_BLOCK",
+                limit_price=pf.limit_price,
+                quote=quote,
+                portfolio_decision_id=portfolio_decision.id if portfolio_decision else None,
+                gates_failed={
+                    "code": v.reject_code,
+                    "reason": "; ".join(v.validator_reasons),
+                    "validator_reasons": v.validator_reasons,
+                    "asset_metadata": v.asset_metadata,
+                    "precision_adjustments": v.precision_adjustments,
+                    "preflight_stage": "crypto_order_validator",
+                    "outcome_bucket": "preflight_blocked",
+                    "blocked_before_broker": True,
+                    **quote_meta,
+                },
+            )
+
+        norm = v.normalized_payload
+        submit_qty = norm.get("qty", cand.position_qty)
+        submit_limit = norm.get("limit_price", pf.limit_price or cand.entry_price)
+        submit_notional = norm.get("notional")
+        if submit_qty and submit_qty != cand.position_qty:
+            cand.position_qty = float(submit_qty)
+
         pending = self._log(
             cycle_run_id,
             cand,
             status="paper_order_pending",
             reject_reason=None,
-            limit_price=pf.limit_price,
+            limit_price=submit_limit,
             quote=quote,
             portfolio_decision_id=portfolio_decision.id if portfolio_decision else None,
             broker_client_order_id=pf.client_order_id,
@@ -259,32 +310,66 @@ class PaperExecutionService:
                 "portfolio": True,
                 "evidence": pf.evidence,
                 "outcome_bucket": "submitted_to_broker",
+                "crypto_validator": {
+                    "asset_metadata": v.asset_metadata,
+                    "precision_adjustments": v.precision_adjustments,
+                    "normalized_payload": norm,
+                    "recipe": recipe,
+                },
                 **quote_meta,
             },
         )
         self.session.flush()
 
-        result = self.alpaca.submit_marketable_limit_ioc(
-            cand.symbol,
-            cand.position_qty,
-            cand.side,
-            limit_price=pf.limit_price or cand.entry_price,
-            client_order_id=pf.client_order_id,
-        )
+        if recipe == "market_notional" and submit_notional:
+            result = self.alpaca.submit_crypto_market_notional(
+                cand.symbol,
+                float(submit_notional),
+                cand.side,
+                client_order_id=pf.client_order_id,
+                time_in_force=norm.get("time_in_force", "gtc"),
+            )
+        else:
+            result = self.alpaca.submit_marketable_limit_ioc(
+                cand.symbol,
+                float(submit_qty),
+                cand.side,
+                limit_price=float(submit_limit),
+                client_order_id=pf.client_order_id,
+            )
 
         if not result.get("success"):
+            broker_err = result.get("broker_error") or parse_alpaca_exception(
+                Exception(result.get("error", "broker rejected"))
+            )
+            req_payload = result.get("request_payload") or norm
+            detail = broker_rejection_detail(
+                parsed=broker_err,
+                request_payload=req_payload,
+                symbol=cand.symbol,
+            )
             pending.status = "paper_order_rejected"
-            pending.reject_reason = _map_broker_rejection_code(result.get("error", ""))
+            pending.reject_reason = _map_broker_rejection_code(result.get("error", ""), broker_err)
             pending.gates_failed_json = {
-                "broker": result.get("error"),
+                **detail,
                 "preflight_stage": "broker_rejection",
                 "outcome_bucket": "broker_rejected",
-                "blocked_before_broker": False,
+                "broker": result.get("error"),
+                "broker_message": detail.get("plain"),
                 **quote_meta,
             }
             self.session.add(pending)
+            from app.services.activity_logger import log_activity
+
+            log_activity(
+                self.session,
+                "broker_rejected",
+                f"{cand.symbol}: Broker rejected after submit — {detail.get('plain', pending.reject_reason)}",
+                detail,
+                commit=False,
+            )
             CooldownService(self.session, self.config).apply_symbol(
-                cand.symbol, "BROKER_REJECTION", details={"error": pending.reject_reason}
+                cand.symbol, "BROKER_REJECTION", details={"error": pending.reject_reason, **detail}
             )
             return pending
 
@@ -321,6 +406,50 @@ class PaperExecutionService:
                 strategy=signal_row.strategy if signal_row else None,
             )
         return pending
+
+    def validate_order_dry_run(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Dry-run crypto order validation — does not submit to Alpaca."""
+        symbol = str(body.get("symbol") or "")
+        side = str(body.get("side") or "buy")
+        order_type = str(body.get("type") or body.get("order_type") or "limit")
+        tif = str(body.get("time_in_force") or "ioc")
+        qty = body.get("qty")
+        notional = body.get("notional")
+        limit_price = body.get("limit_price")
+        if qty is not None:
+            qty = float(qty)
+        if notional is not None:
+            notional = float(notional)
+        if limit_price is not None:
+            limit_price = float(limit_price)
+
+        account = self.alpaca.sync_account_cached()
+        open_syms = {o.get("symbol") for o in self.alpaca.get_open_orders()}
+        v = AlpacaCryptoOrderValidator(self.session, self.alpaca, self.config).validate_order(
+            symbol=symbol,
+            side=side,
+            order_type=order_type,
+            time_in_force=tif,
+            qty=qty,
+            notional=notional,
+            limit_price=limit_price,
+            client_order_id=body.get("client_order_id") or f"dry-{uuid.uuid4().hex[:8]}",
+            account=account,
+            open_order_symbols=open_syms,
+            dry_run=True,
+        )
+        return {
+            "status": "ok",
+            "valid": v.valid,
+            "normalized_payload": v.normalized_payload,
+            "asset_metadata": v.asset_metadata,
+            "buying_power_check": v.buying_power_check,
+            "quote_currency_check": v.quote_currency_check,
+            "precision_adjustments": v.precision_adjustments,
+            "validator_reasons": v.validator_reasons,
+            "reject_code": v.reject_code,
+            "would_submit_to_broker": False,
+        }
 
     def run_selected_for_cycle(self, cycle_run_id: str) -> dict[str, Any]:
         dec = self.session.exec(

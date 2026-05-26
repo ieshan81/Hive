@@ -62,22 +62,29 @@ def activity_feed(session: Session, limit: int = 80) -> dict[str, Any]:
         enriched = enrich_execution_row(
             {
                 "symbol": sym,
+                "side": row.side,
                 "status": row.status,
                 "reject_reason": row.reject_reason,
                 "broker_order_id": row.broker_order_id,
                 "gates_failed_json": row.gates_failed_json,
+                "limit_price": row.limit_price,
+                "requested_qty": row.requested_qty,
             }
         )
         events.append(
             {
                 "at": _ts(row.created_at),
-                "kind": "execution",
-                "message": enriched.get("user_message", f"{sym} {row.status}")[:160],
+                "kind": "candle_cycle" if row.cycle_run_id else "execution",
+                "message": enriched.get("user_message", f"{sym} {row.status}")[:200],
                 "detail": {
                     "status": row.status,
                     "symbol": sym,
+                    "cycle_run_id": row.cycle_run_id,
                     "blocked_before_broker": enriched.get("blocked_before_broker"),
                     "submitted_to_broker": enriched.get("submitted_to_broker"),
+                    "alpaca_message": enriched.get("alpaca_message"),
+                    "broker_rejection": enriched.get("broker_rejection"),
+                    "status_label": enriched.get("status_label"),
                 },
             }
         )

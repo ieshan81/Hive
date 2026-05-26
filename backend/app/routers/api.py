@@ -208,6 +208,17 @@ def run_selected_paper_orders(cycle_run_id: str = "latest", session: Session = D
     return PaperExecutionService(session).run_selected_for_cycle(cid)
 
 
+@router.post("/execution/paper/validate-order")
+def validate_paper_order(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
+    from app.services.paper_execution_service import PaperExecutionService
+
+    return PaperExecutionService(session).validate_order_dry_run(body)
+
+
 @router.get("/orders")
 def get_orders(cycle_run_id: str = "latest", limit: int = 50, session: Session = Depends(get_session)):
     from app.services.positions_tab_service import orders_history

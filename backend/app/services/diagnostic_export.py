@@ -108,13 +108,16 @@ def serialize_activity(row: ActivityLog) -> dict[str, Any]:
     evidence = details.get("evidence_json")
     if evidence is None and details and row.event_type not in ("cycle_end", "cycle_start"):
         evidence = details
+    msg = getattr(row, "message", None) or details.get("message")
+    if not msg:
+        msg = f"{row.event_type}: {details.get('symbol') or 'system'}"
     return {
         "id": row.id,
         "created_at": _iso(row.created_at),
         "cycle_run_id": details.get("cycle_run_id"),
         "event_type": row.event_type,
         "source": details.get("source", "system"),
-        "message": row.message,
+        "message": msg,
         "symbol": details.get("symbol"),
         "strategy": details.get("strategy"),
         "status": details.get("status"),
@@ -351,6 +354,80 @@ def _resolve_cycle_status(last_cycle: dict[str, Any], health: Optional[SystemHea
     if last_cycle.get("account_synced"):
         return "ok"
     return "partial"
+
+
+def _export_latest_order_attempt(session: Session, config: dict) -> dict[str, Any]:
+    from app.services.paper_order_proof_service import PaperOrderProofService
+
+    proof = PaperOrderProofService(session, config).summary()
+    return {"status": "ok", "latest_order_attempt": proof.get("latest_order_attempt")}
+
+
+def _export_alpaca_rejections(session: Session) -> dict[str, Any]:
+    rows = list(
+        session.exec(
+            select(ExecutionLog)
+            .where(ExecutionLog.status == "paper_order_rejected")
+            .order_by(ExecutionLog.created_at.desc())
+            .limit(30)
+        ).all()
+    )
+    out = []
+    for row in rows:
+        gf = row.gates_failed_json if isinstance(row.gates_failed_json, dict) else {}
+        out.append(
+            {
+                "cycle_run_id": row.cycle_run_id,
+                "symbol": row.symbol,
+                "side": row.side,
+                "reject_reason": row.reject_reason,
+                "requested_qty": row.requested_qty,
+                "limit_price": row.limit_price,
+                "broker_order_id": row.broker_order_id,
+                "broker_client_order_id": row.broker_client_order_id,
+                "http_status": gf.get("http_status"),
+                "alpaca_code": gf.get("alpaca_code"),
+                "alpaca_message": gf.get("alpaca_message") or gf.get("broker_message"),
+                "broker_error_body": gf.get("broker_error_body"),
+                "request_payload": gf.get("request_payload"),
+                "submitted_to_broker": gf.get("submitted_to_broker", True),
+                "created_at": _iso(row.created_at),
+            }
+        )
+    return {"status": "ok", "rejections": out, "count": len(out)}
+
+
+def _export_alpaca_order_payloads(session: Session) -> dict[str, Any]:
+    rows = list(
+        session.exec(
+            select(ExecutionLog)
+            .where(ExecutionLog.status.in_(("paper_order_rejected", "paper_order_submitted", "paper_order_filled")))
+            .order_by(ExecutionLog.created_at.desc())
+            .limit(30)
+        ).all()
+    )
+    payloads = []
+    for row in rows:
+        gf = row.gates_failed_json if isinstance(row.gates_failed_json, dict) else {}
+        gp = row.gates_passed_json if isinstance(row.gates_passed_json, dict) else {}
+        payloads.append(
+            {
+                "cycle_run_id": row.cycle_run_id,
+                "symbol": row.symbol,
+                "status": row.status,
+                "request_payload": gf.get("request_payload")
+                or (gp.get("crypto_validator") or {}).get("normalized_payload"),
+            }
+        )
+    return {"status": "ok", "payloads": payloads}
+
+
+def _export_strategy_test_results(session: Session, config: dict) -> dict[str, Any]:
+    from app.services.research_backtest_engine import ResearchBacktestEngine
+
+    engine = ResearchBacktestEngine(session, config)
+    runs = engine.list_runs(20)
+    return {"status": "ok", "runs": runs, "count": len(runs)}
 
 
 def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
@@ -1330,6 +1407,61 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             lambda: __import__(
                 "app.services.paper_order_proof_service", fromlist=["PaperOrderProofService"]
             ).PaperOrderProofService(session, cfg_brain).summary(),
+            export_errors,
+        ),
+        "latest_order_attempt.json": safe_export_section(
+            "latest_order_attempt.json",
+            lambda: _export_latest_order_attempt(session, cfg_brain),
+            export_errors,
+        ),
+        "alpaca_rejection_details.json": safe_export_section(
+            "alpaca_rejection_details.json",
+            lambda: _export_alpaca_rejections(session),
+            export_errors,
+        ),
+        "alpaca_order_payloads.json": safe_export_section(
+            "alpaca_order_payloads.json",
+            lambda: _export_alpaca_order_payloads(session),
+            export_errors,
+        ),
+        "alpaca_asset_metadata.json": safe_export_section(
+            "alpaca_asset_metadata.json",
+            lambda: __import__(
+                "app.services.alpaca_crypto_assets", fromlist=["fetch_crypto_assets"]
+            ).fetch_crypto_assets(force=True),
+            export_errors,
+        ),
+        "autonomous_backtesting_status.json": safe_export_section(
+            "autonomous_backtesting_status.json",
+            lambda: __import__(
+                "app.services.research_lab_service", fromlist=["ResearchLabService"]
+            ).ResearchLabService(session, cfg_brain).status(),
+            export_errors,
+        ),
+        "backtest_runs.json": safe_export_section(
+            "backtest_runs.json",
+            lambda: __import__(
+                "app.routers.backtesting", fromlist=["backtesting_runs"]
+            ).backtesting_runs(50, session),
+            export_errors,
+        ),
+        "strategy_test_results.json": safe_export_section(
+            "strategy_test_results.json",
+            lambda: _export_strategy_test_results(session, cfg_brain),
+            export_errors,
+        ),
+        "ai_strategy_lessons.json": safe_export_section(
+            "ai_strategy_lessons.json",
+            lambda: __import__(
+                "app.services.ai_manager_service", fromlist=["AIManagerService"]
+            ).AIManagerService(session).lessons(40),
+            export_errors,
+        ),
+        "activity_candle_timeline.json": safe_export_section(
+            "activity_candle_timeline.json",
+            lambda: __import__(
+                "app.services.activity_feed_service", fromlist=["activity_feed"]
+            ).activity_feed(session, 80),
             export_errors,
         ),
         "pre_submit_quote_refresh.json": safe_export_section(
