@@ -61,12 +61,17 @@ def order_type_label(order_type: str | None) -> str:
 def reject_reason_plain(reason: str | None, *, status: str | None = None) -> str | None:
     if not reason:
         if status in PREFLIGHT_STATUSES:
-            return "Blocked by safety check before broker."
+            return "Blocked before broker — order was not sent to Alpaca."
         if status == "paper_order_rejected":
-            return "Broker or paper cage rejected this order — not filled."
+            return "Broker rejected this order after it was submitted."
         return None
     r = str(reason).strip()
     low = r.lower()
+    if r == "STALE_QUOTE" or "stale_quote" in low:
+        return (
+            "Price quote was too old at submit time. Bot refreshed the quote; "
+            "if still stale, it skipped instead of sending a bad order."
+        )
     if "min_notional" in low or "notional" in low:
         return "Order size was below the broker minimum — rejected, not filled."
     if "insufficient" in low:
@@ -100,11 +105,25 @@ def enrich_execution_row(row: dict[str, Any]) -> dict[str, Any]:
     status = row.get("status")
     broker_id = row.get("broker_order_id") or row.get("brokerOrderId")
     side = row.get("side") or ""
-    bucket = order_outcome_bucket(status, has_broker_id=bool(broker_id))
+    gates_failed = row.get("gates_failed_json") or row.get("gates_failed") or {}
+    if isinstance(gates_failed, dict) and gates_failed.get("outcome_bucket"):
+        bucket = gates_failed.get("outcome_bucket")
+    else:
+        bucket = order_outcome_bucket(status, has_broker_id=bool(broker_id))
     rejected = is_rejected_display(status)
+    preflight = status in PREFLIGHT_STATUSES or (
+        not broker_id and status in ("preflight_blocked", "paper_order_pending")
+    )
+    display_status = (
+        "Blocked before broker"
+        if preflight and not broker_id
+        else order_status_label(status)
+    )
     return {
         **row,
-        "status_label": order_status_label(status),
+        "status_label": display_status,
+        "blocked_before_broker": preflight and not broker_id,
+        "submitted_to_broker": bool(broker_id),
         "order_type_label": order_type_label(row.get("order_type") or row.get("orderType")),
         "limit_price_display": format_decimal(row.get("limit_price") or row.get("limitPrice")),
         "filled_avg_price_display": format_decimal(row.get("filled_avg_price") or row.get("filledAvgPrice")),

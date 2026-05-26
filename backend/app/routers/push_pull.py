@@ -39,3 +39,17 @@ def signals(symbol: str | None = None, timeframe: str = "5Min", session: Session
     from app.services.push_pull_engine_service import PushPullEngineService
 
     return PushPullEngineService(session).signals(symbol=symbol, timeframe=timeframe)
+
+
+@router.get("/paper-order-proof")
+def paper_order_proof(session: Session = Depends(get_session)):
+    from app.services.paper_order_proof_service import PaperOrderProofService
+
+    return PaperOrderProofService(session).summary()
+
+
+@router.get("/diagnosis")
+def diagnosis(session: Session = Depends(get_session)):
+    from app.services.push_pull_diagnosis_service import PushPullDiagnosisService
+
+    return PushPullDiagnosisService(session).why_no_order()

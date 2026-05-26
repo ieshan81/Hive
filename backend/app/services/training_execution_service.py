@@ -236,19 +236,36 @@ class TrainingExecutionService:
                 {"symbol": dec.symbol, "signal_id": sig.id, "status": log.status, "broker_mode": "paper"},
             )
         else:
-            self._training_memory("training_blocked_memory", dec, [log.reject_reason or "preflight_blocked"])
+            reason = log.reject_reason or "preflight_blocked"
+            if reason == "STALE_QUOTE":
+                self._training_memory(
+                    "stale_quote_skip",
+                    dec,
+                    ["Quote stale at submit — refreshed but still too old; blocked before broker"],
+                )
+            else:
+                self._training_memory("training_blocked_memory", dec, [reason])
 
         self.session.add(dec)
         self.session.flush()
+        gf = log.gates_passed_json or log.gates_failed_json or {}
         return {
             "status": "ok",
             "signal_id": sig.id,
             "cycle_run_id": cycle_run_id,
             "execution_status": log.status,
             "reject_reason": log.reject_reason,
+            "broker_order_id": log.broker_order_id,
             "broker_mode": "paper",
             "live_trading_locked": True,
-            "submitted": log.status in ("paper_order_submitted", "paper_order_filled"),
+            "submitted": log.status in (
+                "paper_order_submitted",
+                "paper_order_filled",
+                "paper_order_partially_filled",
+            ),
+            "quote_refreshed": bool((gf or {}).get("quote_refreshed")),
+            "quote_refresh_result": (gf or {}).get("quote_refresh_result"),
+            "blocked_before_broker": log.status == "preflight_blocked",
         }
 
     def monitor_exits(self) -> dict[str, Any]:

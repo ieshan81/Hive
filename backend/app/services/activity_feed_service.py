@@ -57,12 +57,28 @@ def activity_feed(session: Session, limit: int = 80) -> dict[str, Any]:
         if epoch and not record_created_after(row, epoch.get("nuke_completed_at")):
             continue
         sym = row.symbol or ""
+        from app.services.order_display import enrich_execution_row
+
+        enriched = enrich_execution_row(
+            {
+                "symbol": sym,
+                "status": row.status,
+                "reject_reason": row.reject_reason,
+                "broker_order_id": row.broker_order_id,
+                "gates_failed_json": row.gates_failed_json,
+            }
+        )
         events.append(
             {
                 "at": _ts(row.created_at),
                 "kind": "execution",
-                "message": f"{sym} {row.status or row.event_type}: {row.message or ''}"[:120],
-                "detail": {"status": row.status, "symbol": sym},
+                "message": enriched.get("user_message", f"{sym} {row.status}")[:160],
+                "detail": {
+                    "status": row.status,
+                    "symbol": sym,
+                    "blocked_before_broker": enriched.get("blocked_before_broker"),
+                    "submitted_to_broker": enriched.get("submitted_to_broker"),
+                },
             }
         )
 

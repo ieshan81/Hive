@@ -49,6 +49,25 @@ def _iso(dt: Optional[datetime]) -> Optional[str]:
     return dt.isoformat() + "Z"
 
 
+def _latest_stale_quote_log(session: Session) -> dict[str, Any]:
+    row = session.exec(
+        select(ExecutionLog)
+        .where(ExecutionLog.reject_reason == "STALE_QUOTE")
+        .order_by(ExecutionLog.created_at.desc())
+    ).first()
+    if not row:
+        return {"status": "none"}
+    gf = row.gates_failed_json if isinstance(row.gates_failed_json, dict) else {}
+    return {
+        "symbol": row.symbol,
+        "status": row.status,
+        "created_at": _iso(row.created_at),
+        "quote_refreshed": gf.get("quote_refreshed"),
+        "quote_refresh_result": gf.get("quote_refresh_result"),
+        "quote_age_seconds_at_submit": gf.get("quote_age_seconds_at_submit"),
+    }
+
+
 def _serialize_row(row) -> dict[str, Any]:
     """Generic ORM serializer — materialize immediately to survive session expiry."""
     if hasattr(row, "model_dump"):
@@ -1297,6 +1316,28 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             lambda: __import__(
                 "app.services.push_pull_strategy_seed", fromlist=["strategy_eligibility_export"]
             ).strategy_eligibility_export(session),
+            export_errors,
+        ),
+        "quote_freshness.json": safe_export_section(
+            "quote_freshness.json",
+            lambda: __import__(
+                "app.routers.market_data", fromlist=["quote_freshness"]
+            ).quote_freshness(asset_type="crypto", session=session),
+            export_errors,
+        ),
+        "paper_order_proof.json": safe_export_section(
+            "paper_order_proof.json",
+            lambda: __import__(
+                "app.services.paper_order_proof_service", fromlist=["PaperOrderProofService"]
+            ).PaperOrderProofService(session, cfg_brain).summary(),
+            export_errors,
+        ),
+        "pre_submit_quote_refresh.json": safe_export_section(
+            "pre_submit_quote_refresh.json",
+            lambda: {
+                "note": "Populated on each paper submit attempt via gates_passed/failed on execution logs.",
+                "latest_preflight_stale_quote": _latest_stale_quote_log(session),
+            },
             export_errors,
         ),
         "push_pull_signals.json": safe_export_section(

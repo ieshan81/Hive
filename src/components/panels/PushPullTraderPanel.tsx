@@ -5,28 +5,38 @@ import { TrendingUp } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { apiGet } from "@/lib/apiClient";
+import { PushPullCandleCard, PaperOrderProofPanel } from "@/components/panels/PushPullCandleCard";
 
 export function PushPullTraderPanel() {
   const [status, setStatus] = useState<Record<string, unknown> | null>(null);
   const [decisions, setDecisions] = useState<Record<string, unknown>[]>([]);
   const [lessons, setLessons] = useState<Record<string, unknown>[]>([]);
   const [signals, setSignals] = useState<Record<string, unknown> | null>(null);
+  const [latestTick, setLatestTick] = useState<Record<string, unknown> | null>(null);
+  const [orderProof, setOrderProof] = useState<Record<string, unknown> | null>(null);
+  const [diagnosis, setDiagnosis] = useState<Record<string, unknown> | null>(null);
   const [signalSymbol, setSignalSymbol] = useState("BTC/USD");
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
     const sym = encodeURIComponent(signalSymbol);
-    const [st, dec, les, sig] = await Promise.all([
+    const [st, dec, les, sig, tick, proof, diag] = await Promise.all([
       apiGet<Record<string, unknown>>("/api/push-pull/status"),
       apiGet<{ decisions?: Record<string, unknown>[] }>("/api/push-pull/decisions?limit=30"),
       apiGet<{ lessons?: Record<string, unknown>[] }>("/api/push-pull/lessons?limit=15"),
       apiGet<Record<string, unknown>>(`/api/push-pull/signals?symbol=${sym}`),
+      apiGet<Record<string, unknown>>("/api/push-pull/latest-tick"),
+      apiGet<Record<string, unknown>>("/api/push-pull/paper-order-proof"),
+      apiGet<Record<string, unknown>>("/api/push-pull/diagnosis"),
     ]);
     if (st.ok) setStatus(st.data);
     if (dec.ok) setDecisions(dec.data?.decisions ?? []);
     if (les.ok) setLessons(les.data?.lessons ?? []);
     if (sig.ok) setSignals(sig.data);
+    if (tick.ok) setLatestTick(tick.data);
+    if (proof.ok) setOrderProof(proof.data);
+    if (diag.ok) setDiagnosis(diag.data);
     setLoading(false);
   }, [signalSymbol]);
 
@@ -47,6 +57,17 @@ export function PushPullTraderPanel() {
         Push-Pull Trader
       </h1>
       <p className="text-sm text-slate-400">Scan → Push → Entry → Pull/Exit → Learn</p>
+
+      <PushPullCandleCard tick={latestTick} />
+      <PaperOrderProofPanel proof={orderProof} />
+      {diagnosis?.why_no_order && (
+        <GlassPanel title="Why no order?">
+          <p className="text-xs text-slate-300">{String(diagnosis.why_no_order)}</p>
+          {diagnosis.operator_next_action && (
+            <p className="text-[11px] text-hive-cyan mt-2">{String(diagnosis.operator_next_action)}</p>
+          )}
+        </GlassPanel>
+      )}
 
       <GlassPanel title="Market mode">
         <p className="text-white text-sm">{String(status?.market_mode_label ?? status?.market_mode)}</p>

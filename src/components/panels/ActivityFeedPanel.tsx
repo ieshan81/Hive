@@ -6,17 +6,23 @@ import { GlassPanel } from "@/components/ui/GlassPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { apiGet } from "@/lib/apiClient";
 import { onHiveNukeComplete } from "@/lib/hiveRefresh";
+import { PushPullCandleCard } from "@/components/panels/PushPullCandleCard";
 
 type FeedEvent = { at?: string; kind?: string; message?: string };
 
 export function ActivityFeedPanel() {
   const [events, setEvents] = useState<FeedEvent[]>([]);
+  const [latestTick, setLatestTick] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const res = await apiGet<{ events?: FeedEvent[] }>("/api/activity/feed?limit=80");
+    const [res, tick] = await Promise.all([
+      apiGet<{ events?: FeedEvent[] }>("/api/activity/feed?limit=80"),
+      apiGet<Record<string, unknown>>("/api/push-pull/latest-tick"),
+    ]);
     if (res.ok) setEvents(res.data?.events ?? []);
+    if (tick.ok) setLatestTick(tick.data);
     setLoading(false);
   }, []);
 
@@ -37,6 +43,8 @@ export function ActivityFeedPanel() {
         Activity
       </h1>
       <p className="text-sm text-slate-400">Bot life in plain English — ticks, scans, skips, lessons, resets.</p>
+
+      <PushPullCandleCard tick={latestTick} title="Latest push-pull candle cycle" />
 
       <GlassPanel title="Recent events">
         {events.length === 0 ? (

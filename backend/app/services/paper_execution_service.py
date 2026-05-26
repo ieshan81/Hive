@@ -136,23 +136,60 @@ class PaperExecutionService:
                 },
             )
 
-        quote_sym = normalize_crypto_symbol(cand.symbol)
-        quote = self.alpaca.get_quote(quote_sym, "crypto") or {}
-        from datetime import datetime, timezone
+        from app.services.pre_submit_quote_service import PreSubmitQuoteService
+        from app.services.activity_logger import log_activity
 
-        qts = quote.get("quote_timestamp")
-        if qts:
-            try:
-                ts = datetime.fromisoformat(str(qts).replace("Z", "+00:00"))
-                quote["quote_age_seconds"] = max(
-                    0.0, (datetime.now(timezone.utc) - ts).total_seconds()
-                )
-            except (TypeError, ValueError):
-                quote["quote_age_seconds"] = None
-                quote["quote_age_status"] = "quote_age_unknown"
-        else:
-            quote["quote_age_seconds"] = None
-            quote["quote_age_status"] = "quote_age_unknown"
+        quote_sym = normalize_crypto_symbol(cand.symbol)
+        initial = self.alpaca.get_quote(quote_sym, "crypto") or {}
+        refresh = PreSubmitQuoteService(self.session, self.config).refresh_for_submit(
+            cand.symbol, asset_class="crypto", initial_quote=initial
+        )
+        quote = refresh.get("quote") or {}
+        quote_meta = {
+            "quote_refreshed": bool(refresh.get("quote_refreshed")),
+            "quote_refresh_result": refresh.get("quote_refresh_result"),
+            "quote_age_seconds_at_submit": refresh.get("quote_age_seconds_at_submit"),
+            "quote_refresh_attempts": refresh.get("attempts"),
+        }
+
+        if refresh.get("status") == "blocked":
+            log_activity(
+                self.session,
+                "quote_refresh_blocked",
+                f"{cand.symbol}: {refresh.get('plain', 'quote still stale')}",
+                {"symbol": cand.symbol, **quote_meta},
+                commit=False,
+            )
+            return self._log(
+                cycle_run_id,
+                cand,
+                status="preflight_blocked",
+                reject_reason="STALE_QUOTE",
+                limit_price=None,
+                quote=quote,
+                portfolio_decision_id=portfolio_decision.id if portfolio_decision else None,
+                gates_failed={
+                    "code": "STALE_QUOTE",
+                    "reason": refresh.get("human_reason") or refresh.get("plain"),
+                    "preflight_stage": "pre_submit_quote_refresh",
+                    "outcome_bucket": "preflight_blocked",
+                    "blocked_before_broker": True,
+                    **quote_meta,
+                },
+            )
+
+        if refresh.get("quote_refreshed"):
+            log_activity(
+                self.session,
+                "quote_refreshed",
+                f"{cand.symbol}: quote refreshed before submit ({refresh.get('quote_refresh_result')})",
+                {"symbol": cand.symbol, **quote_meta},
+                commit=False,
+            )
+            mid = float(quote.get("mid") or quote.get("ask") or 0)
+            if mid > 0 and cand.position_qty > 0:
+                cand.entry_price = mid
+                cand.spread_pct = quote.get("spread_pct") or cand.spread_pct
 
         pf = run_preflight(
             self.session,
@@ -182,6 +219,9 @@ class PaperExecutionService:
                     "reason": pf.human_reason,
                     "evidence": pf.evidence,
                     "preflight_stage": pf.evidence.get("preflight_stage", "internal_preflight_block"),
+                    "outcome_bucket": "preflight_blocked",
+                    "blocked_before_broker": True,
+                    **quote_meta,
                 },
             )
 
@@ -213,6 +253,8 @@ class PaperExecutionService:
                 "risk": True,
                 "portfolio": True,
                 "evidence": pf.evidence,
+                "outcome_bucket": "submitted_to_broker",
+                **quote_meta,
             },
         )
         self.session.flush()
@@ -231,6 +273,9 @@ class PaperExecutionService:
             pending.gates_failed_json = {
                 "broker": result.get("error"),
                 "preflight_stage": "broker_rejection",
+                "outcome_bucket": "broker_rejected",
+                "blocked_before_broker": False,
+                **quote_meta,
             }
             self.session.add(pending)
             CooldownService(self.session, self.config).apply_symbol(

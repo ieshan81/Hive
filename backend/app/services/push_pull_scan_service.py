@@ -9,6 +9,7 @@ from sqlmodel import Session
 
 from app.services.aggressive_paper_learning_service import AggressivePaperLearningService
 from app.services.bar_freshness_service import BarFreshnessService
+from app.services.quote_freshness_service import QuoteFreshnessService
 from app.services.config_manager import ConfigManager
 from app.services.push_pull_strategy_seed import ensure_crypto_push_pull_baseline
 from app.services.training_execution_service import TrainingExecutionService
@@ -22,6 +23,7 @@ class PushPullScanService:
         self.pl = AggressivePaperLearningService(session)
         self.training = TrainingExecutionService(session, self.config)
         self.bar = BarFreshnessService(session, self.config)
+        self.quote = QuoteFreshnessService(session, self.config)
 
     def run_tick_scan(self, *, max_evaluate: int = 8) -> dict[str, Any]:
         """Full push-pull scan with reason breakdown (called each training cycle)."""
@@ -37,6 +39,9 @@ class PushPullScanService:
         decisions_out: list[dict] = []
         fresh_bar_count = 0
         stale_bar_count = 0
+        fresh_quote_count = 0
+        stale_quote_count = 0
+        quote_refresh_attempts = 0
 
         active = [u for u in universe if u.get("status") == "Active"]
         blocked = [u for u in universe if u.get("status") == "Blocked"]
@@ -47,6 +52,11 @@ class PushPullScanService:
                 fresh_bar_count += 1
             elif u.get("bar_freshness") == "stale":
                 stale_bar_count += 1
+            qf = u.get("quote_freshness")
+            if qf == "fresh":
+                fresh_quote_count += 1
+            elif qf == "stale":
+                stale_quote_count += 1
 
         for u in blocked:
             br = u.get("blocked_reason") or "blocked"
@@ -98,9 +108,14 @@ class PushPullScanService:
                 if evaluated >= max_evaluate:
                     break
                 evaluated += 1
-                fresh = self.bar.check(sym)
+                fresh = self.bar.check(sym, allow_fetch=False)
                 if not fresh.get("executable"):
                     reason_counts["data_stale"] += 1
+                    skipped_count += 1
+                    continue
+                qchk = self.quote.check(sym)
+                if not qchk.get("executable"):
+                    reason_counts["stale_quote"] += 1
                     skipped_count += 1
                     continue
 
@@ -116,13 +131,20 @@ class PushPullScanService:
 
                     dec_row = self.session.exec(
                         sel(PaperExperimentDecision)
-                        .where(PaperExperimentDecision.strategy_id == row["strategy_id"])
+                        .where(
+                            PaperExperimentDecision.strategy_id == row["strategy_id"],
+                            PaperExperimentDecision.symbol == sym,
+                            PaperExperimentDecision.decision == "approved",
+                        )
                         .order_by(PaperExperimentDecision.created_at.desc())
                     ).first()
                     if dec_row:
                         ex = self.training.execute_approved_decision(dec_row.id)
+                        quote_refresh_attempts += 1 if ex.get("quote_refreshed") else 0
                         if ex.get("submitted"):
                             order_count += 1
+                        elif ex.get("reject_reason") == "STALE_QUOTE":
+                            reason_counts["stale_quote_after_refresh"] += 1
                         decisions_out.append({"execute": ex})
                     break
                 else:
@@ -167,6 +189,9 @@ class PushPullScanService:
             "symbols_scanned_count": len(universe),
             "fresh_bar_count": fresh_bar_count,
             "stale_bar_count": stale_bar_count,
+            "fresh_quote_count": fresh_quote_count,
+            "stale_quote_count": stale_quote_count,
+            "quote_refresh_attempts": quote_refresh_attempts,
             "eligible_strategy_count": eligible_strategy_count,
             "active_symbols_count": len(active),
             "blocked_symbols_count": len(blocked),

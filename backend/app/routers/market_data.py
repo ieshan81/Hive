@@ -7,6 +7,30 @@ from app.services.operator_auth import require_operator_token
 router = APIRouter(prefix="/api/market-data", tags=["market-data"])
 
 
+@router.get("/quote-freshness")
+def quote_freshness(
+    asset_type: str = "crypto",
+    symbols: str | None = None,
+    session: Session = Depends(get_session),
+):
+    from app.services.quote_freshness_service import QuoteFreshnessService
+
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()] if symbols else None
+    if not sym_list:
+        from app.services.market_data_refresh_service import MarketDataRefreshService
+
+        sym_list = MarketDataRefreshService(session)._resolve_symbols(asset_type, None, fast=True)
+    rows = [QuoteFreshnessService(session).check(s) for s in sym_list]
+    fresh_n = sum(1 for r in rows if r.get("executable"))
+    return {
+        "status": "ok",
+        "symbols": rows,
+        "fresh_count": fresh_n,
+        "stale_count": len(rows) - fresh_n,
+        "count": len(rows),
+    }
+
+
 @router.get("/freshness")
 def freshness(
     asset_type: str = "crypto",

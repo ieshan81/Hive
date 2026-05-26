@@ -11,6 +11,7 @@ from app.database import PaperExperimentDecision, StrategyRegistry, SymbolCandid
 from app.services.account_pair_eligibility_service import AccountPairEligibilityService
 from app.services.attention_radar_service import AttentionRadarService
 from app.services.bar_freshness_service import BarFreshnessService
+from app.services.quote_freshness_service import QuoteFreshnessService
 from app.services.config_manager import ConfigManager
 from app.services.nuke_epoch_service import get_latest_reset_epoch, record_created_after
 from app.services.session_engine import SessionEngine
@@ -166,6 +167,7 @@ def build_merged_universe(
             last_dec[d.symbol] = d
 
     bar_svc = BarFreshnessService(session, cfg)
+    quote_svc = QuoteFreshnessService(session, cfg)
     out: list[dict[str, Any]] = []
     for sym, base in list(by_sym.items())[:limit]:
         pair = pair_map.get(sym, {})
@@ -176,13 +178,22 @@ def build_merged_universe(
             if "/" in sym or sym.endswith("USD")
             else {"fresh": True, "executable": True, "bar_freshness": "unknown", "plain": ""}
         )
+        qfresh = (
+            quote_svc.check(sym)
+            if "/" in sym and lightweight
+            else {"quote_freshness": "unknown", "executable": True, "plain": ""}
+        )
         bar_ok = bool(fresh.get("executable"))
+        quote_ok = bool(qfresh.get("executable", True))
         broker_ok = bool(base.get("broker_supported", True)) and eligible
 
         if not broker_ok:
             status = "Blocked"
         elif not bar_ok:
             status = "Blocked"
+        elif not quote_ok:
+            status = "Blocked"
+            blocked_reason = blocked_reason or qfresh.get("plain")
         elif base.get("push_pull_enabled") and broker_ok and bar_ok:
             status = "Active"
         else:
@@ -200,7 +211,9 @@ def build_merged_universe(
                 "broker_eligible": eligible,
                 "broker_supported": base.get("broker_supported", True),
                 "blocked_reason": blocked_reason or (fresh.get("plain") if not bar_ok else None),
-                "quote_freshness": fresh.get("quote_freshness", "unknown"),
+                "quote_freshness": qfresh.get("quote_freshness", "unknown"),
+                "quote_age_seconds": qfresh.get("quote_age_seconds"),
+                "last_quote_at": qfresh.get("last_quote_at"),
                 "bar_freshness": fresh.get("bar_freshness", "unknown"),
                 "last_bar_at": fresh.get("last_bar_at"),
                 "last_scan_at": base.get("last_scan_at") or datetime.utcnow().isoformat() + "Z",
