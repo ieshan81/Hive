@@ -1,26 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { isOperatorProxyPathAllowed } from "@/lib/operatorProxyAllowlist";
+
 const BACKEND_URL = (
   process.env.API_URL ||
   process.env.NEXT_PUBLIC_API_URL ||
   process.env.VITE_API_BASE_URL ||
   "https://hive-production-7343.up.railway.app"
 ).replace(/\/$/, "");
-
-const ALLOWED_POST_PREFIXES = [
-  "/api/fast-training/",
-  "/api/autonomous-paper-learning/",
-  "/api/strategy-proposals/",
-  "/api/live-promotion/",
-  "/api/cycle/run",
-  "/api/settings/clear-ghost-rows",
-  "/api/strategies/import",
-  "/api/settings/resync-broker-truth",
-];
-
-function pathAllowed(path: string): boolean {
-  return ALLOWED_POST_PREFIXES.some((p) => path === p || path.startsWith(p));
-}
 
 /** Outside /api/* so Next rewrites do not forward this to the backend. */
 export async function GET() {
@@ -52,7 +39,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ status: "error", message: "Invalid JSON body" }, { status: 400 });
   }
   const path = String(payload.path || "").trim();
-  if (!path.startsWith("/api/") || !pathAllowed(path)) {
+  if (!isOperatorProxyPathAllowed(path)) {
     return NextResponse.json({ status: "forbidden", message: "Path not allowed via operator proxy" }, { status: 403 });
   }
   const url = `${BACKEND_URL}${path}`;

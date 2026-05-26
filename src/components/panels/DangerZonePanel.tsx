@@ -35,7 +35,12 @@ export function DangerZonePanel() {
       confirmation: "NUKE CAGED HIVE",
     });
     setBusy(false);
-    setMsg(res.ok ? String((res.data as { message?: string })?.message ?? "Nuke complete.") : res.error ?? "Failed");
+    const data = res.data as { status?: string; reason?: string; required?: string; message?: string };
+    if (data?.status === "refused" && data.reason === "confirmation_phrase_mismatch") {
+      setMsg(`Confirmation failed. Type exactly: ${data.required ?? "NUKE CAGED HIVE"}`);
+      return;
+    }
+    setMsg(res.ok ? String(data?.message ?? "Nuke complete.") : res.error ?? "Failed");
   }
 
   async function readyCleanup() {
@@ -49,11 +54,12 @@ export function DangerZonePanel() {
       confirmation: "READY CLEANUP",
     });
     setBusy(false);
-    setMsg(
-      res.ok
-        ? String((res.data as { message?: string })?.message ?? "Cleanup complete.")
-        : res.error ?? "Failed"
-    );
+    const data = res.data as { status?: string; reason?: string; required?: string; message?: string };
+    if (data?.status === "refused" && data.reason === "confirmation_phrase_mismatch") {
+      setMsg(`Confirmation failed. Type exactly: ${data.required ?? "READY CLEANUP"}`);
+      return;
+    }
+    setMsg(res.ok ? String(data?.message ?? "Cleanup complete.") : res.error ?? "Failed");
   }
 
   return (
