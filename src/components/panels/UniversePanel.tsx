@@ -14,27 +14,37 @@ type SymbolRow = {
   source?: string;
   blocked_reason?: string;
   quote_currency?: string;
+  funding_status?: string;
   bar_freshness?: string;
-  spread?: string;
-  spread_pct?: number;
-  price?: number;
+  quote_freshness?: string;
+  last_scan_at?: string;
 };
 
-type FilterKey = "all" | "active" | "crypto" | "stock" | "blocked" | "watch" | "rejected";
+type SourcesSummary = {
+  source_counts?: Record<string, number>;
+  why_only_8_crypto_displayed?: string;
+  alpaca_crypto_api_called?: boolean;
+  last_refresh_at?: string;
+};
 
 export function UniversePanel() {
   const [symbols, setSymbols] = useState<SymbolRow[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
-  const [filter, setFilter] = useState<FilterKey>("all");
+  const [sources, setSources] = useState<SourcesSummary | null>(null);
+  const [filter, setFilter] = useState<"all" | "active" | "crypto" | "stock" | "blocked" | "watch">("all");
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const res = await apiGet<{ symbols?: SymbolRow[]; counts?: Record<string, number> }>("/api/universe/status");
-    if (res.ok) {
-      setSymbols(res.data?.symbols ?? []);
-      setCounts(res.data?.counts ?? {});
+    const [st, src] = await Promise.all([
+      apiGet<{ symbols?: SymbolRow[]; counts?: Record<string, number> }>("/api/universe/status"),
+      apiGet<SourcesSummary>("/api/universe/sources"),
+    ]);
+    if (st.ok) {
+      setSymbols(st.data?.symbols ?? []);
+      setCounts(st.data?.counts ?? {});
     }
+    if (src.ok) setSources(src.data ?? null);
     setLoading(false);
   }, []);
 
@@ -58,14 +68,7 @@ export function UniversePanel() {
 
   if (loading) return <EmptyState message="Loading universe…" />;
 
-  const filters: { key: FilterKey; label: string }[] = [
-    { key: "all", label: "All" },
-    { key: "active", label: "Active" },
-    { key: "crypto", label: "Crypto" },
-    { key: "stock", label: "Stocks" },
-    { key: "blocked", label: "Blocked" },
-    { key: "watch", label: "Watch-only" },
-  ];
+  const sc = sources?.source_counts ?? {};
 
   return (
     <section className="space-y-4 max-w-5xl">
@@ -74,56 +77,83 @@ export function UniversePanel() {
         Universe
       </h1>
       <p className="text-sm text-slate-400">
-        {counts.total ?? symbols.length} symbols · {counts.active ?? 0} active · {counts.blocked ?? 0} blocked ·{" "}
-        {counts.crypto ?? 0} crypto · {counts.stock ?? 0} stocks
+        Alpaca-supported universe + curated watchlist · {counts.total ?? symbols.length} displayed ·{" "}
+        {counts.active ?? 0} active · {counts.blocked ?? 0} blocked · {counts.crypto ?? 0} crypto ·{" "}
+        {counts.stock ?? 0} stocks
       </p>
 
+      <GlassPanel title="Source proof">
+        <dl className="grid grid-cols-2 md:grid-cols-3 gap-2 text-[11px]">
+          <div>
+            <dt className="text-slate-500">Alpaca crypto API</dt>
+            <dd className="text-white">{sc.alpaca_crypto_assets_api ?? "—"} assets</dd>
+          </div>
+          <div>
+            <dt className="text-slate-500">Curated crypto</dt>
+            <dd className="text-white">{sc.curated_crypto_watchlist ?? 8} shown</dd>
+          </div>
+          <div>
+            <dt className="text-slate-500">Curated stocks</dt>
+            <dd className="text-white">{sc.curated_stock_watchlist ?? 10}</dd>
+          </div>
+          <div>
+            <dt className="text-slate-500">API called</dt>
+            <dd className="text-white">{sources?.alpaca_crypto_api_called ? "yes" : "no"}</dd>
+          </div>
+          <div>
+            <dt className="text-slate-500">Last refresh</dt>
+            <dd className="text-white">{sources?.last_refresh_at?.slice(0, 19) ?? "—"}</dd>
+          </div>
+        </dl>
+        {sources?.why_only_8_crypto_displayed && (
+          <p className="text-[10px] text-slate-500 mt-2">{sources.why_only_8_crypto_displayed}</p>
+        )}
+      </GlassPanel>
+
       <div className="flex flex-wrap gap-1">
-        {filters.map((f) => (
+        {(["all", "active", "crypto", "stock", "blocked", "watch"] as const).map((key) => (
           <button
-            key={f.key}
+            key={key}
             type="button"
-            onClick={() => setFilter(f.key)}
-            className={`text-[10px] px-2 py-1 rounded ${
-              filter === f.key ? "bg-hive-cyan/20 text-hive-cyan" : "bg-slate-800 text-slate-400"
+            onClick={() => setFilter(key)}
+            className={`text-[10px] px-2 py-1 rounded capitalize ${
+              filter === key ? "bg-hive-cyan/20 text-hive-cyan" : "bg-slate-800 text-slate-400"
             }`}
           >
-            {f.label}
+            {key}
           </button>
         ))}
       </div>
 
       <GlassPanel title={`Symbols (${filtered.length})`}>
-        {filtered.length === 0 ? (
-          <p className="text-sm text-slate-500">No symbols in this filter. Refresh or start paper learning.</p>
-        ) : (
-          <div className="overflow-x-auto max-h-[70vh]">
-            <table className="w-full text-[11px]">
-              <thead>
-                <tr className="text-slate-500 text-left">
-                  <th className="pb-2 pr-2">Symbol</th>
-                  <th className="pb-2 pr-2">Type</th>
-                  <th className="pb-2 pr-2">Status</th>
-                  <th className="pb-2 pr-2">Tradable</th>
-                  <th className="pb-2 pr-2">Bars</th>
-                  <th className="pb-2">Reason</th>
+        <div className="overflow-x-auto max-h-[70vh]">
+          <table className="w-full text-[11px]">
+            <thead>
+              <tr className="text-slate-500 text-left">
+                <th className="pb-2 pr-2">Symbol</th>
+                <th className="pb-2 pr-2">Type</th>
+                <th className="pb-2 pr-2">Source</th>
+                <th className="pb-2 pr-2">Status</th>
+                <th className="pb-2 pr-2">Bars</th>
+                <th className="pb-2 pr-2">Quote</th>
+                <th className="pb-2">Block reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((r) => (
+                <tr key={r.symbol} className="border-t border-white/5 text-slate-300">
+                  <td className="py-1.5 pr-2 font-medium text-white">{r.symbol}</td>
+                  <td className="py-1.5 pr-2">{r.asset_type}</td>
+                  <td className="py-1.5 pr-2 text-slate-500">{(r.source ?? "—").replace(/_/g, " ")}</td>
+                  <td className="py-1.5 pr-2">{r.status}</td>
+                  <td className="py-1.5 pr-2">{r.bar_freshness ?? "—"}</td>
+                  <td className="py-1.5 pr-2">{r.quote_freshness ?? "—"}</td>
+                  <td className="py-1.5 text-slate-500">{r.blocked_reason || "—"}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {filtered.map((r) => (
-                  <tr key={r.symbol} className="border-t border-white/5 text-slate-300">
-                    <td className="py-1.5 pr-2 font-medium text-white">{r.symbol}</td>
-                    <td className="py-1.5 pr-2">{r.asset_type}</td>
-                    <td className="py-1.5 pr-2">{r.status}</td>
-                    <td className="py-1.5 pr-2">{r.tradable_now ? "yes" : "no"}</td>
-                    <td className="py-1.5 pr-2">{r.bar_freshness ?? "—"}</td>
-                    <td className="py-1.5 text-slate-500">{r.blocked_reason || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+              ))}
+            </tbody>
+          </table>
+        </div>
       </GlassPanel>
     </section>
   );

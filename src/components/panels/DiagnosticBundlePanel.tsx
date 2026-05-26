@@ -31,23 +31,21 @@ export function DiagnosticBundlePanel() {
         return;
       }
       const blob = await res.blob();
+      const cd = res.headers.get("Content-Disposition") || "";
+      const match = cd.match(/filename="([^"]+)"/);
+      const filename = match?.[1] || "caged-hive-diagnostic.zip";
       const objectUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = objectUrl;
-      a.download = "hive-diagnostic-bundle.zip";
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(objectUrl);
       const meta = await apiGet<Record<string, unknown>>("/api/diagnostic-bundle");
       const errs = meta.data?.["diagnostic_export_errors.json"];
-      if (Array.isArray(errs) && errs.length > 0) {
-        setMsg(
-          `Bundle downloaded with ${errs.length} section warning(s). Open diagnostic_export_errors.json inside the zip.`
-        );
-      } else {
-        setMsg("Bundle downloaded successfully.");
-      }
+      const warn = Array.isArray(errs) && errs.length > 0 ? ` with ${errs.length} section warning(s).` : ".";
+      setMsg(`Bundle downloaded as ${filename}${warn}`);
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "Download failed — network or server error.");
     }

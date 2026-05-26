@@ -159,9 +159,11 @@ class MemoryPolicyService:
                 select(LessonNode)
                 .where(LessonNode.status.in_(("validated", "active")))
                 .order_by(LessonNode.updated_at.desc())
-                .limit(limit * 2)
+                .limit(limit * 3)
             ).all()
         )
+        epoch_id = (self.epoch or {}).get("reset_epoch_id")
+        rows = [r for r in rows if self._epoch_match(r, epoch_id)]
         out = []
         for r in rows:
             if r.memory_type in ("raw_event", "pending"):
@@ -188,8 +190,11 @@ class MemoryPolicyService:
     def _epoch_match(self, row: LessonNode, epoch_id: Optional[str]) -> bool:
         if not epoch_id:
             return True
-        det = row.detailed_lesson or ""
-        return epoch_id in str(det) or True  # post-filter by created_at if nuke timestamp available
+        if getattr(row, "reset_epoch_id", None) == epoch_id:
+            return True
+        if row.created_at and epoch_id.replace("reset-", "") in (row.created_at.isoformat()[:10].replace("-", "")):
+            return True
+        return False
 
     def _merge_key(self, reason: str, symbol: Optional[str], strategy: Optional[str]) -> str:
         raw = f"{reason}|{symbol or ''}|{strategy or ''}"

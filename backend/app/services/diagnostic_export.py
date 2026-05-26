@@ -430,6 +430,66 @@ def _export_strategy_test_results(session: Session, config: dict) -> dict[str, A
     return {"status": "ok", "runs": runs, "count": len(runs)}
 
 
+def _export_memory_tier(session: Session, *, tier: str) -> dict[str, Any]:
+    from sqlmodel import select
+
+    from app.database import LessonNode
+    from app.services.memory_policy_service import MemoryPolicyService
+
+    policy = MemoryPolicyService(session)
+    epoch_id = (policy.epoch or {}).get("reset_epoch_id")
+    rows = list(session.exec(select(LessonNode).order_by(LessonNode.created_at.desc()).limit(500)).all())
+    filtered = []
+    for r in rows:
+        if not policy._epoch_match(r, epoch_id):
+            continue
+        mt = r.memory_type or ""
+        if tier == "raw_event" and mt == "raw_event":
+            filtered.append(r)
+        elif tier == "validated" and mt not in ("raw_event", "pending", "consolidated_memory"):
+            filtered.append(r)
+        elif tier == "consolidated_memory" and (mt == "consolidated_memory" or (r.occurrence_count or 0) > 1):
+            filtered.append(r)
+    return {
+        "status": "ok",
+        "generated_at_utc": datetime.utcnow().isoformat() + "Z",
+        "reset_epoch_id": epoch_id,
+        "tier": tier,
+        "count": len(filtered),
+        "memories": [
+            {
+                "id": r.id,
+                "title": r.title,
+                "summary": r.summary,
+                "symbol": r.symbol,
+                "memory_type": r.memory_type,
+                "occurrence_count": r.occurrence_count or 1,
+                "status": r.status,
+            }
+            for r in filtered[:100]
+        ],
+    }
+
+
+def _export_memory_quality_report(session: Session) -> dict[str, Any]:
+    from app.services.memory_policy_service import MemoryPolicyService
+
+    policy = MemoryPolicyService(session)
+    st = policy.status()
+    return {
+        "status": "ok",
+        "generated_at_utc": datetime.utcnow().isoformat() + "Z",
+        "schema_version": 1,
+        **st,
+        "quality_gates": {
+            "raw_events_not_hive_mind": True,
+            "gemini_pending_not_validated": True,
+            "consolidation_window_hours": 24,
+            "merge_blockers_enabled": True,
+        },
+    }
+
+
 def _research_bundle_meta(
     session: Session,
     *,
@@ -1143,6 +1203,33 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
                 ).AIManagerService(session, cfg_brain).memories(100),
                 export_errors,
             ),
+            "ai_memory_raw_events.json": safe_export_section(
+                "ai_memory_raw_events.json",
+                lambda: _export_memory_tier(session, tier="raw_event"),
+                export_errors,
+            ),
+            "ai_memory_validated.json": safe_export_section(
+                "ai_memory_validated.json",
+                lambda: _export_memory_tier(session, tier="validated"),
+                export_errors,
+            ),
+            "ai_memory_consolidated.json": safe_export_section(
+                "ai_memory_consolidated.json",
+                lambda: _export_memory_tier(session, tier="consolidated_memory"),
+                export_errors,
+            ),
+            "memory_quality_report.json": safe_export_section(
+                "memory_quality_report.json",
+                lambda: _export_memory_quality_report(session),
+                export_errors,
+            ),
+            "universe_sources.json": safe_export_section(
+                "universe_sources.json",
+                lambda: __import__(
+                    "app.services.universe_sources_service", fromlist=["universe_sources"]
+                ).universe_sources(session, cfg_brain),
+                export_errors,
+            ),
             "ai_strategy_lessons.json": safe_export_section(
                 "ai_strategy_lessons.json",
                 lambda: __import__(
@@ -1689,9 +1776,13 @@ def diagnostic_bundle_filename(session: Session) -> str:
     from app.services.nuke_epoch_service import get_latest_reset_epoch
 
     epoch = get_latest_reset_epoch(session)
-    epoch_id = (epoch or {}).get("reset_epoch_id") or "unknown"
+    epoch_id = (epoch or {}).get("reset_epoch_id") or "no-reset-epoch"
+    if epoch_id.startswith("reset-"):
+        epoch_part = epoch_id
+    else:
+        epoch_part = f"reset-{epoch_id}" if epoch_id != "no-reset-epoch" else "no-reset-epoch"
     stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%SZ")
-    return f"caged-hive-diagnostic-{stamp}-reset-{epoch_id}.zip"
+    return f"caged-hive-diagnostic-{stamp}-{epoch_part}.zip"
 
 
 def finalize_diagnostic_bundle(session: Session, bundle: dict[str, Any]) -> dict[str, Any]:

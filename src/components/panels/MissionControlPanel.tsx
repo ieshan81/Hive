@@ -37,6 +37,7 @@ type MissionStatus = {
   operator_action_required?: string;
   show_start_fresh_button?: boolean;
   next_action_plain?: string;
+  capital_graph?: { points?: { t?: string; equity?: number }[] };
   account_truth?: {
     current_paper_equity?: number;
     starting_equity_reset_epoch?: number;
@@ -235,6 +236,25 @@ export function MissionControlPanel() {
           )}
         </GlassPanel>
       </div>
+
+      {(data?.capital_graph?.points?.length ?? 0) > 0 && (
+        <GlassPanel title="Capital graph (paper equity)" icon={<Wallet className="h-4 w-4" />}>
+          <div className="flex items-end gap-0.5 h-24">
+            {data?.capital_graph?.points?.slice(-30).map((p, i) => {
+              const maxEq = Math.max(...(data.capital_graph?.points?.map((x) => x.equity ?? 0) ?? [1]));
+              return (
+                <div
+                  key={`${p.t}-${i}`}
+                  className="flex-1 bg-hive-cyan/40 rounded-t min-w-[2px]"
+                  style={{ height: `${Math.max(4, ((p.equity ?? 0) / maxEq) * 100)}%` }}
+                  title={`${p.t}: $${p.equity?.toFixed(2)}`}
+                />
+              );
+            })}
+          </div>
+          <p className="text-[10px] text-slate-500 mt-2">Broker-synced equity curve for current reset epoch.</p>
+        </GlassPanel>
+      )}
 
       {(data?.blockers?.length ?? 0) > 0 && (
         <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">

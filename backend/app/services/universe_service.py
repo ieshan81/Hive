@@ -34,6 +34,9 @@ def universe_status(session: Session, config: Optional[dict] = None) -> dict[str
     return {
         "status": "ok",
         "reset_epoch": epoch,
+        "sources_summary": __import__(
+            "app.services.universe_sources_service", fromlist=["universe_sources"]
+        ).universe_sources(session, config),
         "total_symbols": len(rows),
         "counts": {
             "total": len(rows),

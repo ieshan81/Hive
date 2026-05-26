@@ -181,7 +181,7 @@ def build_merged_universe(
     for sym, base in list(by_sym.items())[:limit]:
         pair = pair_map.get(sym, {})
         eligible = pair.get("status") == "eligible"
-        blocked_reason = pair.get("reason")
+        pair_reason = pair.get("reason")
         fresh = (
             bar_svc.check_db_only(sym)
             if "/" in sym or sym.endswith("USD")
@@ -196,17 +196,24 @@ def build_merged_universe(
         quote_ok = bool(qfresh.get("executable", True))
         broker_ok = bool(base.get("broker_supported", True)) and eligible
 
-        if not broker_ok:
+        blocked_reason: Optional[str] = None
+        if base.get("asset_type") == "Stock" and not sess.stock_trading_allowed:
             status = "Blocked"
+            blocked_reason = sess.us_stock_close_reason or "U.S. stock market is closed"
+        elif not broker_ok:
+            status = "Blocked"
+            blocked_reason = pair_reason or "Not broker eligible"
         elif not bar_ok:
             status = "Blocked"
+            blocked_reason = fresh.get("plain") or "Stale or missing bars"
         elif not quote_ok:
             status = "Blocked"
-            blocked_reason = blocked_reason or qfresh.get("plain")
+            blocked_reason = qfresh.get("plain") or "Stale quote"
         elif base.get("push_pull_enabled") and broker_ok and bar_ok:
             status = "Active"
         else:
             status = "Watch-only"
+            blocked_reason = "Strategy or session not enabled for entries"
 
         dec = last_dec.get(sym)
         out.append(
@@ -216,10 +223,11 @@ def build_merged_universe(
                 "status": status,
                 "tradable_now": status == "Active",
                 "quote_currency": pair.get("quote_currency"),
-                "quote_funded": eligible,
+                "quote_funded": eligible and pair.get("category") == "ok",
+                "funding_status": "funded" if eligible and pair.get("category") == "ok" else "blocked",
                 "broker_eligible": eligible,
                 "broker_supported": base.get("broker_supported", True),
-                "blocked_reason": blocked_reason or (fresh.get("plain") if not bar_ok else None),
+                "blocked_reason": blocked_reason,
                 "quote_freshness": qfresh.get("quote_freshness", "unknown"),
                 "quote_age_seconds": qfresh.get("quote_age_seconds"),
                 "last_quote_at": qfresh.get("last_quote_at"),

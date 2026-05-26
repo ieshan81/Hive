@@ -32,7 +32,7 @@ def test_validate_blocks_both_qty_notional():
 
     class FakeSession:
         def exec(self, *a, **k):
-            return type("R", (), {"first": lambda: None})()
+            return type("R", (), {"first": lambda self=None: None})()
 
     class FakeAlpaca:
         configured = False
