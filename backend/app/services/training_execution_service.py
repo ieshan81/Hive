@@ -142,7 +142,11 @@ class TrainingExecutionService:
         qty = round(notional / mid, 6)
         tier_info = self.tiers.classify(dec.symbol)
         tier = getattr(tier_info, "tier", str(tier_info))
-        stop_pct = float((self.config.get("crypto_push_pull") or {}).get("stop_loss_pct", 0.02))
+        cpp = self.config.get("crypto_push_pull") or {}
+        stop_pct = float(cpp.get("stop_loss_pct", 0.02))
+        take_pct = float(cpp.get("take_profit_pct", 0.03))
+        expected_move = float(cpp.get("momentum_threshold_1h", 0.004))
+        expected_move_pct = max(take_pct, expected_move) * 100.0
         stop_loss = mid * (1 - stop_pct) if dec.side == "buy" else mid * (1 + stop_pct)
         max_hold_h = float(self.pl.cfg.get("meme_coin_max_hold_minutes", 240)) / 60.0
         if spike.get("tier") == "MAJOR_CRYPTO":

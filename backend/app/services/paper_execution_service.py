@@ -89,7 +89,8 @@ class PaperExecutionService:
             spread_pct=meta.get("spread_pct"),
             liquidity_score=meta.get("liquidity_score"),
             edge_over_cost=meta.get("edge_over_cost"),
-            expected_move_pct=meta.get("expected_move_pct"),
+            expected_move_pct=meta.get("expected_move_pct")
+            or (float(meta.get("take_profit_pct", 0.03)) * 100 if meta.get("take_profit_pct") else None),
             position_qty=float(meta.get("position_qty") or 0),
             entry_price=float(meta.get("current_price") or 0),
             stop_loss=sig.stop_loss,
