@@ -280,6 +280,14 @@ class AutonomousPaperLearningService:
                 "skipped_count",
                 "order_count",
                 "reason_breakdown",
+                "scoring_model",
+                "strategy_version",
+                "push_pull_scores",
+                "selected_candidate",
+                "rejected_candidates",
+                "top_candidate",
+                "no_trade_reason_breakdown",
+                "threshold_values",
             ) if k in tick_summary},
         }
         self._audit("autonomous_run_one_cycle", operator, audit_payload)

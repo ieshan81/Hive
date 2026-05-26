@@ -94,11 +94,21 @@ class ResearchLabService:
         return {"status": "ok", "runs": results, "message": "Research only — no orders submitted"}
 
     def run_backtest(self, body: dict) -> dict[str, Any]:
-        strategy_id = body.get("strategy_id", "crypto_push_pull")
+        from app.services.strategy_library import resolve_strategy_id
+
+        strategy_id = resolve_strategy_id(body.get("strategy_id", "crypto_push_pull_baseline"))
         symbols = body.get("symbols") or ["BTC/USD"]
         params = body.get("parameters") or {}
+        timeframe = body.get("timeframe", "5Min")
+        lookback_days = int(body.get("lookback_days") or self.rcfg.get("default_lookback_days", 90))
         engine = ResearchBacktestEngine(self.session, self.config)
-        out = engine.run(strategy_id, symbols, parameters=params)
+        out = engine.run(
+            strategy_id,
+            symbols,
+            parameters=params,
+            lookback_days=lookback_days,
+            timeframe=timeframe,
+        )
         if out.get("run_id"):
             ResearchMemoryService(self.session, self.config).from_backtest_run(out["run_id"])
         return out

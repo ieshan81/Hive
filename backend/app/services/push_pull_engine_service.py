@@ -302,6 +302,19 @@ class PushPullEngineService:
             "reason_breakdown": details.get("reason_breakdown"),
             "approved_count": details.get("approved_count"),
             "skipped_count": details.get("skipped_count"),
+            "scoring_model": details.get("scoring_model") or "score_push_pull_setup",
+            "strategy_version": details.get("strategy_version"),
+            "push_pull_scores": details.get("push_pull_scores"),
+            "selected_candidate": details.get("selected_candidate"),
+            "rejected_candidates": details.get("rejected_candidates"),
+            "top_candidate": details.get("top_candidate"),
+            "no_trade_reason_breakdown": details.get("no_trade_reason_breakdown"),
+            "threshold_values": details.get("threshold_values"),
+            "push_score": (details.get("top_candidate") or {}).get("push_score"),
+            "trade_quality_score": (details.get("top_candidate") or {}).get("trade_quality_score"),
+            "edge_after_cost_bps": (details.get("top_candidate") or {}).get("edge_after_cost_bps"),
+            "no_trade_reason": (details.get("top_candidate") or {}).get("no_trade_reason")
+            or details.get("reason"),
         }
 
 

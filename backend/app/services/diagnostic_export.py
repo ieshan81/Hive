@@ -1279,6 +1279,34 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
                 ).candidate_rankings(session, cfg_brain),
                 export_errors,
             ),
+            "push_pull_scores.json": safe_export_section(
+                "push_pull_scores.json",
+                lambda: __import__(
+                    "app.services.push_pull_scoring_service", fromlist=["push_pull_scores_export"]
+                ).push_pull_scores_export(session, cfg_brain),
+                export_errors,
+            ),
+            "no_trade_reason_breakdown.json": safe_export_section(
+                "no_trade_reason_breakdown.json",
+                lambda: __import__(
+                    "app.services.push_pull_scoring_service", fromlist=["no_trade_reason_breakdown_export"]
+                ).no_trade_reason_breakdown_export(session, cfg_brain),
+                export_errors,
+            ),
+            "ai_advisor_status.json": safe_export_section(
+                "ai_advisor_status.json",
+                lambda: __import__(
+                    "app.services.sentiment_status_service", fromlist=["ai_advisor_status"]
+                ).ai_advisor_status(session, cfg_brain),
+                export_errors,
+            ),
+            "portfolio_reconciliation.json": safe_export_section(
+                "portfolio_reconciliation.json",
+                lambda: __import__(
+                    "app.services.portfolio_reconciliation_service", fromlist=["portfolio_reconciliation"]
+                ).portfolio_reconciliation(session, cfg_brain),
+                export_errors,
+            ),
             "last_tick_narrative.json": safe_export_section(
                 "last_tick_narrative.json",
                 lambda: __import__(

@@ -11,6 +11,7 @@ from app.database import StrategyDefinition
 
 # Map API family names → engine strategy_id
 FAMILY_TO_STRATEGY_ID: dict[str, str] = {
+    "crypto_push_pull_baseline": "crypto_push_pull_momentum",
     "crypto_push_pull_momentum": "crypto_push_pull_momentum",
     "crypto_push_pull": "crypto_push_pull_momentum",
     "momentum": "crypto_push_pull_momentum",

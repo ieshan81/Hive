@@ -1,4 +1,4 @@
-"""Push-pull tick scan — universe → freshness → signal → eligibility → order."""
+"""Push-pull tick scan — universe → score → signal → eligibility → order."""
 
 from __future__ import annotations
 
@@ -9,9 +9,10 @@ from sqlmodel import Session
 
 from app.services.aggressive_paper_learning_service import AggressivePaperLearningService
 from app.services.bar_freshness_service import BarFreshnessService
-from app.services.quote_freshness_service import QuoteFreshnessService
 from app.services.config_manager import ConfigManager
+from app.services.push_pull_scoring_service import score_active_universe
 from app.services.push_pull_strategy_seed import ensure_crypto_push_pull_baseline
+from app.services.quote_freshness_service import QuoteFreshnessService
 from app.services.training_execution_service import TrainingExecutionService
 from app.services.universe_builder import build_merged_universe
 
@@ -26,7 +27,7 @@ class PushPullScanService:
         self.quote = QuoteFreshnessService(session, self.config)
 
     def run_tick_scan(self, *, max_evaluate: int = 8) -> dict[str, Any]:
-        """Full push-pull scan with reason breakdown (called each training cycle)."""
+        """Full push-pull scan with score_push_pull_setup ranking on live path."""
         ensure_crypto_push_pull_baseline(self.session, self.config)
 
         universe = build_merged_universe(self.session, self.config, limit=60, lightweight=True)
@@ -69,6 +70,10 @@ class PushPullScanService:
             else:
                 reason_counts["blocked_other"] += 1
 
+        scoring = score_active_universe(self.session, self.config, universe=universe)
+        for code, n in (scoring.get("no_trade_reason_breakdown") or {}).items():
+            reason_counts[code.lower()] += int(n)
+
         scan = self.pl.scan_experiment_eligibility()
         eligible_strats = scan.get("eligible") or []
         eligible_strategy_count = len(eligible_strats)
@@ -83,88 +88,96 @@ class PushPullScanService:
                 "eligible_count": eligible_strategy_count,
                 "eligible_ids": [r.get("strategy_id") for r in eligible_strats[:10]],
                 "blocked_count": len(scan.get("blocked") or []),
+                "scoring_model": scoring.get("scoring_model"),
             },
             commit=False,
         )
 
+        ranked = scoring.get("scores") or []
+        selected = scoring.get("selected_candidate")
+        strategy_id = (eligible_strats[0].get("strategy_id") if eligible_strats else None) or "crypto_push_pull_baseline"
+
         evaluated = 0
-        for row in eligible_strats[:3]:
+        for row_score in ranked:
             if evaluated >= max_evaluate:
                 break
-            from sqlmodel import select
-            from app.database import StrategyRegistry
-            from app.services.account_pair_eligibility_service import AccountPairEligibilityService
+            sym = row_score.get("symbol")
+            if not sym:
+                continue
+            evaluated += 1
+            push_signals += 1
+            candidates_created += 1
 
-            reg = self.session.exec(
-                select(StrategyRegistry).where(StrategyRegistry.strategy_id == row.get("strategy_id"))
-            ).first()
-            symbols = (reg.symbols if reg else None) or []
-            if not isinstance(symbols, list):
-                symbols = [str(symbols)]
-            tradeable = AccountPairEligibilityService(self.session, self.config).filter_tradeable_symbols(
-                symbols, strategy_id=row.get("strategy_id", "")
-            )
-            for sym in tradeable[:4]:
-                if evaluated >= max_evaluate:
-                    break
-                evaluated += 1
-                fresh = self.bar.check(sym, allow_fetch=False)
-                if not fresh.get("executable"):
+            if not row_score.get("entry_allowed"):
+                skipped_count += 1
+                ntr = (row_score.get("no_trade_reason") or "gate_failed").lower()
+                if "spread" in ntr:
+                    reason_counts["spread_too_wide"] += 1
+                elif "stale" in ntr or "bar" in ntr or "quote" in ntr:
                     reason_counts["data_stale"] += 1
-                    skipped_count += 1
-                    continue
-                push_signals += 1
-                candidates_created += 1
-                ev = self.pl.evaluate(row["strategy_id"], sym, side="buy")
-                decisions_out.append(ev)
-                rc = ev.get("reason_code") or "unknown"
-                if ev.get("decision") == "approved":
-                    approved_count += 1
-                    from sqlmodel import select as sel
-                    from app.database import PaperExperimentDecision
-
-                    dec_row = self.session.exec(
-                        sel(PaperExperimentDecision)
-                        .where(
-                            PaperExperimentDecision.strategy_id == row["strategy_id"],
-                            PaperExperimentDecision.symbol == sym,
-                            PaperExperimentDecision.decision == "approved",
-                        )
-                        .order_by(PaperExperimentDecision.created_at.desc())
-                    ).first()
-                    if dec_row:
-                        ex = self.training.execute_approved_decision(dec_row.id)
-                        quote_refresh_attempts += 1 if ex.get("quote_refreshed") else 0
-                        if ex.get("submitted"):
-                            order_count += 1
-                        elif ex.get("reject_reason") == "STALE_QUOTE":
-                            reason_counts["stale_quote_after_refresh"] += 1
-                        decisions_out.append({"execute": ex})
-                    break
+                elif "edge" in ntr or "cost" in ntr:
+                    reason_counts["no_edge_after_cost"] += 1
                 else:
-                    skipped_count += 1
-                    if rc in ("spread_check",):
-                        reason_counts["spread_too_wide"] += 1
-                    elif rc in ("account_pair_eligibility",):
-                        reason_counts["quote_currency_unfunded"] += 1
-                    elif rc in ("duplicate_buy",):
-                        reason_counts["duplicate_buy"] += 1
-                    elif rc in ("data_stale",):
-                        reason_counts["data_stale"] += 1
-                    elif rc in ("no_stop_loss", "not_eligible", "mode_disabled"):
-                        reason_counts["no_push_signal"] += 1
-                    else:
-                        reason_counts[rc] += 1
-                if approved_count > 0:
-                    break
-            if approved_count > 0:
+                    reason_counts["no_push_signal"] += 1
+                decisions_out.append({"score": row_score, "decision": "skipped", "reason": row_score.get("no_trade_reason")})
+                continue
+
+            fresh = self.bar.check(sym, allow_fetch=False)
+            if not fresh.get("executable"):
+                reason_counts["data_stale"] += 1
+                skipped_count += 1
+                continue
+
+            ev = self.pl.evaluate(strategy_id, sym, side="buy")
+            ev = {**ev, "live_score": row_score}
+            decisions_out.append(ev)
+            rc = ev.get("reason_code") or "unknown"
+            if ev.get("decision") == "approved":
+                approved_count += 1
+                from sqlmodel import select as sel
+                from app.database import PaperExperimentDecision
+
+                dec_row = self.session.exec(
+                    sel(PaperExperimentDecision)
+                    .where(
+                        PaperExperimentDecision.strategy_id == strategy_id,
+                        PaperExperimentDecision.symbol == sym,
+                        PaperExperimentDecision.decision == "approved",
+                    )
+                    .order_by(PaperExperimentDecision.created_at.desc())
+                ).first()
+                if dec_row:
+                    ex = self.training.execute_approved_decision(dec_row.id)
+                    quote_refresh_attempts += 1 if ex.get("quote_refreshed") else 0
+                    if ex.get("submitted"):
+                        order_count += 1
+                    elif ex.get("reject_reason") == "STALE_QUOTE":
+                        reason_counts["stale_quote_after_refresh"] += 1
+                    elif ex.get("reject_reason"):
+                        reason_counts[str(ex.get("reject_reason")).lower()] += 1
+                    decisions_out.append({"execute": ex, "score": row_score})
                 break
+            else:
+                skipped_count += 1
+                if rc in ("spread_check",):
+                    reason_counts["spread_too_wide"] += 1
+                elif rc in ("account_pair_eligibility",):
+                    reason_counts["quote_currency_unfunded"] += 1
+                elif rc in ("duplicate_buy",):
+                    reason_counts["duplicate_buy"] += 1
+                elif rc in ("data_stale",):
+                    reason_counts["data_stale"] += 1
+                elif rc in ("no_stop_loss", "not_eligible", "mode_disabled"):
+                    reason_counts["allocator_block"] += 1
+                else:
+                    reason_counts[rc] += 1
 
         if eligible_strategy_count == 0:
             reason_counts["no_eligible_strategy"] += 1
         if push_signals == 0 and not reason_counts:
             reason_counts["no_push_signal"] = len(active) or len(universe)
 
+        top = ranked[0] if ranked else None
         plain = _plain_tick_summary(
             symbols_scanned=len(universe),
             active=len(active),
@@ -177,6 +190,9 @@ class PushPullScanService:
             skipped=skipped_count,
             orders=order_count,
             reasons=reason_counts,
+            top_symbol=top.get("symbol") if top else None,
+            top_score=top.get("trade_quality_score") if top else None,
+            selected=selected,
         )
 
         return {
@@ -200,6 +216,14 @@ class PushPullScanService:
             "result": "order_placed" if order_count else ("approved_pending" if approved_count else "no_approved_candidate"),
             "decisions": decisions_out,
             "universe_sample": universe[:25],
+            "scoring_model": scoring.get("scoring_model"),
+            "strategy_version": scoring.get("strategy_version"),
+            "push_pull_scores": ranked,
+            "selected_candidate": selected,
+            "rejected_candidates": scoring.get("rejected_candidates"),
+            "no_trade_reason_breakdown": scoring.get("no_trade_reason_breakdown"),
+            "top_candidate": top,
+            "threshold_values": scoring.get("threshold_values"),
         }
 
 
@@ -216,20 +240,38 @@ def _plain_tick_summary(
     skipped: int,
     orders: int,
     reasons: Counter,
+    top_symbol: Optional[str] = None,
+    top_score: Optional[float] = None,
+    selected: Optional[dict] = None,
 ) -> str:
+    score_note = ""
+    if top_symbol and top_score is not None:
+        score_note = f" Top scored {top_symbol} (quality {top_score:.2f})."
     if orders:
-        return f"Scanned {symbols_scanned} symbols ({fresh} fresh bars) — paper order submitted ({orders})."
+        return (
+            f"Scanned {symbols_scanned} symbols ({fresh} fresh bars) — paper order submitted ({orders})."
+            + score_note
+        )
     if approved:
-        return f"Scanned {symbols_scanned} symbols ({fresh} fresh) — entry approved, awaiting fill."
+        return f"Scanned {symbols_scanned} symbols ({fresh} fresh) — entry approved, awaiting fill." + score_note
+    if selected and selected.get("symbol"):
+        sel_reason = selected.get("no_trade_reason") or "gates passed but validator blocked"
+        return (
+            f"Scanned {symbols_scanned} symbols — best candidate {selected['symbol']} "
+            f"(score {selected.get('trade_quality_score', 0):.2f}) skipped: {sel_reason}."
+        )
     parts = []
     label_map = {
         "no_push_signal": "no push signal",
         "spread_too_wide": "spread too wide",
         "quote_currency_unfunded": "quote currency unfunded",
         "data_stale": "stale data",
-        "duplicate_buy": "duplicate buy protection",
+        "duplicate_buy": "duplicate buy / open position",
         "blocked_other": "blocked",
         "no_eligible_strategy": "no eligible strategy",
+        "no_edge_after_cost": "no edge after cost",
+        "allocator_block": "allocator or validator block",
+        "negative_edge_after_cost": "negative edge after cost",
     }
     for code, n in reasons.most_common(8):
         parts.append(f"{n} {label_map.get(code, code.replace('_', ' '))}")
@@ -237,4 +279,5 @@ def _plain_tick_summary(
     return (
         f"Scanned {symbols_scanned} symbols ({fresh} fresh, {stale} stale bars, "
         f"{eligible_strats} eligible strategies). No approved candidate: {detail}."
+        + score_note
     )

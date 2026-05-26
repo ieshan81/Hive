@@ -238,6 +238,13 @@ def get_positions(session: Session = Depends(get_session)):
     return {"status": "ok", "count": len(out), "positions": out}
 
 
+@router.get("/portfolio/reconciliation")
+def portfolio_reconciliation_view(session: Session = Depends(get_session)):
+    from app.services.portfolio_reconciliation_service import portfolio_reconciliation
+
+    return portfolio_reconciliation(session)
+
+
 @router.get("/reconciliation/status")
 def get_reconciliation_status(session: Session = Depends(get_session)):
     from app.services.order_reconciliation import reconciliation_status

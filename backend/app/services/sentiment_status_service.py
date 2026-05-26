@@ -106,6 +106,10 @@ def ai_advisor_status(session: Session, config: Optional[dict] = None) -> dict[s
         "gemini_configured": configured,
         "ai_enabled": ai_on,
         "advisor_active": configured and ai_on,
+        "display_title": "Gemini Advisor: Active, advisory only"
+        if configured and ai_on
+        else "Gemini Advisor: Inactive",
+        "display_subtitle": "Cannot trade, change live lock, or apply config directly.",
         "can_place_trades": False,
         "can_mutate_live_lock": False,
         "can_apply_config_directly": False,

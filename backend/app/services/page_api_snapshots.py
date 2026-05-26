@@ -96,6 +96,10 @@ def export_all_page_snapshots(session: Session) -> dict[str, Any]:
             session,
             page_route="/portfolio",
             endpoints=[
+                ("/api/portfolio/reconciliation", lambda s: __import__(
+                    "app.services.portfolio_reconciliation_service",
+                    fromlist=["portfolio_reconciliation"],
+                ).portfolio_reconciliation(s, cfg)),
                 ("/api/push-pull/paper-order-proof", lambda s: PaperOrderProofService(s, cfg).summary()),
             ],
         ),
@@ -110,7 +114,12 @@ def export_all_page_snapshots(session: Session) -> dict[str, Any]:
         "page_activity.json": _snap(
             session,
             page_route="/activity",
-            endpoints=[("/api/activity/feed", lambda s: activity_feed(s, 50))],
+            endpoints=[
+                ("/api/activity/feed", lambda s: activity_feed(s, 50)),
+                ("/api/activity/latest-tick-card", lambda s: __import__(
+                    "app.services.activity_feed_service", fromlist=["latest_tick_card"]
+                ).latest_tick_card(s)),
+            ],
         ),
         "page_ai_manager.json": _snap(
             session,
@@ -118,6 +127,12 @@ def export_all_page_snapshots(session: Session) -> dict[str, Any]:
             endpoints=[
                 ("/api/ai-manager/status", lambda s: ai.status()),
                 ("/api/ai-manager/lessons", lambda s: ai.lessons(20)),
+                ("/api/sentiment/status", lambda s: __import__(
+                    "app.services.sentiment_status_service", fromlist=["sentiment_status"]
+                ).sentiment_status(s, cfg)),
+                ("/api/ai-advisor/status", lambda s: __import__(
+                    "app.services.sentiment_status_service", fromlist=["ai_advisor_status"]
+                ).ai_advisor_status(s, cfg)),
             ],
         ),
         "page_hive_mind.json": _snap(

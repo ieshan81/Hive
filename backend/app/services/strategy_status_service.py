@@ -10,7 +10,6 @@ from sqlmodel import Session, select
 from app.database import StrategyRegistry
 from app.services.config_manager import ConfigManager
 from app.services.push_pull_engine_service import PushPullEngineService
-from app.services.push_pull_scan_service import PushPullScanService
 from app.services.session_engine import SessionEngine
 
 
@@ -63,10 +62,13 @@ def strategy_status(session: Session, config: Optional[dict] = None) -> dict[str
             "Stale quote exit",
             "Spread blowout exit",
         ],
+        "live_scoring_model": "score_push_pull_setup",
+        "scoring_on_live_path": True,
         "candle_logic": {
             "operator_signals_endpoint": "/api/push-pull/signals",
             "technical_analysis": "TechnicalCandleAnalysisService (RSI, patterns, push/pull labels)",
-            "trading_cage_scorer": "score_push_pull_setup exists but not on live path — CryptoPushPullStrategy used instead",
+            "trading_cage_scorer": "score_push_pull_setup — primary live scan ranking model",
+            "legacy_signal_generator": "CryptoPushPullStrategy.evaluate — validator layer after score rank",
         },
         "ai_influence": "Advisory only via Gemini fund manager reviews — does not auto-trade",
         "sentiment_influence": False,
@@ -74,23 +76,21 @@ def strategy_status(session: Session, config: Optional[dict] = None) -> dict[str
 
 
 def candidate_rankings(session: Session, config: Optional[dict] = None) -> dict[str, Any]:
-    cfg = config or ConfigManager(session).get_current()
-    scan = PushPullScanService(session, cfg)
-    from app.services.universe_builder import build_merged_universe
+    from app.services.push_pull_scoring_service import score_active_universe
 
-    universe = build_merged_universe(session, cfg, limit=40, lightweight=True)
-    active = [u for u in universe if u.get("status") == "Active"]
-    blocked = sorted(
-        [u for u in universe if u.get("status") == "Blocked"],
-        key=lambda x: (0 if x.get("asset_type") == "Crypto" else 1, x.get("symbol", "")),
-    )
+    cfg = config or ConfigManager(session).get_current()
+    scored = score_active_universe(session, cfg)
+    ranked = scored.get("scores") or []
     return {
         "status": "ok",
         "generated_at_utc": datetime.utcnow().isoformat() + "Z",
-        "top_active_candidates": active[:10],
-        "top_blocked": blocked[:10],
-        "active_count": len(active),
-        "blocked_count": len(blocked),
+        "scoring_model": scored.get("scoring_model"),
+        "strategy_version": scored.get("strategy_version"),
+        "top_ranked": ranked[:10],
+        "selected_candidate": scored.get("selected_candidate"),
+        "rejected_candidates": scored.get("rejected_candidates", [])[:10],
+        "active_count": len(ranked),
+        "no_trade_reason_breakdown": scored.get("no_trade_reason_breakdown"),
     }
 
 

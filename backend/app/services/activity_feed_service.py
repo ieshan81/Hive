@@ -118,11 +118,75 @@ def activity_feed(session: Session, limit: int = 80) -> dict[str, Any]:
         )
 
     events.sort(key=lambda e: e.get("at") or "", reverse=True)
+    tick_card = latest_tick_card(session)
     return {
         "status": "ok",
         "reset_epoch": epoch,
         "events": events[:limit],
         "count": len(events[:limit]),
+        "latest_tick_card": tick_card,
+    }
+
+
+def latest_tick_card(session: Session) -> dict[str, Any]:
+    """Structured latest tick narrative for Activity UI."""
+    from app.services.config_manager import ConfigManager
+    from app.services.capital_allocator import CapitalAllocatorService
+    from app.services.exit_monitor_service import exit_monitor_status
+    from app.services.push_pull_engine_service import PushPullEngineService
+    from app.services.sentiment_status_service import ai_advisor_status, sentiment_status
+
+    cfg = ConfigManager(session).get_current()
+    tick = PushPullEngineService(session, cfg).latest_tick()
+    sentiment = sentiment_status(session, cfg)
+    advisor = ai_advisor_status(session, cfg)
+    allocator = CapitalAllocatorService(session, cfg).status_summary()
+    exit_mon = exit_monitor_status(session, cfg)
+
+    top = tick.get("top_candidate") or tick.get("selected_candidate") or {}
+    approved = int(tick.get("approved_count") or 0) > 0
+    orders = int(tick.get("orders_created") or tick.get("order_count") or 0) > 0
+
+    why = "Paper order submitted"
+    if orders:
+        why = "Approved and submitted to paper broker"
+    elif approved:
+        why = "Entry approved — awaiting broker fill"
+    elif top.get("no_trade_reason"):
+        why = f"Skipped — {str(top.get('no_trade_reason')).replace('_', ' ')}"
+    elif tick.get("plain"):
+        why = str(tick.get("plain"))[:200]
+
+    return {
+        "status": "ok",
+        "tick_started": tick.get("tick_at"),
+        "symbols_scanned": tick.get("symbols_scanned_count"),
+        "candidates_ranked": len(tick.get("push_pull_scores") or []),
+        "top_candidate": {
+            "symbol": top.get("symbol"),
+            "score": top.get("trade_quality_score"),
+            "push_score": top.get("push_score"),
+            "edge_after_cost_bps": top.get("edge_after_cost_bps"),
+        },
+        "strategy_used": "Crypto Push-Pull Baseline",
+        "strategy_version": tick.get("strategy_version"),
+        "scoring_model": tick.get("scoring_model") or "score_push_pull_setup",
+        "score": top.get("trade_quality_score"),
+        "why": why,
+        "allocator_result": allocator.get("plain") or allocator.get("status"),
+        "validator_result": tick.get("result"),
+        "sentiment_status": sentiment.get("display_title"),
+        "gemini_advisor_status": advisor.get("display_title"),
+        "broker_result": "Order placed" if orders else ("No order" if not approved else "Pending"),
+        "exit_monitor_result": exit_mon.get("plain_summary") or exit_mon.get("status"),
+        "memory_created": None,
+        "pl_impact": None,
+        "technical": {
+            "reason_breakdown": tick.get("reason_breakdown"),
+            "no_trade_reason": top.get("no_trade_reason"),
+            "rejected_candidates": tick.get("rejected_candidates"),
+            "threshold_values": tick.get("threshold_values"),
+        },
     }
 
 

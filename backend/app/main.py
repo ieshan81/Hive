@@ -33,6 +33,7 @@ from app.routers import (
     paper_learning,
     settings_brain,
     strategy_proposals,
+    strategy,
     strategy_registry,
     system_meta,
     control_center,
@@ -84,6 +85,7 @@ app.include_router(backtesting.router)
 app.include_router(trading_cage.router)
 app.include_router(account_eligibility.router)
 app.include_router(strategy_proposals.router)
+app.include_router(strategy.router)
 app.include_router(live_promotion.router)
 app.include_router(system_meta.router)
 app.include_router(admin.router)

@@ -37,5 +37,7 @@ def run_push_pull_backtest(
         **body,
         "strategy_id": body.get("strategy_id", "crypto_push_pull_baseline"),
         "symbols": body.get("symbols", ["BTC/USD", "ETH/USD"]),
+        "timeframe": body.get("timeframe", "5Min"),
+        "lookback_days": body.get("lookback_days", 90),
     }
     return ResearchLabService(session).run_backtest(payload)

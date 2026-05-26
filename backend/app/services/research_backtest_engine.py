@@ -16,6 +16,32 @@ from app.services.historical_data_service import HistoricalDataService
 from app.services.research_cost_model import apply_trade_return, round_trip_cost_pct
 
 
+from app.services.research_performance import evaluate_metrics
+
+
+def _backtest_result_label(metrics: dict, config: dict) -> str:
+    ev = evaluate_metrics(metrics, config)
+    if ev.get("reject"):
+        trades = int(metrics.get("num_trades") or 0)
+        if trades == 0:
+            return "reject"
+        pf = metrics.get("profit_factor")
+        exp = metrics.get("expectancy")
+        if exp is not None and float(exp) < 0:
+            return "weak"
+        if pf is not None and float(pf) < 1.0:
+            return "weak"
+        return "reject"
+    trades = int(metrics.get("num_trades") or 0)
+    low = int((config.get("research") or {}).get("low_sample_trade_threshold", 10))
+    if trades < low:
+        return "keep_testing"
+    pf = metrics.get("profit_factor")
+    if pf is not None and float(pf) >= 1.1:
+        return "promising"
+    return "keep_testing"
+
+
 def _confidence_label(num_trades: int, research_cfg: dict) -> str:
     low = int(research_cfg.get("low_sample_trade_threshold", 10))
     min_total = int(research_cfg.get("min_total_trades", 20))
@@ -165,6 +191,7 @@ def _run_crypto_push_pull_momentum(bars, symbol, params, config):
 
 STRATEGY_RUNNERS = {
     "crypto_push_pull": _run_crypto_push_pull,
+    "crypto_push_pull_baseline": _run_crypto_push_pull_momentum,
     "crypto_push_pull_momentum": _run_crypto_push_pull_momentum,
     "mean_reversion": _run_mean_reversion,
     "crypto_mean_reversion": _run_mean_reversion,
@@ -240,8 +267,11 @@ class ResearchBacktestEngine:
             return {"status": "error", "run_id": run_id}
 
         min_bars = int(self.research_cfg.get("min_bars_for_backtest", 50))
+        alpaca_tf = timeframe if timeframe in ("1Hour", "5Min", "15Min", "1Day") else "1Hour"
         for sym in symbols:
-            bars, meta = self.hist.get_bars(sym, min_rows=min_bars, lookback_days=lb)
+            bars, meta = self.hist.get_bars(
+                sym, timeframe=alpaca_tf, min_rows=min_bars, lookback_days=lb
+            )
             if meta.get("error"):
                 all_warnings.append(f"{sym}: {meta['error']}")
                 continue
@@ -277,6 +307,9 @@ class ResearchBacktestEngine:
             "cost_model": cost,
             "parameters": params,
             "date_coverage": date_meta,
+            "timeframe": alpaca_tf,
+            "bars_count": sum(len(self.hist.get_bars(s, timeframe=alpaca_tf, min_rows=1)[0]) for s in symbols),
+            "result_label": _backtest_result_label(stats, self.config),
         }
         conf = _confidence_label(stats["num_trades"], self.research_cfg)
         row = self._save_run(
@@ -382,6 +415,13 @@ class ResearchBacktestEngine:
             "metrics": row.metrics_json,
             "cost_model": row.cost_model_json,
             "confidence_label": row.confidence_label,
+            "result_label": (row.metrics_json or {}).get("result_label"),
+            "win_rate": (row.metrics_json or {}).get("win_rate"),
+            "expectancy": (row.metrics_json or {}).get("expectancy"),
+            "profit_factor": (row.metrics_json or {}).get("profit_factor"),
+            "max_drawdown": (row.metrics_json or {}).get("max_drawdown"),
+            "timeframe": (row.metrics_json or {}).get("timeframe"),
+            "bars_count": (row.metrics_json or {}).get("bars_count"),
             "warnings": row.warnings,
             "estimated_spread": row.estimated_spread,
             "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
