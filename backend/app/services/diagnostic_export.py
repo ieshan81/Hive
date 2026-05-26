@@ -1435,7 +1435,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             "autonomous_backtesting_status.json",
             lambda: __import__(
                 "app.services.research_lab_service", fromlist=["ResearchLabService"]
-            ).ResearchLabService(session, cfg_brain).status(),
+            ).ResearchLabService(session).status(),
             export_errors,
         ),
         "backtest_runs.json": safe_export_section(

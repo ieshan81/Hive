@@ -253,6 +253,11 @@ def run_preflight(
 
     notional = notional_from_candidate(cand, quote)
     min_notional = float(cfg_get(config, "min_order_notional_usd", 1.0))
+    if cand.symbol and "/" in cand.symbol:
+        min_notional = max(
+            min_notional,
+            float(cfg_get(config, "execution.alpaca_crypto_min_notional_usd", 10.0)),
+        )
     evidence["notional_usd"] = round(notional, 4)
     evidence["min_order_notional_usd"] = min_notional
 

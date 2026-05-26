@@ -81,7 +81,9 @@ def classify_reject_reason(parsed: dict[str, Any]) -> str:
         msg = f"{msg} {body.get('message', '')}".lower()
     if "insufficient" in msg and ("balance" in msg or "buying" in msg or "non_marginable" in msg):
         return "BROKER_INSUFFICIENT_BALANCE"
-    if "notional" in msg or "minimum" in msg or "min order" in msg:
+    if "notional" in msg or "minimum" in msg or "min order" in msg or "minimal amount of order" in msg:
+        return "BROKER_REJECTED_MIN_NOTIONAL"
+    if "cost basis" in msg:
         return "BROKER_REJECTED_MIN_NOTIONAL"
     if "qty" in msg and ("increment" in msg or "precision" in msg or "subtick" in msg):
         return "BROKER_QTY_PRECISION"

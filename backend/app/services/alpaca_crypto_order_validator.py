@@ -133,6 +133,9 @@ class AlpacaCryptoOrderValidator:
         if norm_qty is not None and min_sz and norm_qty < min_sz:
             reasons.append(f"qty {norm_qty} below min_order_size {min_sz}")
 
+        alpaca_min_notional = float(
+            cfg_get(self.config, "execution.alpaca_crypto_min_notional_usd", 10.0)
+        )
         max_notional = float(
             cfg_get(self.config, "execution.crypto_max_notional_usd", MAX_CRYPTO_NOTIONAL_DEFAULT)
         )
@@ -160,6 +163,11 @@ class AlpacaCryptoOrderValidator:
                     f"non_marginable_buying_power {buying:.2f} < required {need:.2f} (notional + buffer)"
                 )
 
+        if est_notional and est_notional < alpaca_min_notional:
+            reasons.append(
+                f"notional ${est_notional:.2f} below Alpaca crypto minimum ${alpaca_min_notional:.2f} "
+                f"(cost basis must be >= minimal amount of order)"
+            )
         if est_notional and est_notional > max_notional:
             reasons.append(f"notional {est_notional:.2f} exceeds max {max_notional:.2f}")
 

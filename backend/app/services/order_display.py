@@ -72,8 +72,10 @@ def reject_reason_plain(reason: str | None, *, status: str | None = None) -> str
             "Price quote was too old at submit time. Bot refreshed the quote; "
             "if still stale, it skipped instead of sending a bad order."
         )
-    if "min_notional" in low or "notional" in low:
-        return "Order size was below the broker minimum — rejected, not filled."
+    if "min_notional" in low or "notional" in low or r == "BROKER_REJECTED_MIN_NOTIONAL":
+        return "Order notional below Alpaca minimum ($10 for crypto) — blocked or rejected."
+    if "cost basis" in low or "minimal amount of order" in low:
+        return "Order cost basis below Alpaca minimum ($10) — increase paper notional."
     if "insufficient" in low:
         return "Insufficient buying power or quantity — rejected, not filled."
     if "available" in low and "qty" in low:
@@ -105,6 +107,8 @@ def _broker_detail_from_gates(gates_failed: dict) -> dict[str, Any]:
     if not isinstance(gates_failed, dict):
         return {}
     body = gates_failed.get("broker_error_body") or gates_failed.get("response_body")
+    alpaca_code = gates_failed.get("alpaca_code")
+    alpaca_message = gates_failed.get("alpaca_message") or gates_failed.get("broker_message")
     if body is None and gates_failed.get("broker"):
         import json
 
@@ -116,10 +120,13 @@ def _broker_detail_from_gates(gates_failed: dict) -> dict[str, Any]:
                 body = {"raw": raw}
         elif isinstance(raw, dict):
             body = raw
+    if isinstance(body, dict):
+        alpaca_code = alpaca_code or body.get("code")
+        alpaca_message = alpaca_message or body.get("message")
     return {
         "http_status": gates_failed.get("http_status"),
-        "alpaca_code": gates_failed.get("alpaca_code"),
-        "alpaca_message": gates_failed.get("alpaca_message") or gates_failed.get("broker_message"),
+        "alpaca_code": alpaca_code,
+        "alpaca_message": alpaca_message,
         "broker_error_body": body,
         "request_payload": gates_failed.get("request_payload"),
         "submitted_to_broker": gates_failed.get("submitted_to_broker"),

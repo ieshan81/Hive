@@ -138,8 +138,13 @@ class TrainingExecutionService:
         if mid <= 0:
             return {"status": "error", "message": "no_quote"}
 
-        notional = float(dec.approved_notional or self.pl.cfg.get("default_experiment_notional_usd", 10))
-        qty = round(notional / mid, 6)
+        from app.services.engine_config import cfg_get
+
+        alpaca_min = float(cfg_get(self.config, "execution.alpaca_crypto_min_notional_usd", 10.0))
+        buffer = float(cfg_get(self.config, "execution.alpaca_min_notional_buffer_usd", 0.5))
+        notional = float(dec.approved_notional or self.pl.cfg.get("default_experiment_notional_usd", 12))
+        notional = max(notional, alpaca_min + buffer)
+        qty = round(notional / mid, 8)
         tier_info = self.tiers.classify(dec.symbol)
         tier = getattr(tier_info, "tier", str(tier_info))
         cpp = self.config.get("crypto_push_pull") or {}

@@ -76,9 +76,9 @@ class ReportsHubService:
             "events": [
                 {
                     "event_type": r.event_type,
-                    "message": r.message,
+                    "message": getattr(r, "message", None) or (r.details or {}).get("message") or r.event_type,
                     "created_at": r.created_at.isoformat() + "Z" if r.created_at else None,
-                    "cycle_run_id": r.cycle_run_id,
+                    "cycle_run_id": (r.details or {}).get("cycle_run_id") if isinstance(r.details, dict) else None,
                 }
                 for r in rows
             ],
