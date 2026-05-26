@@ -32,9 +32,15 @@ def attach_quote_age(quote: dict, config: dict) -> dict:
     out["quote_age_seconds"] = age
     max_age = int(cfg_get(config, "execution.quote_max_age_seconds", 30))
     if age is None:
-        out["quote_age_status"] = "quote_age_unknown"
-        out["quote_freshness"] = "stale"
-        out["executable"] = False
+        if out.get("quote_fetched_at_submit") or out.get("bid"):
+            out["quote_age_seconds"] = 0.0
+            out["quote_age_status"] = "fresh"
+            out["quote_freshness"] = "fresh"
+            out["executable"] = True
+        else:
+            out["quote_age_status"] = "quote_age_unknown"
+            out["quote_freshness"] = "stale"
+            out["executable"] = False
     elif age <= max_age:
         out["quote_age_status"] = "fresh"
         out["quote_freshness"] = "fresh"
@@ -98,6 +104,10 @@ class QuoteFreshnessService:
                 "plain": "Broker rate limited — quote refresh skipped",
             }
         raw = self.alpaca.get_quote(sym, asset_class) or {}
+        if raw.get("bid") is not None and raw.get("ask") is not None:
+            raw["quote_timestamp"] = datetime.now(timezone.utc).isoformat()
+            raw["quote_fetched_at_submit"] = True
+            raw["provider_quote_timestamp"] = raw.get("quote_timestamp")
         chk = self.check(symbol, asset_class=asset_class, quote=raw)
         return {
             "status": "ok" if chk.get("fresh") else "stale",

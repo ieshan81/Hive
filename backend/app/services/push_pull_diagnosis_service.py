@@ -37,9 +37,12 @@ class PushPullDiagnosisService:
         proof = PaperOrderProofService(self.session, self.config).summary()
         sched = AutonomousPaperScheduler(self.session, self.config).status()
 
-        fresh_report = MarketDataRefreshService(self.session, self.config).freshness_report(
-            asset_type="crypto", fast=True
-        )
+        try:
+            fresh_report = MarketDataRefreshService(self.session, self.config).freshness_report(
+                asset_type="crypto"
+            )
+        except Exception as exc:
+            fresh_report = {"error": str(exc)[:200]}
 
         lines = [
             f"Universe: {uni.get('total_symbols', 0)} symbols ({fresh_bars} fresh bars, {stale_bars} stale bars).",
