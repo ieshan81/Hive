@@ -76,6 +76,13 @@ def reject_reason_plain(reason: str | None, *, status: str | None = None) -> str
         return "Order notional below Alpaca minimum ($10 for crypto) — blocked or rejected."
     if "cost basis" in low or "minimal amount of order" in low:
         return "Order cost basis below Alpaca minimum ($10) — increase paper notional."
+    if r == "BROKER_LIMIT_PRICE_PRECISION" or "maximum precision" in low or "decimal places" in low:
+        return "Broker rejected: limit price had too many decimal places."
+    if r == "open_position_blocks_duplicate_entry" or "duplicate" in low and "position" in low:
+        sym = ""
+        return "Skipped because an open position already exists for this symbol."
+    if "paper_trading_paused_by_env" in low or r == "paper_trading_paused_by_env":
+        return "Paper trading env pause — clear Railway env pause flags to resume."
     if "insufficient" in low:
         return "Insufficient buying power or quantity — rejected, not filled."
     if "available" in low and "qty" in low:

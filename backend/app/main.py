@@ -35,6 +35,7 @@ from app.routers import (
     strategy_proposals,
     strategy_registry,
     system_meta,
+    control_center,
 )
 from app.services.database_bootstrap_service import repair_database_bootstrap
 from app.services.startup import bootstrap_database
@@ -84,6 +85,7 @@ app.include_router(strategy_proposals.router)
 app.include_router(live_promotion.router)
 app.include_router(system_meta.router)
 app.include_router(admin.router)
+app.include_router(control_center.router)
 
 
 @app.on_event("startup")

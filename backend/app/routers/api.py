@@ -1096,11 +1096,12 @@ def get_diagnostic_bundle(session: Session = Depends(get_session)):
 
 @router.get("/diagnostic-bundle/download")
 def download_diagnostic_bundle(session: Session = Depends(get_session)):
-    from app.services.diagnostic_export import bundle_as_zip_bytes_safe
+    from app.services.diagnostic_export import bundle_as_zip_bytes_safe, diagnostic_bundle_filename
 
     data = bundle_as_zip_bytes_safe(session)
+    filename = diagnostic_bundle_filename(session)
     return Response(
         content=data,
         media_type="application/zip",
-        headers={"Content-Disposition": "attachment; filename=hive-diagnostic-bundle.zip"},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

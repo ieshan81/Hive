@@ -12,6 +12,7 @@ from sqlmodel import Session, select
 from app.database import ExecutionLog, OrderRecord
 from app.services.alpaca_adapter import AlpacaAdapter, normalize_crypto_symbol
 from app.services.alpaca_crypto_assets import fetch_crypto_assets, get_crypto_asset
+from app.services.alpaca_precision import normalize_order_fields
 from app.services.engine_config import cfg_get
 
 
@@ -118,17 +119,19 @@ class AlpacaCryptoOrderValidator:
         norm_notional = notional
         norm_limit = limit_price
 
-        if norm_qty is not None and inc:
-            rounded = _round_down(float(norm_qty), inc)
-            if rounded != norm_qty:
-                adj["qty_rounded_down"] = {"from": norm_qty, "to": rounded, "increment": inc}
-            norm_qty = rounded
+        if norm_qty is not None:
+            px_meta = normalize_order_fields(qty=float(norm_qty), min_trade_increment=inc)
+            norm_qty = px_meta.get("normalized_qty", norm_qty)
+            adj.update({k: v for k, v in px_meta.items() if k != "normalized_qty"})
+            if px_meta.get("raw_qty") != norm_qty:
+                adj["qty_quantized"] = px_meta
 
-        if norm_limit is not None and price_inc:
-            rounded_px = _round_price(float(norm_limit), price_inc)
-            if rounded_px != norm_limit:
-                adj["limit_price_rounded"] = {"from": norm_limit, "to": rounded_px, "increment": price_inc}
-            norm_limit = rounded_px
+        if norm_limit is not None:
+            lp_meta = normalize_order_fields(limit_price=float(norm_limit), price_increment=price_inc)
+            norm_limit = lp_meta.get("normalized_limit_price", norm_limit)
+            adj.update({k: v for k, v in lp_meta.items() if k != "normalized_limit_price"})
+            if lp_meta.get("raw_limit_price") != norm_limit:
+                adj["limit_price_quantized"] = lp_meta
 
         if norm_qty is not None and min_sz and norm_qty < min_sz:
             reasons.append(f"qty {norm_qty} below min_order_size {min_sz}")

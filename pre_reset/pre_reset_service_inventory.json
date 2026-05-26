@@ -1,0 +1,32 @@
+{
+  "generated_at_utc": "2026-05-25T00:00:00Z",
+  "note": "Railway CLI unauthorized — inventory from known project metadata only; no secret values",
+  "project": {
+    "name": "intelligent-inspiration",
+    "id": "d7bd3bb9-de80-4c77-bacf-d0232dccf517",
+    "environment": "production",
+    "environment_id": "65eae23f-7329-4836-92fb-1d86743c4f03"
+  },
+  "services": [
+    {
+      "name": "Hive backend",
+      "id": "8e18ffff-492a-4eeb-aefa-8572376d0ab7",
+      "url": "https://hive-production-7343.up.railway.app"
+    },
+    {
+      "name": "frontend",
+      "id": "414170d6-f450-4bfc-b6e3-0cc27812cc27",
+      "url": "https://melodious-happiness-production-0f5b.up.railway.app"
+    },
+    {
+      "name": "Postgres",
+      "id": "ddc0c44c-cd42-4f3d-a902-8ec6d6a1e52a"
+    },
+    {
+      "name": "ticker",
+      "id": "81c75cdb-aa70-4729-95fb-d1d4cf55a23f"
+    }
+  ],
+  "railway_cli_status": "unauthorized",
+  "railway_mcp_status": "not_connected"
+}

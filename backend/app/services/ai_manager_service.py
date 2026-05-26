@@ -22,10 +22,13 @@ class AIManagerService:
     def status(self) -> dict[str, Any]:
         conf = self.confidence.summary()
         lessons = self.lessons(limit=5)
+        from app.services.memory_policy_service import MemoryPolicyService
+
+        memory = MemoryPolicyService(self.session).status()
         nuke = get_latest_nuke_epoch(self.session)
-        count = lessons.get("count", 0)
+        count = memory.get("counts", {}).get("meaningful_memory_count", 0)
         if nuke and count == 0:
-            headline = "Fresh brain. No memories yet. Paper learning available."
+            headline = "Fresh brain. No validated memories yet. Paper learning available."
         else:
             headline = "What the bot learned from paper push-pull trading"
         return {
@@ -33,6 +36,8 @@ class AIManagerService:
             "headline": headline,
             "fresh_brain": bool(nuke and count == 0),
             "nuke_status": nuke_status_export(self.session),
+            "memory_policy": memory,
+            "memory_categories": memory.get("counts"),
             "confidence_overall": conf.get("overall"),
             "confidence_label": conf.get("overall_label"),
             "can_unlock_live": False,
@@ -47,10 +52,10 @@ class AIManagerService:
         }
 
     def memories(self, limit: int = 40) -> dict[str, Any]:
-        rows = list(
-            self.session.exec(select(LessonNode).order_by(LessonNode.created_at.desc()).limit(limit * 3)).all()
-        )
-        rows = filter_lessons_post_nuke(self.session, rows)[:limit]
+        from app.services.memory_policy_service import MemoryPolicyService
+
+        policy = MemoryPolicyService(self.session)
+        rows = policy.hive_mind_memories(limit)
         nuke = get_latest_nuke_epoch(self.session)
         return {
             "status": "ok",
@@ -58,19 +63,19 @@ class AIManagerService:
             "nuke_epoch": nuke,
             "memories": [
                 {
-                    "id": r.id,
-                    "title": r.title,
-                    "human_summary": _human_summary(r),
-                    "memory_type": r.memory_type,
-                    "category": r.category,
-                    "symbol": r.symbol,
-                    "strategy_name": r.strategy_name,
-                    "severity": r.severity,
-                    "created_at": r.created_at.isoformat() + "Z" if r.created_at else None,
+                    "id": r["id"],
+                    "title": r["title"],
+                    "human_summary": r.get("summary") or r.get("title"),
+                    "memory_type": r.get("memory_type"),
+                    "symbol": r.get("symbol"),
+                    "strategy_name": r.get("strategy"),
+                    "occurrence_count": r.get("occurrence_count", 1),
+                    "last_seen_at": r.get("last_seen_at"),
                 }
                 for r in rows
             ],
             "count": len(rows),
+            "meaningful_memory_count": policy.status().get("counts", {}).get("meaningful_memory_count"),
         }
 
     def lessons(self, limit: int = 30) -> dict[str, Any]:

@@ -1309,7 +1309,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
 
     brain_exports = strategy_registry_exports if "hive_brain_graph.json" in strategy_registry_exports else {}
 
-    return {
+    bundle = {
         "activity.json": activity_data,
         "trades.json": [_serialize_row(r) for r in session.exec(select(TradeRecord)).all()],
         "orders.json": [_serialize_row(r) for r in session.exec(select(OrderRecord)).all()],
@@ -1615,6 +1615,114 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         "research_bundle": research_bundle,
         **strategy_registry_exports,
     }
+    return finalize_diagnostic_bundle(session, bundle)
+
+
+BUNDLE_FILE_GROUPS: dict[str, list[str]] = {
+    "Account / Broker": [
+        "alpaca_account_snapshot.json",
+        "alpaca_non_marginable_buying_power.json",
+        "alpaca_positions_truth.json",
+        "alpaca_orders_truth.json",
+        "broker_sync_status.json",
+        "performance_summary.json",
+        "equity_curve.json",
+    ],
+    "Universe / Market Data": ["universe.json", "bar_freshness.json", "quote_freshness.json"],
+    "Push-Pull": [
+        "push_pull_latest_tick.json",
+        "push_pull_scores.json",
+        "push_pull_decisions.json",
+        "no_trade_reason_breakdown.json",
+    ],
+    "Orders / Execution": ["latest_order_attempt.json", "paper_order_proof.json", "execution_cage_decisions.json"],
+    "Portfolio / Performance": ["positions_local.json", "reconciliation_status.json", "trade_history_current_epoch.json"],
+    "Strategy / Backtesting": ["strategy_registry.json", "backtest_runs.json", "backtest_results.json"],
+    "AI / Memory": ["ai_memory.json", "ai_lessons.json", "memory_quality_report.json"],
+    "Activity / Audit": ["activity_feed.json", "reset_epoch.json", "nuke_status.json"],
+    "System / Errors": ["system_health.json", "diagnostic_export_errors.json", "live_lock_status.json"],
+    "Page API Snapshots": [
+        "page_mission_control.json",
+        "page_universe.json",
+        "page_portfolio_execution.json",
+        "page_performance.json",
+        "page_activity.json",
+        "page_ai_manager.json",
+        "page_hive_mind.json",
+        "page_reports.json",
+        "page_control_center.json",
+        "page_push_pull_trader.json",
+    ],
+}
+
+
+def build_bundle_manifest(session: Session, bundle: dict[str, Any]) -> dict[str, Any]:
+    import hashlib
+    import json
+    import os
+
+    from app.services.export_safe import json_safe
+    from app.services.nuke_epoch_service import get_latest_reset_epoch
+
+    epoch = get_latest_reset_epoch(session)
+    meta = bundle.get("bundle_meta.json") if isinstance(bundle.get("bundle_meta.json"), dict) else {}
+    file_names = sorted(k for k in bundle.keys() if k.endswith(".json"))
+    grouped: dict[str, list[str]] = {}
+    for group, patterns in BUNDLE_FILE_GROUPS.items():
+        grouped[group] = [f for f in file_names if f in patterns or any(f.startswith(p.replace(".json", "")) for p in patterns)]
+    digest_src = json.dumps(json_safe({k: bundle[k] for k in file_names}), sort_keys=True, default=str)
+    bundle_hash = hashlib.sha256(digest_src.encode()).hexdigest()[:16]
+    return {
+        "schema_version": 1,
+        "generated_at_utc": datetime.utcnow().isoformat() + "Z",
+        "reset_epoch_id": (epoch or {}).get("reset_epoch_id") or meta.get("reset_epoch_id"),
+        "backend_commit": os.environ.get("RAILWAY_GIT_COMMIT_SHA", meta.get("backend_commit", "dev"))[:12],
+        "frontend_commit": os.environ.get("FRONTEND_GIT_COMMIT_SHA", meta.get("frontend_commit", "unknown"))[:12],
+        "file_count": len(file_names),
+        "grouped_file_list": grouped,
+        "all_files": file_names,
+        "bundle_hash": bundle_hash,
+    }
+
+
+def diagnostic_bundle_filename(session: Session) -> str:
+    from app.services.nuke_epoch_service import get_latest_reset_epoch
+
+    epoch = get_latest_reset_epoch(session)
+    epoch_id = (epoch or {}).get("reset_epoch_id") or "unknown"
+    stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%SZ")
+    return f"caged-hive-diagnostic-{stamp}-reset-{epoch_id}.zip"
+
+
+def finalize_diagnostic_bundle(session: Session, bundle: dict[str, Any]) -> dict[str, Any]:
+    errors = list(bundle.get("diagnostic_export_errors.json") or [])
+    try:
+        from app.services.page_api_snapshots import export_all_page_snapshots
+
+        bundle.update(export_all_page_snapshots(session))
+    except Exception as exc:
+        errors.append(
+            {
+                "section": "page_api_snapshots",
+                "error_type": type(exc).__name__,
+                "message": str(exc)[:500],
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+            }
+        )
+    try:
+        bundle["bundle_manifest.json"] = build_bundle_manifest(session, bundle)
+    except Exception as exc:
+        errors.append(
+            {
+                "section": "bundle_manifest",
+                "error_type": type(exc).__name__,
+                "message": str(exc)[:500],
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+            }
+        )
+    if errors:
+        bundle["diagnostic_export_errors.json"] = errors
+    return bundle
 
 
 def _emergency_bundle(session: Session, errors: list[dict[str, Any]], root_error: Optional[str] = None) -> dict[str, Any]:

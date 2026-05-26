@@ -365,15 +365,33 @@ def execute_nuke_reset(session: Session, operator: str = "operator") -> dict[str
             desired_scheduler = bool(apl.get("scheduler_enabled"))
             lock = live_lock_tripwire_status(config)
 
+            resume: dict[str, Any] = {"skipped": True, "reason": "env_pause_active"}
+            if not env.get("any_env_pause"):
+                from app.services.paper_learning_start_service import start_fresh_paper_learning
+
+                resume = start_fresh_paper_learning(session, operator=f"nuke:{operator}")
+                desired_learning = bool(
+                    (ConfigManager(session).get_current().get("autonomous_paper_learning") or {}).get(
+                        "mode_enabled"
+                    )
+                )
+                desired_scheduler = bool(
+                    (ConfigManager(session).get_current().get("autonomous_paper_learning") or {}).get(
+                        "scheduler_enabled"
+                    )
+                )
+
             if env.get("any_env_pause"):
                 headline = (
                     "Fresh brain. No memories yet. Env pause active — execution blocked until "
                     "Railway env vars cleared."
                 )
+            elif resume.get("status") == "ok":
+                headline = "Fresh brain. No memories yet. Paper learning and scheduler are ON."
             elif desired_learning:
                 headline = "Fresh brain. No memories yet. Paper learning available."
             else:
-                headline = "Fresh brain. No memories yet. Turn on paper learning when ready (not env-paused)."
+                headline = "Fresh brain. No memories yet. Use Start Fresh Paper Learning on Mission Control."
 
             return {
                 "status": "ok",
@@ -396,6 +414,7 @@ def execute_nuke_reset(session: Session, operator: str = "operator") -> dict[str
                 "desired_scheduler_enabled": desired_scheduler,
                 "config_pause_flags_changed": False,
                 "ticker_may_create_post_nuke_memories": desired_learning and not env.get("any_env_pause"),
+                "start_fresh_resume": resume,
                 "live_lock": lock,
                 "live_lock_status": lock.get("live_lock_status"),
                 "live_trading_enabled": lock.get("live_trading_enabled"),

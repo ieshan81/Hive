@@ -53,3 +53,10 @@ def diagnosis(session: Session = Depends(get_session)):
     from app.services.push_pull_diagnosis_service import PushPullDiagnosisService
 
     return PushPullDiagnosisService(session).why_no_order()
+
+
+@router.get("/exit-monitor/status")
+def exit_monitor(session: Session = Depends(get_session)):
+    from app.services.exit_monitor_service import exit_monitor_status
+
+    return exit_monitor_status(session)

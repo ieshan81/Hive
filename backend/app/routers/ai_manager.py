@@ -32,3 +32,10 @@ def strategy_confidence(session: Session = Depends(get_session)):
     from app.services.ai_manager_service import AIManagerService
 
     return AIManagerService(session).strategy_confidence()
+
+
+@router.get("/memory-policy/status")
+def memory_policy_status(session: Session = Depends(get_session)):
+    from app.services.memory_policy_service import MemoryPolicyService
+
+    return MemoryPolicyService(session).status()

@@ -6,7 +6,11 @@ import { GlassPanel } from "@/components/ui/GlassPanel";
 import { apiGet, apiPostOperator } from "@/lib/apiClient";
 import { dispatchHiveNukeComplete } from "@/lib/hiveRefresh";
 
-export function DangerZonePanel() {
+interface DangerZonePanelProps {
+  embedded?: boolean;
+}
+
+export function DangerZonePanel({ embedded = false }: DangerZonePanelProps) {
   const [msg, setMsg] = useState<string | null>(null);
   const [nukeDetail, setNukeDetail] = useState<Record<string, unknown> | null>(null);
   const [busy, setBusy] = useState(false);
@@ -88,14 +92,18 @@ export function DangerZonePanel() {
   ];
 
   return (
-    <section className="max-w-2xl space-y-6">
-      <h1 className="text-xl font-bold text-red-300 flex items-center gap-2">
-        <Skull className="h-6 w-6" />
-        Danger Zone
-      </h1>
-      <p className="text-sm text-slate-400">
-        Destructive actions require operator auth. Neither action enables live trading.
-      </p>
+    <section className={embedded ? "space-y-6" : "max-w-2xl space-y-6"}>
+      {!embedded && (
+        <>
+          <h1 className="text-xl font-bold text-red-300 flex items-center gap-2">
+            <Skull className="h-6 w-6" />
+            Danger Zone
+          </h1>
+          <p className="text-sm text-slate-400">
+            Destructive actions require operator auth. Neither action enables live trading.
+          </p>
+        </>
+      )}
 
       <GlassPanel title="NUKE EVERYTHING">
         <ul className="text-[11px] text-amber-200/90 list-disc pl-4 mb-2 space-y-1">

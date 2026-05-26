@@ -37,6 +37,24 @@ type MissionStatus = {
   operator_action_required?: string;
   show_start_fresh_button?: boolean;
   next_action_plain?: string;
+  account_truth?: {
+    current_paper_equity?: number;
+    starting_equity_reset_epoch?: number;
+    cash?: number;
+    buying_power?: number;
+    non_marginable_buying_power?: number;
+    unrealized_pl?: number;
+    total_pl?: number;
+    today_pl?: number;
+    broker_sync_status?: string;
+  };
+  capital_allocator_detail?: {
+    deployable_capital?: number;
+    cash_reserve?: number;
+    crypto_budget?: number;
+    stock_budget?: number;
+    remaining_allocation?: number;
+  };
 };
 
 export function MissionControlPanel() {
@@ -158,6 +176,41 @@ export function MissionControlPanel() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
+        <GlassPanel title="Account truth (paper)" icon={<Wallet className="h-4 w-4" />}>
+          <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
+            <dt className="text-slate-500">Equity</dt>
+            <dd className="text-white">${data?.account_truth?.current_paper_equity?.toFixed(2) ?? "—"}</dd>
+            <dt className="text-slate-500">Buying power</dt>
+            <dd className="text-white">${data?.account_truth?.buying_power?.toFixed(2) ?? "—"}</dd>
+            <dt className="text-slate-500">Cash</dt>
+            <dd className="text-white">${data?.account_truth?.cash?.toFixed(2) ?? "—"}</dd>
+            <dt className="text-slate-500">Open P/L</dt>
+            <dd className="text-white">${data?.account_truth?.unrealized_pl?.toFixed(2) ?? "—"}</dd>
+            <dt className="text-slate-500">Total P/L</dt>
+            <dd className="text-white">${data?.account_truth?.total_pl?.toFixed(2) ?? "—"}</dd>
+            <dt className="text-slate-500">Today P/L</dt>
+            <dd className="text-white">${data?.account_truth?.today_pl?.toFixed(2) ?? "—"}</dd>
+          </dl>
+          <p className="text-[10px] text-slate-500 mt-2">
+            Broker sync: {data?.account_truth?.broker_sync_status ?? "unknown"}
+          </p>
+        </GlassPanel>
+
+        <GlassPanel title="Capital allocator" icon={<Wallet className="h-4 w-4" />}>
+          <p className="text-sm text-white capitalize">{data?.capital_allocator?.status ?? "—"}</p>
+          <p className="text-[11px] text-slate-500 mt-1">{data?.capital_allocator?.headline}</p>
+          <dl className="grid grid-cols-2 gap-1 text-[11px] mt-2">
+            <dt className="text-slate-500">Deployable</dt>
+            <dd className="text-slate-200">${data?.capital_allocator_detail?.deployable_capital ?? "—"}</dd>
+            <dt className="text-slate-500">Cash reserve</dt>
+            <dd className="text-slate-200">${data?.capital_allocator_detail?.cash_reserve ?? "—"}</dd>
+            <dt className="text-slate-500">Crypto budget</dt>
+            <dd className="text-slate-200">${data?.capital_allocator_detail?.crypto_budget ?? "—"}</dd>
+            <dt className="text-slate-500">Stock budget</dt>
+            <dd className="text-slate-200">${data?.capital_allocator_detail?.stock_budget ?? "—"}</dd>
+          </dl>
+        </GlassPanel>
+
         <GlassPanel title="Push-Pull Engine" icon={<Zap className="h-4 w-4" />}>
           <p className="text-sm text-white">{data?.push_pull_engine?.market_mode_label}</p>
           {data?.push_pull_engine?.analysis_only && (
@@ -180,11 +233,6 @@ export function MissionControlPanel() {
           {data?.last_tick_summary?.tick_at && (
             <p className="text-[10px] text-slate-500 mt-1">{data.last_tick_summary.tick_at}</p>
           )}
-        </GlassPanel>
-
-        <GlassPanel title="Capital allocator" icon={<Wallet className="h-4 w-4" />}>
-          <p className="text-sm text-white capitalize">{data?.capital_allocator?.status ?? "—"}</p>
-          <p className="text-[11px] text-slate-500 mt-1">{data?.capital_allocator?.headline}</p>
         </GlassPanel>
       </div>
 

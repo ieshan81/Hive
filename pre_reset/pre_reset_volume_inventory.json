@@ -1,0 +1,8 @@
+{
+  "generated_at_utc": "2026-05-25T00:00:00Z",
+  "note": "Volume delete/recreate requires Railway login — not performed in this session",
+  "volumes_nuked": false,
+  "volumes_recreated": false,
+  "recommended_reset_path": "POST /api/danger-zone/nuke-everything with operator token (app-level reset, preserves schema)",
+  "postgres_service_id": "ddc0c44c-cd42-4f3d-a902-8ec6d6a1e52a"
+}

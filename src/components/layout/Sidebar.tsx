@@ -28,11 +28,10 @@ const navItems = [
   { href: "/performance", label: "Performance", icon: BarChart3 },
   { href: "/activity", label: "Activity", icon: Activity },
   { href: "/reports", label: "Reports", icon: FileText },
-  { href: "/settings", label: "Settings", icon: Settings },
-  { href: "/danger-zone", label: "Danger Zone", icon: Shield },
+  { href: "/control-center", label: "Control Center", icon: Settings },
 ];
 
-const legacyHidden = false;
+const legacyHidden = true;
 const legacyNav = legacyHidden
   ? []
   : [

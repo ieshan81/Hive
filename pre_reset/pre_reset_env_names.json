@@ -1,0 +1,17 @@
+{
+  "generated_at_utc": "2026-05-25T00:00:00Z",
+  "note": "Env var NAMES only — values not exported",
+  "expected_backend_env_names": [
+    "DATABASE_URL",
+    "ALPACA_API_KEY",
+    "ALPACA_SECRET_KEY",
+    "ALPACA_BASE_URL",
+    "GEMINI_API_KEY",
+    "OPERATOR_SECRET",
+    "PAPER_TRADING_PAUSED",
+    "LIVE_TRADING_ENABLED",
+    "FRONTEND_GIT_COMMIT_SHA",
+    "RAILWAY_GIT_COMMIT_SHA"
+  ],
+  "live_trading_env_must_remain": "false_or_absent"
+}

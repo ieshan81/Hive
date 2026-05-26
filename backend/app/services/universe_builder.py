@@ -39,15 +39,24 @@ def build_merged_universe(
         "LTC/USD",
         "UNI/USD",
     ]
-    if lightweight:
-        for sym in priority_crypto:
-            by_sym[sym] = {
-                "symbol": sym,
-                "asset_type": "Crypto",
-                "source": "priority_universe",
-                "broker_supported": True,
-                "push_pull_enabled": True,
-            }
+    starter_stocks = ["NVDA", "AAPL", "MSFT", "TSLA", "AMD", "META", "AMZN", "GOOGL", "SPY", "QQQ"]
+    for sym in priority_crypto:
+        by_sym[sym] = {
+            "symbol": sym,
+            "asset_type": "Crypto",
+            "source": "priority_universe",
+            "broker_supported": True,
+            "push_pull_enabled": True,
+        }
+    for sym in starter_stocks:
+        by_sym[sym] = {
+            "symbol": sym,
+            "asset_type": "Stock",
+            "source": "curated_starter_universe",
+            "broker_supported": True,
+            "push_pull_enabled": sess.stock_trading_allowed,
+            "quote_currency": "USD",
+        }
 
     def upsert(row: dict[str, Any]) -> None:
         sym = row.get("symbol")
