@@ -105,9 +105,9 @@ class QuoteFreshnessService:
             }
         raw = self.alpaca.get_quote(sym, asset_class) or {}
         if raw.get("bid") is not None and raw.get("ask") is not None:
+            raw["provider_quote_timestamp"] = raw.get("quote_timestamp")
             raw["quote_timestamp"] = datetime.now(timezone.utc).isoformat()
             raw["quote_fetched_at_submit"] = True
-            raw["provider_quote_timestamp"] = raw.get("quote_timestamp")
         chk = self.check(symbol, asset_class=asset_class, quote=raw)
         return {
             "status": "ok" if chk.get("fresh") else "stale",
