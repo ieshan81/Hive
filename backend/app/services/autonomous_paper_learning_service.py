@@ -52,8 +52,11 @@ class AutonomousPaperLearningService:
     def _learning_capacity(self) -> dict[str, Any]:
         from app.services.capital_allocator import _unlimited
 
+        allocator_on = bool(self.cfg.get("use_capital_allocator", True))
         max_trades = self.cfg.get("max_paper_trades_per_day", 0)
         max_pos = self.cfg.get("max_open_paper_positions", 0)
+        if allocator_on:
+            max_trades, max_pos = 0, 0
         return {
             "paper_trade_frequency": "opportunity_based",
             "daily_paper_trade_cap": None if _unlimited(max_trades) else max_trades,
