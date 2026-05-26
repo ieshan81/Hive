@@ -112,8 +112,13 @@ class PaperExecutionService:
     ) -> ExecutionLog:
         from app.services.account_pair_eligibility_service import AccountPairEligibilityService
 
+        strategy_id = ""
+        if signal_row and getattr(signal_row, "strategy", None):
+            strategy_id = str(signal_row.strategy)
+        elif cand.meta.get("strategy_id"):
+            strategy_id = str(cand.meta["strategy_id"])
         elig = AccountPairEligibilityService(self.session, self.config).preflight_block(
-            cand.symbol, "buy", cand.strategy_id or ""
+            cand.symbol, "buy", strategy_id
         )
         if elig:
             return self._log(
