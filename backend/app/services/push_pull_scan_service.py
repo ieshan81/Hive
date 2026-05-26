@@ -113,12 +113,6 @@ class PushPullScanService:
                     reason_counts["data_stale"] += 1
                     skipped_count += 1
                     continue
-                qchk = self.quote.check(sym)
-                if not qchk.get("executable"):
-                    reason_counts["stale_quote"] += 1
-                    skipped_count += 1
-                    continue
-
                 push_signals += 1
                 candidates_created += 1
                 ev = self.pl.evaluate(row["strategy_id"], sym, side="buy")
