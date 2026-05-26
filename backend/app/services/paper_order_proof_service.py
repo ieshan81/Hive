@@ -54,12 +54,18 @@ class PaperOrderProofService:
                 not log.broker_order_id and log.status != "paper_order_submitted"
             ):
                 preflight_blocked.append(row)
-            elif log.status in ("paper_order_submitted", "paper_order_filled", "paper_order_partially_filled"):
+            elif log.status in (
+                "paper_order_submitted",
+                "paper_order_filled",
+                "paper_order_partially_filled",
+                "paper_order_rejected",
+            ):
                 submitted.append(row)
+                gf = log.gates_failed_json if isinstance(log.gates_failed_json, dict) else {}
+                if log.status == "paper_order_rejected" or gf.get("preflight_stage") == "broker_rejection":
+                    broker_rejected.append(row)
                 if log.status == "paper_order_filled":
                     filled.append(row)
-            elif log.status == "paper_order_rejected" and log.broker_order_id:
-                broker_rejected.append(row)
 
         orders = list(
             self.session.exec(select(OrderRecord).order_by(OrderRecord.id.desc()).limit(50)).all()
