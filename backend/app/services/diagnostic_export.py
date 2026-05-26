@@ -430,6 +430,49 @@ def _export_strategy_test_results(session: Session, config: dict) -> dict[str, A
     return {"status": "ok", "runs": runs, "count": len(runs)}
 
 
+def _research_bundle_meta(
+    session: Session,
+    *,
+    db_counts: dict,
+    last_cycle: dict,
+    cycle_status: str,
+    latest_cycle_errors: list,
+    historical_alpaca_errors: list,
+) -> dict[str, Any]:
+    import os
+
+    from app.services.nuke_epoch_service import get_latest_reset_epoch
+
+    epoch = get_latest_reset_epoch(session)
+    sched = {}
+    try:
+        from app.services.autonomous_paper_scheduler import AutonomousPaperScheduler
+
+        sched = AutonomousPaperScheduler(session).status()
+    except Exception:
+        pass
+    return {
+        "schema_version": 1,
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "architecture": "caged_hive_quant_research_v1",
+        "reset_epoch_id": (epoch or {}).get("reset_epoch_id"),
+        "bot_run_id": os.environ.get("RAILWAY_DEPLOYMENT_ID") or os.environ.get("RAILWAY_REPLICA_ID"),
+        "backend_commit": os.environ.get("RAILWAY_GIT_COMMIT_SHA", "dev")[:12],
+        "frontend_commit": os.environ.get("FRONTEND_GIT_COMMIT_SHA", "unknown")[:12],
+        "latest_tick_id": sched.get("last_tick_at"),
+        "latest_cycle_id": last_cycle.get("cycle_run_id") if last_cycle else None,
+        "database_fingerprint": database_fingerprint(),
+        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "db_counts": db_counts,
+        "last_cycle_run_id": last_cycle.get("cycle_run_id") if last_cycle else None,
+        "last_cycle_status": cycle_status,
+        "latest_cycle_error_count": len(latest_cycle_errors),
+        "historical_error_count": len(historical_alpaca_errors),
+        "gemini_can_trade": False,
+        "live_trading_enabled": False,
+    }
+
+
 def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
     session.commit()
     session.expire_all()
@@ -1464,6 +1507,56 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             ).activity_feed(session, 80),
             export_errors,
         ),
+        "strategy_performance.json": safe_export_section(
+            "strategy_performance.json",
+            lambda: __import__(
+                "app.services.strategy_performance_service", fromlist=["StrategyPerformanceService"]
+            ).StrategyPerformanceService(session, cfg_brain).summary(),
+            export_errors,
+        ),
+        "broker_responses.json": safe_export_section(
+            "broker_responses.json",
+            lambda: _export_alpaca_rejections(session),
+            export_errors,
+        ),
+        "order_payloads.json": safe_export_section(
+            "order_payloads.json",
+            lambda: _export_alpaca_order_payloads(session),
+            export_errors,
+        ),
+        "push_pull_candle_cycles.json": safe_export_section(
+            "push_pull_candle_cycles.json",
+            lambda: __import__(
+                "app.services.push_pull_engine_service", fromlist=["PushPullEngineService"]
+            ).PushPullEngineService(session, cfg_brain).latest_tick(),
+            export_errors,
+        ),
+        "gemini_fund_manager_reviews.json": safe_export_section(
+            "gemini_fund_manager_reviews.json",
+            lambda: {
+                "schema_version": 1,
+                "generated_at": datetime.utcnow().isoformat() + "Z",
+                "reviews": _materialize(
+                    list(session.exec(select(AIReview).order_by(AIReview.created_at.desc()).limit(30)).all()),
+                    lambda r: {
+                        "id": r.id,
+                        "subject_type": r.subject_type,
+                        "decision": r.decision,
+                        "summary": r.summary,
+                        "payload": r.payload,
+                        "created_at": _iso(r.created_at),
+                    },
+                ),
+            },
+            export_errors,
+        ),
+        "ai_lessons.json": safe_export_section(
+            "ai_lessons.json",
+            lambda: __import__(
+                "app.services.ai_manager_service", fromlist=["AIManagerService"]
+            ).AIManagerService(session).lessons(40),
+            export_errors,
+        ),
         "pre_submit_quote_refresh.json": safe_export_section(
             "pre_submit_quote_refresh.json",
             lambda: {
@@ -1507,15 +1600,14 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             ).ConfidenceEngine(session, cfg_brain).summary(),
             export_errors,
         ),
-        "bundle_meta.json": {
-            "database_fingerprint": database_fingerprint(),
-            "exported_at": datetime.utcnow().isoformat() + "Z",
-            "db_counts": db_counts,
-            "last_cycle_run_id": last_cycle.get("cycle_run_id") if last_cycle else None,
-            "last_cycle_status": cycle_status,
-            "latest_cycle_error_count": len(latest_cycle_errors),
-            "historical_error_count": len(historical_alpaca_errors),
-        },
+        "bundle_meta.json": _research_bundle_meta(
+            session,
+            db_counts=db_counts,
+            last_cycle=last_cycle,
+            cycle_status=cycle_status,
+            latest_cycle_errors=latest_cycle_errors,
+            historical_alpaca_errors=historical_alpaca_errors,
+        ),
         "frontend_api_contract.json": FRONTEND_API_CONTRACT,
         "frontend_endpoint_status.json": frontend_endpoint_status,
         "ui_panel_data_sources.json": UI_PANEL_DATA_SOURCES,

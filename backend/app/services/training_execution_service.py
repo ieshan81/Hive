@@ -142,8 +142,13 @@ class TrainingExecutionService:
 
         alpaca_min = float(cfg_get(self.config, "execution.alpaca_crypto_min_notional_usd", 10.0))
         buffer = float(cfg_get(self.config, "execution.alpaca_min_notional_buffer_usd", 0.5))
-        notional = float(dec.approved_notional or self.pl.cfg.get("default_experiment_notional_usd", 12))
-        notional = max(notional, alpaca_min + buffer)
+        target_min = float(cfg_get(self.config, "allocator.paper_trade_notional_min_usd", 20.0))
+        default_notional = max(
+            float(dec.approved_notional or self.pl.cfg.get("default_experiment_notional_usd", target_min)),
+            alpaca_min + buffer,
+            target_min,
+        )
+        notional = default_notional
         qty = round(notional / mid, 8)
         tier_info = self.tiers.classify(dec.symbol)
         tier = getattr(tier_info, "tier", str(tier_info))

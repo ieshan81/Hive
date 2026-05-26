@@ -111,6 +111,11 @@ class AIFundManager:
                 ),
             )
             parsed = AIReviewOutput.model_validate_json(response.text)
+            proposal_meta = None
+            if parsed.config_change_proposal:
+                from app.trading_cage.gemini_proposal_gate import validate_gemini_proposal
+
+                proposal_meta = validate_gemini_proposal(parsed.config_change_proposal)
             row = AIReview(
                 subject_type=subject_type,
                 subject_id=subject_id or cycle_run_id,
@@ -120,6 +125,9 @@ class AIFundManager:
                 summary=parsed.summary,
                 payload={
                     **parsed.model_dump(),
+                    "proposal_validation": proposal_meta,
+                    "gemini_can_trade": False,
+                    "requires_human_approval": True,
                     "ai_review_status": "success",
                     "model": model,
                     "mode": mode,

@@ -13,7 +13,6 @@ from sqlmodel import Session, select
 from app.database import ExecutionLog, OrderRecord, PortfolioDecision, StrategySignal
 from app.services.alpaca_adapter import AlpacaAdapter, normalize_crypto_symbol
 from app.services.alpaca_broker_error import broker_rejection_detail, classify_reject_reason, parse_alpaca_exception
-from app.services.alpaca_crypto_order_validator import AlpacaCryptoOrderValidator
 from app.services.broker_safety import (
     broker_base_url,
     is_paper_broker_url,
@@ -23,7 +22,7 @@ from app.services.broker_safety import (
 from app.services.config_manager import ConfigManager
 from app.services.cooldown_service import CooldownService
 from app.services.engine_config import cfg_get
-from app.services.execution_preflight import build_client_order_id, run_preflight
+from app.services.execution_preflight import build_client_order_id
 from app.services.order_reconciliation import reconcile_order
 from app.services.portfolio_gate import ApprovedCandidate
 from app.services.symbol_tier_service import EngineBoundaryBlocked, SymbolTierService
@@ -206,39 +205,44 @@ class PaperExecutionService:
                 cand.entry_price = mid
                 cand.spread_pct = quote.get("spread_pct") or cand.spread_pct
 
-        pf = run_preflight(
-            self.session,
-            self.config,
+        from app.trading_cage.execution_cage import ExecutionCage
+
+        cage = ExecutionCage(self.session, self.config).validate_submit(
             cand=cand,
             cycle_run_id=cycle_run_id,
             portfolio_decision=portfolio_decision,
             account=account,
             positions=positions,
             open_order_symbols=open_order_symbols or set(),
-            alpaca=self.alpaca,
             quote=quote,
             signal_row=signal_row,
         )
 
-        if not pf.passed:
+        if not cage.passed:
             return self._log(
                 cycle_run_id,
                 cand,
                 status="preflight_blocked",
-                reject_reason=pf.block_reason_code,
-                limit_price=pf.limit_price,
-                quote=pf.quote or quote,
+                reject_reason=cage.block_reason_code,
+                limit_price=cage.preflight.limit_price if cage.preflight else None,
+                quote=quote,
                 portfolio_decision_id=portfolio_decision.id if portfolio_decision else None,
                 gates_failed={
-                    "code": pf.block_reason_code,
-                    "reason": pf.human_reason,
-                    "evidence": pf.evidence,
-                    "preflight_stage": pf.evidence.get("preflight_stage", "internal_preflight_block"),
+                    "code": cage.block_reason_code,
+                    "reason": cage.human_reason,
+                    "cage_stage": cage.stage,
+                    "cost_model": cage.cost_model,
+                    "allocation": cage.allocation,
+                    "crypto_validation": cage.crypto_validation,
+                    "preflight_stage": f"execution_cage_{cage.stage}",
                     "outcome_bucket": "preflight_blocked",
                     "blocked_before_broker": True,
                     **quote_meta,
                 },
             )
+
+        pf = cage.preflight
+        assert pf is not None
 
         try:
             self.tiers.assert_order_path(cand.symbol)
@@ -254,41 +258,11 @@ class PaperExecutionService:
                 gates_failed={"reason": str(exc)},
             )
 
-        recipe = str(cfg_get(self.config, "execution.crypto_paper_recipe", "limit_ioc_qty"))
-        validator = AlpacaCryptoOrderValidator(self.session, self.alpaca, self.config)
-        v = validator.validate_for_candidate(
-            symbol=cand.symbol,
-            side=cand.side,
-            qty=cand.position_qty,
-            limit_price=pf.limit_price or cand.entry_price,
-            client_order_id=pf.client_order_id,
-            account=account,
-            open_order_symbols=open_order_symbols,
-            recipe=recipe,
+        crypto_val = cage.crypto_validation or {}
+        norm = crypto_val.get("normalized_payload") or {}
+        recipe = crypto_val.get("recipe") or str(
+            cfg_get(self.config, "execution.crypto_paper_recipe", "limit_ioc_qty")
         )
-        if not v.valid:
-            return self._log(
-                cycle_run_id,
-                cand,
-                status="preflight_blocked",
-                reject_reason=v.reject_code or "CRYPTO_VALIDATOR_BLOCK",
-                limit_price=pf.limit_price,
-                quote=quote,
-                portfolio_decision_id=portfolio_decision.id if portfolio_decision else None,
-                gates_failed={
-                    "code": v.reject_code,
-                    "reason": "; ".join(v.validator_reasons),
-                    "validator_reasons": v.validator_reasons,
-                    "asset_metadata": v.asset_metadata,
-                    "precision_adjustments": v.precision_adjustments,
-                    "preflight_stage": "crypto_order_validator",
-                    "outcome_bucket": "preflight_blocked",
-                    "blocked_before_broker": True,
-                    **quote_meta,
-                },
-            )
-
-        norm = v.normalized_payload
         submit_qty = norm.get("qty", cand.position_qty)
         submit_limit = norm.get("limit_price", pf.limit_price or cand.entry_price)
         submit_notional = norm.get("notional")
@@ -310,12 +284,10 @@ class PaperExecutionService:
                 "portfolio": True,
                 "evidence": pf.evidence,
                 "outcome_bucket": "submitted_to_broker",
-                "crypto_validator": {
-                    "asset_metadata": v.asset_metadata,
-                    "precision_adjustments": v.precision_adjustments,
-                    "normalized_payload": norm,
-                    "recipe": recipe,
-                },
+                "crypto_validator": crypto_val,
+                "execution_cage": True,
+                "cost_model": cage.cost_model,
+                "allocation": cage.allocation,
                 **quote_meta,
             },
         )
