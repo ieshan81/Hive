@@ -437,7 +437,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         )
         for row in broker_error_rows
     ]
-    latest_cycle_errors = [e for e in broker_errors_all if e.get("is_latest_cycle")]
+    latest_cycle_errors = [e for e in broker_errors_all if e.get("is_latest_cycle") and not e.get("historical")]
     historical_alpaca_errors = [e for e in broker_errors_all if e.get("historical")]
 
     cycle_status = _resolve_cycle_status(last_cycle, health) if last_cycle else "never_run"
