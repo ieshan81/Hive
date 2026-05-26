@@ -229,9 +229,11 @@ def serialize_broker_error(
     created_iso = _iso(row.created_at)
 
     # "Latest" should mean "latest scheduler tick window" when scheduler is enabled.
-    # If no tick has run yet, do not mark any broker errors as latest-cycle.
+    # If scheduler is enabled but no tick has run yet, do not mark any broker errors as latest-cycle.
     is_latest = False
-    if scheduler_last_tick_at and created_iso:
+    if scheduler_enabled_at and not scheduler_last_tick_at:
+        is_latest = False
+    elif scheduler_last_tick_at and created_iso:
         is_latest = created_iso >= scheduler_last_tick_at
     elif latest_cycle_id and cycle_id == latest_cycle_id:
         # Fallback: legacy last-cycle heuristic (non-scheduler use cases).
