@@ -119,6 +119,19 @@ def scheduler_pause(
     return out
 
 
+@router.post("/start-fresh")
+def start_fresh(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
+    from app.services.paper_learning_start_service import start_fresh_paper_learning
+
+    out = start_fresh_paper_learning(session, operator=body.get("operator", "operator"))
+    session.commit()
+    return out
+
+
 @router.post("/tick")
 def scheduler_tick(
     body: dict = Body(default={}),

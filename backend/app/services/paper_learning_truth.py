@@ -7,69 +7,62 @@ from typing import Any, Optional
 from sqlmodel import Session, select
 
 from app.database import PositionSnapshot
-from app.services.alpaca_adapter import AlpacaAdapter
 from app.services.broker_reconciliation_service import BrokerReconciliationService
-from app.services.confidence_engine import ConfidenceEngine
+from app.services.config_manager import ConfigManager
 from app.services.live_lock_tripwire import live_lock_tripwire_status
+from app.services.paper_learning_blockers import compute_push_pull_blockers
 
 
 def paper_learning_display_status(session: Session, config: Optional[dict] = None) -> dict[str, Any]:
-    """Single source for SafetyBanner, dashboard safetyBanner, and autonomous status API."""
+    """Push-pull paper learning truth — not legacy fast-training blockers."""
     from app.services.autonomous_paper_scheduler import AutonomousPaperScheduler
-    from app.services.config_manager import ConfigManager
-    from app.services.fast_crypto_training_loop import FastCryptoTrainingLoop
 
     cfg = config or ConfigManager(session).get_current()
-    apl_cfg = dict(cfg.get("autonomous_paper_learning") or {})
-    mode_on = bool(apl_cfg.get("mode_enabled"))
-    ft_st = FastCryptoTrainingLoop(session, cfg).status()
+    block = compute_push_pull_blockers(session, cfg)
     sched = AutonomousPaperScheduler(session, cfg).status()
-    can_place = mode_on and bool(ft_st.get("final_can_submit_orders"))
-    blockers = list(ft_st.get("blockers") or [])
-    if mode_on and AlpacaAdapter(session).broker_sync_rate_limited:
-        blockers = list(dict.fromkeys(blockers + ["broker_sync_rate_limited"]))
-        can_place = False
+    mode_on = bool(block.get("mode_enabled"))
+    can_place = bool(block.get("can_place_paper_orders"))
 
     try:
         from app.services.safe_responses import safe_confidence_summary
 
         conf = safe_confidence_summary(session, cfg)
         if conf.get("status") == "degraded":
-            conf = {"overall": None, "overall_label": "Unavailable"}
+            conf = {
+                "overall": None,
+                "overall_label": "Unavailable",
+                "confidence_state": "unavailable",
+            }
     except Exception:
-        conf = {"overall": None, "overall_label": "Unavailable"}
+        conf = {
+            "overall": None,
+            "overall_label": "Unavailable",
+            "confidence_state": "unavailable",
+        }
+
     trip = live_lock_tripwire_status(cfg)
     recon = BrokerReconciliationService(session, cfg)
     ghosts = recon.ghost_position_candidates()
     broker_truth = "Synced" if not ghosts else "Needs Review"
-    if AlpacaAdapter(session).broker_sync_rate_limited:
-        broker_truth = "Broker sync temporarily rate-limited"
-
-    current_mode = "watching"
-    if not mode_on:
-        current_mode = "watching"
-    elif sched.get("scheduler_enabled") and not sched.get("paused"):
-        current_mode = "paper_learning"
-    else:
-        current_mode = "paper_learning"
 
     if not mode_on:
-        plain = "The bot is watching only. It cannot place paper orders."
+        current_mode = "paper_learning_off"
+        plain = "Paper learning is OFF. Use Start Fresh Paper Learning on Mission Control."
     elif can_place:
+        current_mode = "paper_learning"
         plain = (
-            "The bot may place small paper trades under strict safety limits. Live trading remains locked."
+            "Push-pull paper learning is ON. The bot may place small paper trades under strict limits. "
+            "Live trading remains locked."
         )
+    elif mode_on and sched.get("scheduler_enabled"):
+        current_mode = "paper_learning"
+        plain = "Paper learning is ON. Waiting for next push-pull tick or a stronger entry signal."
     else:
-        plain = "Paper learning is on but preflight blockers prevent new orders right now."
+        current_mode = "paper_learning"
+        plain = "Paper learning is ON but execution is blocked — see Mission Control for the exact reason."
 
     open_n = len(list(session.exec(select(PositionSnapshot).where(PositionSnapshot.qty > 0)).all()))
-    allocator: dict[str, Any] = {}
-    try:
-        from app.services.capital_allocator import CapitalAllocatorService
-
-        allocator = CapitalAllocatorService(session, cfg).status_summary()
-    except Exception:
-        allocator = {"status": "error"}
+    allocator = block.get("allocator") or {}
 
     return {
         "mode_enabled": mode_on,
@@ -83,13 +76,15 @@ def paper_learning_display_status(session: Session, config: Optional[dict] = Non
         "trainingMode": "ON" if mode_on else "OFF",
         "confidenceScore": conf.get("overall"),
         "confidenceLabel": conf.get("overall_label"),
+        "confidence_state": conf.get("confidence_state"),
         "currentMode": current_mode,
         "botCanPlaceOrders": "YES" if can_place else "NO",
         "openPositions": open_n,
         "brokerTruth": broker_truth,
         "paperBroker": trip.get("paper_broker", True),
         "plainMessage": plain,
-        "blockers": blockers,
+        "blockers": block.get("blockers_plain", []),
+        "blocker_codes": block.get("blockers", []),
         "scheduler": sched,
         "learning_capacity": {
             "paper_trade_frequency": "opportunity_based",

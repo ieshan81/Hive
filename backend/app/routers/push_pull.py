@@ -32,3 +32,10 @@ def lessons(limit: int = 40, session: Session = Depends(get_session)):
     from app.services.push_pull_engine_service import PushPullEngineService
 
     return PushPullEngineService(session).lessons(limit)
+
+
+@router.get("/signals")
+def signals(symbol: str | None = None, timeframe: str = "5Min", session: Session = Depends(get_session)):
+    from app.services.push_pull_engine_service import PushPullEngineService
+
+    return PushPullEngineService(session).signals(symbol=symbol, timeframe=timeframe)

@@ -15,6 +15,9 @@ from app.routers import (
     capital_allocator,
     danger_zone,
     mission_control,
+    universe,
+    activity,
+    performance,
     push_pull,
     reports_hub,
     candle_lab,
@@ -62,6 +65,9 @@ app.include_router(settings_brain.router)
 app.include_router(autonomous_paper_learning.router)
 app.include_router(capital_allocator.router)
 app.include_router(mission_control.router)
+app.include_router(universe.router)
+app.include_router(activity.router)
+app.include_router(performance.router)
 app.include_router(push_pull.router)
 app.include_router(ai_manager.router)
 app.include_router(danger_zone.router)

@@ -57,9 +57,16 @@ export function ConfidenceLevelPanel() {
     if (summary?.status === "degraded" && summary?.overall == null) {
       return { score: 0, label: "Degraded", evidence: [loadError || "Unavailable"] };
     }
+    if (summary?.confidence_state === "no_evidence") {
+      return {
+        score: 0,
+        label: String(summary?.overall_label ?? "No evidence yet"),
+        evidence: [String(summary?.interpretation || "No paper evidence yet — confidence builds after trades.")],
+      };
+    }
     if (card.key === "overall") {
       return {
-        score: Number(summary?.overall ?? 0),
+        score: Number(summary?.overall ?? summary?.overall_score ?? 0),
         label: String(summary?.overall_label ?? "—"),
         evidence: [String(summary?.interpretation || "")],
       };

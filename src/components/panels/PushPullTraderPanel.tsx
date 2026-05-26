@@ -10,20 +10,25 @@ export function PushPullTraderPanel() {
   const [status, setStatus] = useState<Record<string, unknown> | null>(null);
   const [decisions, setDecisions] = useState<Record<string, unknown>[]>([]);
   const [lessons, setLessons] = useState<Record<string, unknown>[]>([]);
+  const [signals, setSignals] = useState<Record<string, unknown> | null>(null);
+  const [signalSymbol, setSignalSymbol] = useState("BTC/USD");
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [st, dec, les] = await Promise.all([
+    const sym = encodeURIComponent(signalSymbol);
+    const [st, dec, les, sig] = await Promise.all([
       apiGet<Record<string, unknown>>("/api/push-pull/status"),
       apiGet<{ decisions?: Record<string, unknown>[] }>("/api/push-pull/decisions?limit=30"),
       apiGet<{ lessons?: Record<string, unknown>[] }>("/api/push-pull/lessons?limit=15"),
+      apiGet<Record<string, unknown>>(`/api/push-pull/signals?symbol=${sym}`),
     ]);
     if (st.ok) setStatus(st.data);
     if (dec.ok) setDecisions(dec.data?.decisions ?? []);
     if (les.ok) setLessons(les.data?.lessons ?? []);
+    if (sig.ok) setSignals(sig.data);
     setLoading(false);
-  }, []);
+  }, [signalSymbol]);
 
   useEffect(() => {
     load();
@@ -58,6 +63,36 @@ export function PushPullTraderPanel() {
             {m}
           </p>
         ))}
+      </GlassPanel>
+
+      <GlassPanel title="Push-Pull signal">
+        <div className="flex gap-2 mb-2">
+          <input
+            className="rounded bg-black/40 border border-white/10 px-2 py-1 text-xs text-white w-32"
+            value={signalSymbol}
+            onChange={(e) => setSignalSymbol(e.target.value)}
+            placeholder="BTC/USD"
+          />
+          <button
+            type="button"
+            className="text-[10px] px-2 py-1 rounded bg-hive-cyan/20 text-hive-cyan"
+            onClick={() => void load()}
+          >
+            Refresh
+          </button>
+        </div>
+        {signals?.push_pull_labels ? (
+          <div className="grid grid-cols-2 gap-2 text-[11px]">
+            {Object.entries(signals.push_pull_labels as Record<string, unknown>).map(([k, v]) => (
+              <div key={k}>
+                <span className="text-slate-500">{k.replace(/_/g, " ")}: </span>
+                <span className="text-white">{String(v ?? "—")}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-500">No signal data yet.</p>
+        )}
       </GlassPanel>
 
       <GlassPanel title="Recent decisions">

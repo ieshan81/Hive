@@ -13,6 +13,9 @@ import {
   Settings,
   Shield,
   Hexagon,
+  Globe,
+  Activity,
+  BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -20,13 +23,15 @@ const navItems = [
   { href: "/", label: "Mission Control", icon: LayoutDashboard },
   { href: "/ai-manager", label: "AI Manager", icon: Brain },
   { href: "/push-pull", label: "Push-Pull Trader", icon: TrendingUp },
+  { href: "/universe", label: "Universe", icon: Globe },
   { href: "/portfolio", label: "Portfolio & Execution", icon: Wallet },
+  { href: "/performance", label: "Performance", icon: BarChart3 },
+  { href: "/activity", label: "Activity", icon: Activity },
   { href: "/reports", label: "Reports", icon: FileText },
   { href: "/settings", label: "Settings", icon: Settings },
   { href: "/danger-zone", label: "Danger Zone", icon: Shield },
 ];
 
-/** Legacy routes — still reachable via URL for advanced tools */
 const legacyHidden = false;
 const legacyNav = legacyHidden
   ? []

@@ -19,6 +19,7 @@ from app.services.broker_reconciliation_service import BrokerReconciliationServi
 from app.services.config_manager import ConfigManager
 from app.services.engine_config import cfg_get
 from app.services.live_lock_tripwire import live_lock_tripwire_status
+from app.services.nuke_epoch_service import filter_lessons_post_nuke, get_latest_reset_epoch
 from app.services.order_metrics import order_summary
 from app.services.session_engine import SessionEngine
 
@@ -51,26 +52,63 @@ class ConfidenceEngine:
         self.session = session
         self.config = config or ConfigManager(session).get_current()
         self.weights = dict((self.config.get("confidence") or {}).get("weights") or {})
+        self._reset_epoch = get_latest_reset_epoch(session)
 
     def _w(self, key: str, default: float) -> float:
         return float(self.weights.get(key, default))
 
+    def _post_nuke_trades(self) -> list[TradeRecord]:
+        rows = list(self.session.exec(select(TradeRecord)).all())
+        if not self._reset_epoch:
+            return rows
+        cutoff = self._reset_epoch.get("nuke_completed_at")
+        return [t for t in rows if t.created_at and self._is_after(t.created_at, cutoff)]
+
+    def _post_nuke_lessons(self) -> list[LessonNode]:
+        return filter_lessons_post_nuke(
+            self.session, list(self.session.exec(select(LessonNode)).all())
+        )
+
+    def _post_nuke_orders(self) -> list[OrderRecord]:
+        rows = list(self.session.exec(select(OrderRecord)).all())
+        if not self._reset_epoch:
+            return rows
+        cutoff = self._reset_epoch.get("nuke_completed_at")
+        return [o for o in rows if o.created_at and self._is_after(o.created_at, cutoff)]
+
+    @staticmethod
+    def _is_after(created: datetime, cutoff_iso: Optional[str]) -> bool:
+        if not cutoff_iso:
+            return True
+        try:
+            cutoff = datetime.fromisoformat(str(cutoff_iso).replace("Z", ""))
+            return created >= cutoff
+        except ValueError:
+            return True
+
+    def _evidence_count(self) -> int:
+        return (
+            len(self._post_nuke_trades())
+            + len(self._post_nuke_lessons())
+            + len(self._post_nuke_orders())
+        )
+
     def _trade_performance_score(self) -> dict[str, Any]:
-        closed = list(self.session.exec(select(TradeRecord).where(TradeRecord.status == "closed")).all())
+        closed = [t for t in self._post_nuke_trades() if t.status == "closed"]
         if not closed:
             return {"score": 35.0, "evidence": ["No closed paper trades yet — low sample."], "win_rate": None}
-        wins = [t for t in closed if (t.realized_pl or 0) > 0]
-        losses = [t for t in closed if (t.realized_pl or 0) <= 0]
+        wins = [t for t in closed if (t.pl_dollars or 0) > 0]
+        losses = [t for t in closed if (t.pl_dollars or 0) <= 0]
         win_rate = len(wins) / len(closed) if closed else 0
         rets = [float(t.return_pct or 0) for t in closed if t.return_pct is not None]
         avg_ret = sum(rets) / len(rets) if rets else 0
-        gross_win = sum(float(t.realized_pl or 0) for t in wins)
-        gross_loss = abs(sum(float(t.realized_pl or 0) for t in losses)) or 0.01
+        gross_win = sum(float(t.pl_dollars or 0) for t in wins)
+        gross_loss = abs(sum(float(t.pl_dollars or 0) for t in losses)) or 0.01
         pf = gross_win / gross_loss
         score = 30.0 + win_rate * 40 + min(20, pf * 10) + min(10, avg_ret * 100)
         consec_loss = 0
         for t in sorted(closed, key=lambda x: x.closed_at or datetime.min):
-            if (t.realized_pl or 0) <= 0:
+            if (t.pl_dollars or 0) <= 0:
                 consec_loss += 1
             else:
                 consec_loss = 0
@@ -87,6 +125,8 @@ class ConfidenceEngine:
         }
 
     def _execution_score(self) -> dict[str, Any]:
+        if self._evidence_count() == 0:
+            return {"score": 0.0, "evidence": ["No post-reset orders yet."], "orders_attempted": 0}
         om = order_summary(self.session)
         attempted = om.get("orders_attempted") or 0
         filled = om.get("orders_filled") or 0
@@ -105,6 +145,9 @@ class ConfidenceEngine:
 
     def _strategy_validation_score(self) -> dict[str, Any]:
         runs = list(self.session.exec(select(ResearchBacktestRun).order_by(ResearchBacktestRun.id.desc()).limit(20)).all())
+        if self._reset_epoch:
+            cutoff = self._reset_epoch.get("nuke_completed_at")
+            runs = [r for r in runs if r.created_at and self._is_after(r.created_at, cutoff)]
         regs = list(self.session.exec(select(StrategyRegistry)).all())
         paper_ok = sum(1 for r in regs if r.current_stage in ("paper_experiment", "paper_active", "paper_candidate"))
         score = 40.0 + min(30, len(runs) * 3) + min(20, paper_ok * 5)
@@ -119,9 +162,7 @@ class ConfidenceEngine:
 
     def _memory_score(self) -> dict[str, Any]:
         since = datetime.utcnow() - timedelta(days=14)
-        lessons = list(
-            self.session.exec(select(LessonNode).where(LessonNode.created_at >= since)).all()
-        )
+        lessons = [l for l in self._post_nuke_lessons() if l.created_at and l.created_at >= since]
         mistakes = [l for l in lessons if "block" in (l.memory_type or "") or "reject" in (l.memory_type or "")]
         fixed = [l for l in lessons if "outcome" in (l.memory_type or "") or "filled" in (l.memory_type or "")]
         score = 45.0 + min(25, len(lessons)) + min(15, len(fixed) * 2) - min(20, len(mistakes))
@@ -230,8 +271,39 @@ class ConfidenceEngine:
         }
 
     def summary(self) -> dict[str, Any]:
+        evidence = self._evidence_count()
+        epoch = self._reset_epoch or {}
+        if evidence == 0:
+            return {
+                "status": "ok",
+                "overall": None,
+                "overall_score": 0,
+                "overall_label": "No evidence yet",
+                "confidence_state": "no_evidence",
+                "reset_epoch_id": epoch.get("reset_epoch_id"),
+                "nuke_completed_at": epoch.get("nuke_completed_at"),
+                "post_nuke_sample_size": 0,
+                "evidence_count": 0,
+                "interpretation": "No paper evidence yet — confidence will build after post-reset trades and lessons.",
+                "can_unlock_live": False,
+                "dimensions": {},
+            }
         data = self.compute_dimensions()
-        return {"status": "ok", **data}
+        state = "developing"
+        if data["overall"] >= 76:
+            state = "validated"
+        elif data["overall"] < 41:
+            state = "developing"
+        return {
+            "status": "ok",
+            **data,
+            "overall_score": data["overall"],
+            "confidence_state": state,
+            "reset_epoch_id": epoch.get("reset_epoch_id"),
+            "nuke_completed_at": epoch.get("nuke_completed_at"),
+            "post_nuke_sample_size": evidence,
+            "evidence_count": evidence,
+        }
 
     def by_strategy(self) -> dict[str, Any]:
         regs = list(self.session.exec(select(StrategyRegistry)).all())
@@ -247,7 +319,7 @@ class ConfidenceEngine:
             )
             adj = base
             if closed:
-                wins = sum(1 for t in closed if (t.realized_pl or 0) > 0)
+                wins = sum(1 for t in closed if (t.pl_dollars or 0) > 0)
                 adj = base * 0.5 + (wins / len(closed)) * 50
             out.append(
                 {

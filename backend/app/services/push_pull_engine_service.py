@@ -124,6 +124,112 @@ class PushPullEngineService:
             "count": len(rows),
         }
 
+    def signals(self, symbol: Optional[str] = None, timeframe: str = "5Min") -> dict[str, Any]:
+        """Plain push-pull signal view for operator (candles used internally)."""
+        from app.services.technical_candle_analysis_service import TechnicalCandleAnalysisService
+
+        sym = symbol
+        if not sym:
+            last = self.session.exec(
+                select(PaperExperimentDecision)
+                .order_by(PaperExperimentDecision.created_at.desc())
+            ).first()
+            sym = last.symbol if last else "BTC/USD"
+
+        candle = TechnicalCandleAnalysisService(self.session, self.config).analyze(sym, timeframe=timeframe)
+        last_dec = self.session.exec(
+            select(PaperExperimentDecision)
+            .where(PaperExperimentDecision.symbol == sym)
+            .order_by(PaperExperimentDecision.created_at.desc())
+        ).first()
+
+        bars_preview: list[dict] = []
+        if candle.get("status") == "ok":
+            last_price = candle.get("last_price")
+            bars_preview = [{"close": last_price, "label": "last"}]
+
+        ind = candle.get("indicators") or {}
+        rsi = ind.get("rsi_14")
+        patterns = (candle.get("patterns") or {}).get("patterns") or []
+        pattern_names = [p.get("pattern") for p in patterns]
+
+        push_label = "No clean push yet"
+        if candle.get("status") == "empty":
+            push_label = "Price data stale"
+        elif "breakout_up" in pattern_names:
+            push_label = "Push confirmed"
+        elif rsi is not None and rsi < 45:
+            push_label = "Push forming"
+        elif rsi is not None and rsi > 70:
+            push_label = "Entry skipped"
+
+        pull_label = "Pull target"
+        exit_label = "Exit signal"
+        if last_dec and last_dec.decision != "approved":
+            exit_label = "Entry skipped"
+            pull_label = last_dec.reason_code or "No entry"
+
+        support = None
+        resistance = None
+        for ann in candle.get("annotations") or []:
+            if ann.get("type") == "support":
+                support = ann.get("level")
+            if ann.get("type") == "resistance":
+                resistance = ann.get("level")
+
+        entry_level = support or candle.get("last_price")
+        profit_target = resistance
+        stop_level = (candle.get("annotations") or [{}])[0].get("invalidation_level") if candle.get("annotations") else None
+
+        skip_reason = None
+        if last_dec and last_dec.decision != "approved":
+            skip_reason = OPERATOR_LABELS.get(
+                last_dec.reason_code or "", last_dec.reason_text or "Entry skipped"
+            )
+        elif candle.get("status") == "empty":
+            skip_reason = "Price data stale"
+
+        spread_note = "Spread/cost estimate from allocator on tick"
+        next_action = "Waiting for next push-pull tick"
+        if last_dec and last_dec.decision == "approved":
+            next_action = "Watching pull target after entry"
+        elif push_label == "Push confirmed":
+            next_action = "Evaluate entry on next tick"
+
+        return {
+            "status": "ok",
+            "symbol": sym,
+            "timeframe": timeframe,
+            "push_pull_labels": {
+                "push_state": push_label,
+                "pull_target": pull_label,
+                "exit_signal": exit_label,
+                "entry_level": entry_level,
+                "profit_target": profit_target,
+                "stop_safety_level": stop_level,
+                "spread_cost_note": spread_note,
+                "expected_edge_note": "Edge checked after spread/cost on tick",
+                "skip_reason": skip_reason,
+                "next_action": next_action,
+            },
+            "candle_summary": {
+                "bar_count": candle.get("bar_count"),
+                "last_price": candle.get("last_price"),
+                "rsi_14": rsi,
+                "patterns": pattern_names,
+            },
+            "bars_preview": bars_preview,
+            "last_decision": {
+                "decision": last_dec.decision if last_dec else None,
+                "reason_code": last_dec.reason_code if last_dec else None,
+                "reason_plain": OPERATOR_LABELS.get(
+                    (last_dec.reason_code if last_dec else "") or "", last_dec.reason_text if last_dec else None
+                ),
+                "created_at": last_dec.created_at.isoformat() + "Z" if last_dec and last_dec.created_at else None,
+            },
+            "analysis_status": candle.get("status"),
+        }
+
     def export_tick_bundle(self) -> dict[str, Any]:
         windows = scheduler_windows(self.session)
         tick_at = windows.get("last_tick_at")

@@ -1261,6 +1261,48 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             ).nuke_status_export(session),
             export_errors,
         ),
+        "universe.json": safe_export_section(
+            "universe.json",
+            lambda: __import__(
+                "app.services.universe_service", fromlist=["universe_status"]
+            ).universe_status(session, cfg_brain),
+            export_errors,
+        ),
+        "push_pull_signals.json": safe_export_section(
+            "push_pull_signals.json",
+            lambda: __import__(
+                "app.services.push_pull_engine_service", fromlist=["PushPullEngineService"]
+            ).PushPullEngineService(session, cfg_brain).signals(),
+            export_errors,
+        ),
+        "activity_feed.json": safe_export_section(
+            "activity_feed.json",
+            lambda: __import__(
+                "app.services.activity_feed_service", fromlist=["activity_feed"]
+            ).activity_feed(session, 100),
+            export_errors,
+        ),
+        "equity_curve.json": safe_export_section(
+            "equity_curve.json",
+            lambda: __import__(
+                "app.services.performance_service", fromlist=["equity_curve"]
+            ).equity_curve(session),
+            export_errors,
+        ),
+        "performance_summary.json": safe_export_section(
+            "performance_summary.json",
+            lambda: __import__(
+                "app.services.performance_service", fromlist=["performance_summary"]
+            ).performance_summary(session, cfg_brain),
+            export_errors,
+        ),
+        "confidence_summary.json": safe_export_section(
+            "confidence_summary.json",
+            lambda: __import__(
+                "app.services.confidence_engine", fromlist=["ConfidenceEngine"]
+            ).ConfidenceEngine(session, cfg_brain).summary(),
+            export_errors,
+        ),
         "bundle_meta.json": {
             "database_fingerprint": database_fingerprint(),
             "exported_at": datetime.utcnow().isoformat() + "Z",
