@@ -266,6 +266,29 @@ def _materialize(rows: list, serializer) -> list[dict[str, Any]]:
     return [r for r in out if _is_useful_row(r)]
 
 
+def _annotate_source_window(
+    rows: list[dict[str, Any]],
+    *,
+    scheduler_enabled_at: str | None,
+    scheduler_last_tick_at: str | None,
+    created_key: str = "created_at",
+) -> list[dict[str, Any]]:
+    """Tag rows with whether they are historical vs scheduler/tick windows."""
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        created = (r or {}).get(created_key)
+        source_window = "historical"
+        historical = True
+        if scheduler_enabled_at and created and created >= scheduler_enabled_at:
+            source_window = "since_scheduler_enable"
+            historical = False
+        if scheduler_last_tick_at and created and created >= scheduler_last_tick_at:
+            source_window = "since_last_tick"
+            historical = False
+        out.append({**r, "historical": historical, "source_window": source_window})
+    return out
+
+
 def _row_created_at(row) -> str:
     created = getattr(row, "created_at", None)
     if created is None:
@@ -749,6 +772,24 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         meme_recent = MemeVolatilitySpikeDetector(session, cfg_brain).recent(15)
         from app.services.strategy_memory_validation_service import StrategyMemoryValidationService
 
+        scheduler_enabled_at = None
+        scheduler_last_tick_at = None
+        try:
+            row = (
+                session.exec(
+                    select(SettingsActionAudit)
+                    .where(SettingsActionAudit.action == "scheduler_enable")
+                    .order_by(SettingsActionAudit.created_at.desc())
+                ).first()
+            )
+            scheduler_enabled_at = _iso(row.created_at) if row and row.created_at else None
+        except Exception:
+            scheduler_enabled_at = None
+        try:
+            scheduler_last_tick_at = (apl_sched.status() or {}).get("last_tick_at")
+        except Exception:
+            scheduler_last_tick_at = None
+
         StrategyMemoryValidationService(session, ConfigManager(session).get_current()).sync_link_status_to_lessons()
         mph = memory_validation_mismatches(session)
         strategy_registry_exports = {
@@ -874,7 +915,11 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
                 export_errors,
             ),
             "paper_experiment_config.json": [_serialize_row(r) for r in session.exec(select(PaperExperimentConfig)).all()],
-            "paper_experiment_decisions.json": [_serialize_row(r) for r in session.exec(select(PaperExperimentDecision)).all()],
+            "paper_experiment_decisions.json": _annotate_source_window(
+                [_serialize_row(r) for r in session.exec(select(PaperExperimentDecision)).all()],
+                scheduler_enabled_at=scheduler_enabled_at,
+                scheduler_last_tick_at=scheduler_last_tick_at,
+            ),
             "paper_experiment_outcomes.json": [_serialize_row(r) for r in session.exec(select(PaperExperimentOutcome)).all()],
             "paper_experiment_memories.json": pl.list_memories(40),
             "memory_graph_clusters.json": graph.get("meta", {}),
@@ -895,7 +940,11 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             "hive_brain_node_details_sample.json": sample_node or {},
             "true_hold_time_audit.json": recon_exports.get("true_hold_time_audit.json", hold_audit),
             "hardcoded_symbol_scan.json": hc_scan,
-            "training_cycle_decisions.json": pl.list_decisions(),
+            "training_cycle_decisions.json": _annotate_source_window(
+                pl.list_decisions(),
+                scheduler_enabled_at=scheduler_enabled_at,
+                scheduler_last_tick_at=scheduler_last_tick_at,
+            ),
             "training_execution_queue.json": [
                 _serialize_row(r)
                 for r in session.exec(select(PaperExperimentDecision).where(PaperExperimentDecision.decision == "approved")).all()
@@ -920,14 +969,18 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             "strategy_import_status.json": import_svc.status(),
             "imported_strategies.json": import_svc.list_imported(),
             "meme_spike_v2_status.json": MemeVolatilitySpikeDetector(session, cfg_brain).status(),
-            "fast_training_decisions.json": [
-                _serialize_row(r)
-                for r in session.exec(
-                    select(PaperExperimentDecision)
-                    .order_by(PaperExperimentDecision.created_at.desc())
-                    .limit(50)
-                ).all()
-            ],
+            "fast_training_decisions.json": _annotate_source_window(
+                [
+                    _serialize_row(r)
+                    for r in session.exec(
+                        select(PaperExperimentDecision)
+                        .order_by(PaperExperimentDecision.created_at.desc())
+                        .limit(50)
+                    ).all()
+                ],
+                scheduler_enabled_at=scheduler_enabled_at,
+                scheduler_last_tick_at=scheduler_last_tick_at,
+            ),
             "fast_training_orders.json": {
                 "orders": [_serialize_row(r) for r in session.exec(select(OrderRecord)).all()],
                 "training_blockers": ft_loop.status().get("blockers", []),

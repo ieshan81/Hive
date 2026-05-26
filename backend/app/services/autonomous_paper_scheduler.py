@@ -63,6 +63,7 @@ class AutonomousPaperScheduler:
 
     def status(self) -> dict[str, Any]:
         self._reset_daily_if_needed()
+        use_allocator = bool(self.cfg.get("use_capital_allocator", True))
         interval = max(60, int(self.cfg.get("scheduler_interval_seconds", 300)))
         last = self._state.get("last_tick_at")
         next_at = None
@@ -78,10 +79,11 @@ class AutonomousPaperScheduler:
             "paused_reason": self._state.get("paused_reason"),
             "interval_seconds": interval,
             "ticks_today": int(self._state.get("ticks_today", 0)),
-            "max_ticks_per_day": int(self.cfg.get("max_scheduler_ticks_per_day", 0) or 0),
+            "max_ticks_per_day": 0 if use_allocator else int(self.cfg.get("max_scheduler_ticks_per_day", 0) or 0),
             "last_tick_at": last,
             "next_planned_at_utc": next_at,
             "broker_error_streak": int(self._state.get("broker_error_streak", 0)),
+            "use_capital_allocator": use_allocator,
         }
 
     def enable(self, operator: str = "operator") -> dict[str, Any]:
