@@ -431,6 +431,13 @@ class AggressivePaperLearningService:
             if sym in (p.symbol or "").upper():
                 return True
         start = datetime.utcnow() - timedelta(hours=24)
+        submitted_statuses = (
+            "paper_order_submitted",
+            "paper_order_filled",
+            "paper_order_partially_filled",
+            "submitted",
+            "filled",
+        )
         for d in self.session.exec(
             select(PaperExperimentDecision).where(
                 PaperExperimentDecision.created_at >= start,
@@ -438,7 +445,10 @@ class AggressivePaperLearningService:
                 PaperExperimentDecision.decision == "approved",
             )
         ).all():
-            if sym in (d.symbol or "").upper():
+            if sym not in (d.symbol or "").upper():
+                continue
+            st = (d.execution_status or "").lower()
+            if st in submitted_statuses:
                 return True
         return False
 
