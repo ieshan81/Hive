@@ -2,11 +2,13 @@ import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlmodel import Session
 
 from app.config import settings
 from app.database import init_db
 from app.routers import (
     account_eligibility,
+    admin,
     ai_manager,
     api,
     autonomous_paper_learning,
@@ -28,6 +30,7 @@ from app.routers import (
     strategy_registry,
     system_meta,
 )
+from app.services.database_bootstrap_service import repair_database_bootstrap
 from app.services.startup import bootstrap_database
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -68,6 +71,7 @@ app.include_router(account_eligibility.router)
 app.include_router(strategy_proposals.router)
 app.include_router(live_promotion.router)
 app.include_router(system_meta.router)
+app.include_router(admin.router)
 
 
 @app.on_event("startup")
@@ -75,6 +79,13 @@ def on_startup():
     logger.info("Starting Caged Hive Quant API")
     init_db()
     bootstrap_database()
+    try:
+        from app.database import engine as db_engine
+
+        with Session(db_engine) as session:
+            repair_database_bootstrap(session)
+    except Exception as exc:
+        logger.warning("Startup bootstrap repair skipped: %s", exc)
     if not settings.alpaca_configured:
         logger.warning("ALPACA_API_KEY / ALPACA_SECRET_KEY not set — broker sync unavailable")
     if not settings.gemini_configured:

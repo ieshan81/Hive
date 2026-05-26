@@ -116,10 +116,13 @@ class LessonMemoryService:
             self._ensure_edges(existing)
             return existing
 
+        from app.services.nuke_epoch_service import current_reset_epoch_id
+
         lesson = LessonNode(
             category=cat,
             memory_type=memory_type,
             title=title,
+            reset_epoch_id=current_reset_epoch_id(self.session),
             summary=summary,
             detailed_lesson=detailed_lesson,
             severity=severity,

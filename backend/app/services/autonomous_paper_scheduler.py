@@ -129,6 +129,10 @@ class AutonomousPaperScheduler:
         return {"status": "ok", **self.status()}
 
     def tick(self, *, operator: str = "cron") -> dict[str, Any]:
+        from app.services.nuke_reset_service import is_reset_in_progress
+
+        if is_reset_in_progress(self.session):
+            return {"status": "skipped", "reason": "reset_in_progress"}
         self._reset_daily_if_needed()
         apl_cfg = dict(self.config.get("autonomous_paper_learning") or {})
         if not apl_cfg.get("scheduler_enabled"):

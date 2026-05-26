@@ -126,7 +126,7 @@ def test_hive_brain_fresh_after_nuke():
 def test_pre_nuke_lessons_hidden_by_epoch_filter():
     from datetime import datetime, timedelta
 
-    from app.services.nuke_epoch_service import NUKE_EPOCH_ACTION, filter_lessons_post_nuke, record_nuke_epoch
+    from app.services.nuke_epoch_service import RESET_EPOCH_ACTION, filter_lessons_post_nuke, record_reset_epoch
 
     engine = create_engine("sqlite:///:memory:")
     SQLModel.metadata.create_all(engine)
@@ -140,13 +140,13 @@ def test_pre_nuke_lessons_hidden_by_epoch_filter():
         )
         session.add(old)
         session.commit()
-        record_nuke_epoch(session, "test", deleted={"lessons": 0})
+        record_reset_epoch(session, "test", deleted={"lessons": 0})
         session.commit()
         visible = filter_lessons_post_nuke(session, list(session.exec(select(LessonNode)).all()))
         assert len(visible) == 0
         epochs = list(
             session.exec(
-                select(SettingsActionAudit).where(SettingsActionAudit.action == NUKE_EPOCH_ACTION)
+                select(SettingsActionAudit).where(SettingsActionAudit.action == RESET_EPOCH_ACTION)
             ).all()
         )
         assert len(epochs) == 1

@@ -9,6 +9,7 @@ import { MemoryLessonDrawer, type LessonDetail } from "@/components/panels/Memor
 import { HiveBrainCanvas } from "@/components/hive-brain/HiveBrainCanvas";
 import { HiveBrainDrawer } from "@/components/hive-brain/HiveBrainDrawer";
 import { apiGet, apiPost } from "@/lib/apiClient";
+import { onHiveNukeComplete } from "@/lib/hiveRefresh";
 import { lessonNodeIdForApi } from "@/lib/apiNormalize";
 import type { PanelLoadMeta } from "@/types/api";
 import type {
@@ -66,14 +67,12 @@ export function HiveMemoryGraphPanel({ compact = false }: Props) {
     load();
   }, [load]);
 
-  useEffect(() => {
-    const onNuke = () => {
-      setGraph(null);
-      void load();
-    };
-    window.addEventListener("hive-nuke-complete", onNuke);
-    return () => window.removeEventListener("hive-nuke-complete", onNuke);
-  }, [load]);
+  useEffect(() => onHiveNukeComplete(() => {
+    setGraph(null);
+    setDrawerNode(null);
+    setLegacyLesson(null);
+    void load();
+  }), [load]);
 
   async function openNodeDrawer(nodeId: string) {
     setDrawerLoading(true);

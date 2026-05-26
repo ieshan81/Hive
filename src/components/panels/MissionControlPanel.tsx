@@ -5,6 +5,7 @@ import { Shield, Activity, Zap, Wallet, AlertTriangle } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { apiGet } from "@/lib/apiClient";
+import { onHiveNukeComplete } from "@/lib/hiveRefresh";
 
 type MissionStatus = {
   status?: string;
@@ -48,6 +49,8 @@ export function MissionControlPanel() {
     const t = setInterval(load, 30000);
     return () => clearInterval(t);
   }, [load]);
+
+  useEffect(() => onHiveNukeComplete(() => void load()), [load]);
 
   if (loading) return <EmptyState message="Loading Mission Control…" className="min-h-[240px]" />;
   if (error) {

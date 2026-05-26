@@ -8,34 +8,20 @@ from typing import Any, Optional
 from sqlmodel import Session, delete, select
 
 from app.database import (
-    AIReview,
-    AIMemory,
-    ActivityLog,
-    BlockedTrade,
     BrokerError,
     ExecutionLog,
     LessonNode,
-    MemoryEdge,
-    MemoryEvidence,
     OrderRecord,
-    PaperExperimentDecision,
     PaperExperimentOutcome,
     PositionSnapshot,
-    ResearchBacktestRun,
     SettingsActionAudit,
-    StrategyMemory,
-    StrategyMemoryLink,
-    SymbolMemory,
+    StrategyRegistry,
     SystemHealth,
-    TradeRecord,
 )
 from app.services.config_manager import ConfigManager
 from app.services.env_pause_service import env_pause_status
 from app.services.live_lock_tripwire import live_lock_tripwire_status
-from app.services.nuke_epoch_service import NUKE_EPOCH_ACTION, record_nuke_epoch
-
-
-KEEP_TABLES = frozenset({"system_health"})
+from app.services.nuke_reset_service import execute_nuke_reset, table_inventory
 
 
 class DangerZoneService:
@@ -44,29 +30,20 @@ class DangerZoneService:
         self.config = config or ConfigManager(session).get_current()
 
     def nuke_preview(self) -> dict[str, Any]:
+        inv = table_inventory()
         return {
             "status": "ok",
             "action": "nuke_everything",
             "confirmation_phrase": "NUKE CAGED HIVE",
-            "will_delete": [
-                "AI memories and lessons",
-                "Memory graph data",
-                "Paper orders and positions",
-                "Execution logs",
-                "Training/paper experiment decisions",
-                "Backtest runs",
-                "Broker error history",
-                "Activity logs",
-                "Confidence history artifacts",
+            "ux_notes": [
+                "This deletes all learned brain/data. It does not wipe Railway volume.",
+                "This keeps schema and live safety.",
+                "Do not manually wipe Railway volume/database for normal reset.",
             ],
-            "will_keep": [
-                "Database schema",
-                "Live env lock (stays locked)",
-                "Railway environment config (outside DB)",
-                "Operator learning/scheduler desired state (not changed by nuke)",
-                "Env-only pause flags (PAPER_TRADING_PAUSED_BY_ENV, etc.)",
-                "Minimal system_health bootstrap row",
-            ],
+            "will_delete": inv["delete_on_nuke"],
+            "will_keep": inv["preserve_on_nuke"],
+            "will_reseed": inv["reseed_after_nuke"],
+            "table_inventory": inv,
             "will_not_change": [
                 "autonomous_paper_learning.mode_enabled",
                 "autonomous_paper_learning.scheduler_enabled",
@@ -75,85 +52,11 @@ class DangerZoneService:
                 "paused flags in config",
             ],
             "live_trading_enabled": False,
-            "note": "Global pause is only via Railway env vars. Nuke deletes learned data only.",
+            "note": "Global pause is only via Railway env vars. Nuke is a full app-level data reset.",
         }
 
     def nuke_everything(self, operator: str = "operator") -> dict[str, Any]:
-        deleted = {}
-        tables = [
-            (LessonNode, "lessons"),
-            (AIMemory, "ai_memories"),
-            (MemoryEdge, "memory_edges"),
-            (MemoryEvidence, "memory_evidence"),
-            (StrategyMemory, "strategy_memories"),
-            (StrategyMemoryLink, "strategy_memory_links"),
-            (SymbolMemory, "symbol_memories"),
-            (PaperExperimentDecision, "paper_decisions"),
-            (PaperExperimentOutcome, "paper_outcomes"),
-            (ExecutionLog, "execution_logs"),
-            (OrderRecord, "orders"),
-            (PositionSnapshot, "positions"),
-            (TradeRecord, "trades"),
-            (BlockedTrade, "blocked_trades"),
-            (BrokerError, "broker_errors"),
-            (ActivityLog, "activity_logs"),
-            (AIReview, "ai_reviews"),
-            (ResearchBacktestRun, "backtest_runs"),
-        ]
-        for model, name in tables:
-            result = self.session.exec(delete(model))
-            deleted[name] = result.rowcount if hasattr(result, "rowcount") else "ok"
-
-        # Clear operator audits but keep nuke epoch markers and scheduler state rows.
-        audit_del = self.session.exec(
-            delete(SettingsActionAudit).where(SettingsActionAudit.action != NUKE_EPOCH_ACTION)
-        )
-        deleted["settings_audits"] = audit_del.rowcount if hasattr(audit_del, "rowcount") else "ok"
-
-        # Do not mutate learning/scheduler/pause config — env vars are the only global pause.
-        self._ensure_health_row()
-        epoch = record_nuke_epoch(self.session, operator, deleted=deleted)
-        env = env_pause_status()
-        apl = dict((self.config.get("autonomous_paper_learning") or {}))
-        desired_learning = bool(apl.get("mode_enabled"))
-        desired_scheduler = bool(apl.get("scheduler_enabled"))
-
-        self.session.add(
-            SettingsActionAudit(
-                action="nuke_everything",
-                actor=operator,
-                broker_mode="paper",
-                paper_broker=True,
-                live_trading_locked=True,
-                live_orders_enabled=False,
-                details_json={
-                    "deleted": deleted,
-                    "at": datetime.utcnow().isoformat() + "Z",
-                    **epoch,
-                },
-            )
-        )
-        self.session.flush()
-        lock = live_lock_tripwire_status(self.config)
-        if env.get("any_env_pause"):
-            headline = "Fresh brain. No memories yet. Env pause active — execution blocked until Railway env vars cleared."
-        elif desired_learning:
-            headline = "Fresh brain. No memories yet. Paper learning available."
-        else:
-            headline = "Fresh brain. No memories yet. Turn on paper learning when ready (not env-paused)."
-
-        return {
-            "status": "ok",
-            "fresh_brain": True,
-            "deleted": deleted,
-            "nuke_epoch": epoch,
-            "env_pause": env,
-            "desired_learning_enabled": desired_learning,
-            "desired_scheduler_enabled": desired_scheduler,
-            "config_pause_flags_changed": False,
-            **lock,
-            "message": headline,
-        }
+        return execute_nuke_reset(self.session, operator)
 
     def ready_cleanup_preview(self) -> dict[str, Any]:
         return {
@@ -226,8 +129,3 @@ class DangerZoneService:
             "cleanup_deleted_items": deleted,
             **live_lock_tripwire_status(self.config),
         }
-
-    def _ensure_health_row(self) -> None:
-        h = self.session.get(SystemHealth, 1)
-        if not h:
-            self.session.add(SystemHealth(id=1, alpaca_connected=False, gemini_configured=False))

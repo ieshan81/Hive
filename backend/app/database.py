@@ -500,6 +500,7 @@ class LessonNode(SQLModel, table=True):
     last_confirmed_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    reset_epoch_id: Optional[str] = Field(default=None, index=True)
 
 
 class MemoryPolicyConfig(SQLModel, table=True):
@@ -1155,6 +1156,7 @@ def _migrate_columns() -> None:
                 ("memory_scope", "VARCHAR", "'strategy'"),
                 ("strength", "FLOAT", "0.5"),
                 ("last_confirmed_at", "TIMESTAMP", None),
+                ("reset_epoch_id", "VARCHAR", None),
             ]:
                 if col not in ln_cols:
                     ddl = f"ALTER TABLE lesson_nodes ADD COLUMN {col} {typ}"

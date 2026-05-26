@@ -4,9 +4,11 @@ import { useEffect, useState } from "react";
 import { Skull, Trash2 } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { apiGet, apiPostOperator } from "@/lib/apiClient";
+import { dispatchHiveNukeComplete } from "@/lib/hiveRefresh";
 
 export function DangerZonePanel() {
   const [msg, setMsg] = useState<string | null>(null);
+  const [nukeDetail, setNukeDetail] = useState<Record<string, unknown> | null>(null);
   const [busy, setBusy] = useState(false);
   const [nukePreview, setNukePreview] = useState<Record<string, unknown> | null>(null);
   const [readyPreview, setReadyPreview] = useState<Record<string, unknown> | null>(null);
@@ -31,17 +33,31 @@ export function DangerZonePanel() {
       return;
     }
     setBusy(true);
+    setNukeDetail(null);
     const res = await apiPostOperator("/api/danger-zone/nuke-everything", {
       confirmation: "NUKE CAGED HIVE",
     });
     setBusy(false);
-    const data = res.data as { status?: string; reason?: string; required?: string; message?: string };
+    const data = res.data as {
+      status?: string;
+      reason?: string;
+      required?: string;
+      message?: string;
+      reset_epoch?: Record<string, unknown>;
+      post_nuke_counts?: Record<string, number>;
+      rows_deleted?: Record<string, unknown>;
+      ticker_may_create_post_nuke_memories?: boolean;
+    };
     if (data?.status === "refused" && data.reason === "confirmation_phrase_mismatch") {
       setMsg(`Confirmation failed. Type exactly: ${data.required ?? "NUKE CAGED HIVE"}`);
       return;
     }
-    if (res.ok) {
-      window.dispatchEvent(new CustomEvent("hive-nuke-complete"));
+    if (res.ok && data?.status === "ok") {
+      dispatchHiveNukeComplete({
+        reset_epoch_id: data.reset_epoch?.reset_epoch_id,
+        post_nuke_counts: data.post_nuke_counts,
+      });
+      setNukeDetail(data as Record<string, unknown>);
     }
     setMsg(res.ok ? String(data?.message ?? "Nuke complete.") : res.error ?? "Failed");
   }
@@ -65,6 +81,12 @@ export function DangerZonePanel() {
     setMsg(res.ok ? String(data?.message ?? "Cleanup complete.") : res.error ?? "Failed");
   }
 
+  const uxNotes = (nukePreview?.ux_notes as string[]) ?? [
+    "This deletes all learned brain/data. It does not wipe Railway volume.",
+    "This keeps schema and live safety.",
+    "Do not manually wipe Railway volume/database for normal reset.",
+  ];
+
   return (
     <section className="max-w-2xl space-y-6">
       <h1 className="text-xl font-bold text-red-300 flex items-center gap-2">
@@ -76,14 +98,21 @@ export function DangerZonePanel() {
       </p>
 
       <GlassPanel title="NUKE EVERYTHING">
-        <p className="text-[11px] text-amber-300 mb-2">
-          Deletes memories, lessons, paper artifacts, logs, and diagnostics. Does not pause learning or
-          scheduler — only Railway env vars can pause execution.
-        </p>
-        <ul className="text-[10px] text-slate-500 list-disc pl-4 mb-3">
-          {((nukePreview?.will_delete as string[]) ?? []).map((x) => (
+        <ul className="text-[11px] text-amber-200/90 list-disc pl-4 mb-2 space-y-1">
+          {uxNotes.map((x) => (
             <li key={x}>{x}</li>
           ))}
+        </ul>
+        <p className="text-[10px] text-slate-500 mb-2">
+          Typed confirmation required: <span className="font-mono text-slate-300">NUKE CAGED HIVE</span>
+        </p>
+        <ul className="text-[10px] text-slate-500 list-disc pl-4 mb-3 max-h-32 overflow-y-auto">
+          {((nukePreview?.will_delete as string[]) ?? []).slice(0, 12).map((x) => (
+            <li key={x}>{x}</li>
+          ))}
+          {((nukePreview?.will_delete as string[]) ?? []).length > 12 && (
+            <li>…and {((nukePreview?.will_delete as string[]) ?? []).length - 12} more tables</li>
+          )}
         </ul>
         <button
           type="button"
@@ -94,6 +123,21 @@ export function DangerZonePanel() {
           <Trash2 className="h-3.5 w-3.5" />
           NUKE EVERYTHING
         </button>
+        {nukeDetail && (
+          <div className="mt-3 text-[10px] text-slate-400 border border-white/5 rounded p-2 space-y-1">
+            <p className="text-emerald-300/90">Fresh brain — reset complete.</p>
+            <p>
+              Reset epoch:{" "}
+              <span className="font-mono">
+                {String((nukeDetail.reset_epoch as Record<string, unknown>)?.reset_epoch_id ?? "—")}
+              </span>
+            </p>
+            <p>
+              Ticker may create new post-nuke memories:{" "}
+              {nukeDetail.ticker_may_create_post_nuke_memories ? "yes" : "no (learning off or env pause)"}
+            </p>
+          </div>
+        )}
       </GlassPanel>
 
       <GlassPanel title="READY FOR LIVE TRADE CLEANUP">

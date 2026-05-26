@@ -21,7 +21,15 @@ def mission_control_status(session: Session, config: Optional[dict] = None) -> d
     from app.services.autonomous_paper_scheduler import AutonomousPaperScheduler
     from app.services.capital_allocator import CapitalAllocatorService
     from app.services.execution_logs_query_service import list_execution_logs
+    from app.services.nuke_epoch_service import nuke_status_export
     from app.services.push_pull_engine_service import PushPullEngineService
+
+    from app.database import LessonNode
+    from sqlmodel import select
+
+    nuke_st = nuke_status_export(session)
+    lesson_count = len(list(session.exec(select(LessonNode)).all()))
+    fresh_brain = lesson_count == 0
 
     sched = AutonomousPaperScheduler(session, cfg).status()
     allocator = CapitalAllocatorService(session, cfg).status_summary()
@@ -54,6 +62,8 @@ def mission_control_status(session: Session, config: Optional[dict] = None) -> d
 
     return {
         "status": "ok",
+        "fresh_brain": fresh_brain,
+        "nuke_status": nuke_st,
         "system_state_banner": {
             "headline": _headline(effective_learning, effective_scheduler, env, lock),
             "subline": plain_next,

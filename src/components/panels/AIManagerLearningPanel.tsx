@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Brain } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { apiGet } from "@/lib/apiClient";
+import { onHiveNukeComplete } from "@/lib/hiveRefresh";
 
 export function AIManagerLearningPanel() {
   const [status, setStatus] = useState<Record<string, unknown> | null>(null);
@@ -22,14 +23,11 @@ export function AIManagerLearningPanel() {
     load();
   }, [load]);
 
-  useEffect(() => {
-    const onNuke = () => {
-      setMemories([]);
-      void load();
-    };
-    window.addEventListener("hive-nuke-complete", onNuke);
-    return () => window.removeEventListener("hive-nuke-complete", onNuke);
-  }, [load]);
+  useEffect(() => onHiveNukeComplete(() => {
+    setMemories([]);
+    setStatus(null);
+    void load();
+  }), [load]);
 
   return (
     <section className="space-y-4">

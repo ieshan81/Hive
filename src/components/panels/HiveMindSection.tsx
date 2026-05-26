@@ -5,6 +5,7 @@ import { Brain, Sparkles } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { HiveMemoryGraphPanel } from "@/components/panels/HiveMemoryGraphPanel";
 import { apiGet } from "@/lib/apiClient";
+import { onHiveNukeComplete } from "@/lib/hiveRefresh";
 import { PanelError } from "@/components/ui/PanelError";
 import type { PanelLoadMeta } from "@/types/api";
 
@@ -49,11 +50,10 @@ export function HiveMindSection() {
     load();
   }, [load]);
 
-  useEffect(() => {
-    const onNuke = () => void load();
-    window.addEventListener("hive-nuke-complete", onNuke);
-    return () => window.removeEventListener("hive-nuke-complete", onNuke);
-  }, [load]);
+  useEffect(() => onHiveNukeComplete(() => {
+    setMind(null);
+    void load();
+  }), [load]);
 
   const fr = mind?.ai_review_freshness;
 

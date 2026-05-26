@@ -21,7 +21,9 @@ from app.services.memory_categories import (
 )
 from app.services.memory_consolidation_service import MemoryConsolidationService
 from app.services.memory_policy import load_memory_policy
-from app.services.nuke_epoch_service import filter_lessons_post_nuke, get_latest_nuke_epoch
+from app.services.nuke_epoch_service import filter_lessons_post_nuke, get_latest_reset_epoch
+
+_GRAPH_RESPONSE_CACHE: dict[str, Any] = {}
 from app.services.position_hold_time_service import build_position_truth
 from app.services.symbol_normalize import broker_symbol as to_broker_sym
 
@@ -56,6 +58,7 @@ class HiveBrainGraphService:
         return {
             "status": "ok",
             "fresh_brain": True,
+            "message": FRESH_BRAIN_HEADLINE,
             "nodes": [],
             "edges": [],
             "meta": {
@@ -159,15 +162,16 @@ class HiveBrainGraphService:
         max_nodes: Optional[int] = None,
     ) -> dict[str, Any]:
         max_n = max_nodes or int(self.policy.get("max_default_graph_nodes", 50))
-        nuke_epoch = get_latest_nuke_epoch(self.session)
-        lessons = self._select_lessons(show_raw, expand_cluster)
-        if nuke_epoch:
-            lessons = filter_lessons_post_nuke(self.session, lessons)
-            if not lessons:
-                return self._build_fresh_brain_empty_payload(
-                    nuke_epoch, show_raw=show_raw, expand_cluster=expand_cluster
-                )
-            return self._build_post_nuke_lesson_graph(lessons, nuke_epoch, max_n=max_n)
+        lessons = filter_lessons_post_nuke(
+            self.session, self._select_lessons(show_raw, expand_cluster)
+        )
+        reset_epoch = get_latest_reset_epoch(self.session) or {}
+        if not lessons:
+            return self._build_fresh_brain_empty_payload(
+                reset_epoch, show_raw=show_raw, expand_cluster=expand_cluster
+            )
+        if reset_epoch:
+            return self._build_post_nuke_lesson_graph(lessons, reset_epoch, max_n=max_n)
 
         nodes: list[dict] = [
             {
@@ -512,6 +516,8 @@ class HiveBrainGraphService:
             return {
                 "status": "ok",
                 "fresh_brain": True,
+                "message": base.get("message") or FRESH_BRAIN_HEADLINE,
+                "learned_memory_nodes": 0,
                 "center": None,
                 "clusters": [],
                 "nodes": [],

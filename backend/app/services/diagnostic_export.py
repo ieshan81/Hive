@@ -1224,6 +1224,43 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         "deferred_decisions.json": decisions_latest.get("deferred", []),
         "position_states.json": position_states(session),
         "trades_history.json": trades_history(session),
+        "reset_epoch.json": safe_export_section(
+            "reset_epoch.json",
+            lambda: __import__(
+                "app.services.nuke_reset_service", fromlist=["reset_epoch_export"]
+            ).reset_epoch_export(session),
+            export_errors,
+        ),
+        "post_nuke_table_counts.json": safe_export_section(
+            "post_nuke_table_counts.json",
+            lambda: __import__(
+                "app.services.nuke_reset_service", fromlist=["post_nuke_table_counts"]
+            ).post_nuke_table_counts(session),
+            export_errors,
+        ),
+        "database_bootstrap_status.json": safe_export_section(
+            "database_bootstrap_status.json",
+            lambda: __import__(
+                "app.services.database_bootstrap_service", fromlist=["repair_database_bootstrap"]
+            ).repair_database_bootstrap(session),
+            export_errors,
+        ),
+        "missing_tables.json": safe_export_section(
+            "missing_tables.json",
+            lambda: {
+                "missing": __import__(
+                    "app.services.database_bootstrap_service", fromlist=["list_missing_tables"]
+                ).list_missing_tables()
+            },
+            export_errors,
+        ),
+        "nuke_status.json": safe_export_section(
+            "nuke_status.json",
+            lambda: __import__(
+                "app.services.nuke_epoch_service", fromlist=["nuke_status_export"]
+            ).nuke_status_export(session),
+            export_errors,
+        ),
         "bundle_meta.json": {
             "database_fingerprint": database_fingerprint(),
             "exported_at": datetime.utcnow().isoformat() + "Z",

@@ -211,6 +211,14 @@ class AutonomousPaperLearningService:
         return {"status": "ok", "message": "All paper trading disabled", **self.status()}
 
     def run_one_cycle(self, *, operator: str = "operator") -> dict[str, Any]:
+        from app.services.nuke_reset_service import is_reset_in_progress
+
+        if is_reset_in_progress(self.session):
+            return {
+                "status": "skipped",
+                "reason": "reset_in_progress",
+                "orders_created": 0,
+            }
         if not bool(self.cfg.get("mode_enabled")):
             return {"status": "blocked", "reason": "autonomous_paper_learning_disabled", "orders_created": 0}
 
