@@ -282,9 +282,20 @@ class PushPullEngineService:
             "tick_at": tick_at,
             "result": details.get("result") or reason,
             "plain": plain,
-            "orders_created": int(details.get("orders_created") or details.get("new_orders") or 0),
+            "orders_created": int(
+                details.get("orders_created")
+                or details.get("order_count")
+                or details.get("new_orders")
+                or 0
+            ),
+            "order_count": int(details.get("order_count") or details.get("orders_created") or 0),
             "reason": reason,
             "symbols_scanned_count": details.get("symbols_scanned_count"),
+            "fresh_bar_count": details.get("fresh_bar_count"),
+            "stale_bar_count": details.get("stale_bar_count"),
+            "eligible_strategy_count": details.get("eligible_strategy_count"),
+            "push_signals_found": details.get("push_signals_found"),
+            "candidates_created": details.get("candidates_created"),
             "reason_breakdown": details.get("reason_breakdown"),
             "approved_count": details.get("approved_count"),
             "skipped_count": details.get("skipped_count"),

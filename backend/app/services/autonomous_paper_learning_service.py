@@ -232,7 +232,9 @@ class AutonomousPaperLearningService:
             }
 
         from app.services.activity_logger import log_activity
+        from app.services.push_pull_strategy_seed import ensure_crypto_push_pull_baseline
 
+        ensure_crypto_push_pull_baseline(self.session, self.config)
         log_activity(self.session, "tick_started", "Push-pull tick started", {"operator": operator}, commit=False)
 
         orders_before = self._order_count()
@@ -264,9 +266,13 @@ class AutonomousPaperLearningService:
             "plain_summary": tick_summary.get("plain_summary") or out.get("message"),
             **{k: tick_summary[k] for k in (
                 "symbols_scanned_count",
+                "fresh_bar_count",
+                "stale_bar_count",
+                "eligible_strategy_count",
                 "active_symbols_count",
                 "blocked_symbols_count",
                 "push_signals_found",
+                "candidates_created",
                 "approved_count",
                 "skipped_count",
                 "order_count",

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime
 from typing import Any, Optional
 
 from sqlmodel import Session
@@ -11,6 +10,7 @@ from sqlmodel import Session
 from app.services.aggressive_paper_learning_service import AggressivePaperLearningService
 from app.services.bar_freshness_service import BarFreshnessService
 from app.services.config_manager import ConfigManager
+from app.services.push_pull_strategy_seed import ensure_crypto_push_pull_baseline
 from app.services.training_execution_service import TrainingExecutionService
 from app.services.universe_builder import build_merged_universe
 
@@ -25,6 +25,8 @@ class PushPullScanService:
 
     def run_tick_scan(self, *, max_evaluate: int = 8) -> dict[str, Any]:
         """Full push-pull scan with reason breakdown (called each training cycle)."""
+        ensure_crypto_push_pull_baseline(self.session, self.config)
+
         universe = build_merged_universe(self.session, self.config, limit=60)
         reason_counts: Counter[str] = Counter()
         candidates_created = 0
@@ -33,10 +35,18 @@ class PushPullScanService:
         order_count = 0
         push_signals = 0
         decisions_out: list[dict] = []
+        fresh_bar_count = 0
+        stale_bar_count = 0
 
         active = [u for u in universe if u.get("status") == "Active"]
         blocked = [u for u in universe if u.get("status") == "Blocked"]
         watch = [u for u in universe if u.get("status") == "Watch-only"]
+
+        for u in universe:
+            if u.get("bar_freshness") == "fresh":
+                fresh_bar_count += 1
+            elif u.get("bar_freshness") == "stale":
+                stale_bar_count += 1
 
         for u in blocked:
             br = u.get("blocked_reason") or "blocked"
@@ -51,6 +61,21 @@ class PushPullScanService:
 
         scan = self.pl.scan_experiment_eligibility()
         eligible_strats = scan.get("eligible") or []
+        eligible_strategy_count = len(eligible_strats)
+
+        from app.services.activity_logger import log_activity
+
+        log_activity(
+            self.session,
+            "strategy_eligibility_checked",
+            f"Strategy eligibility: {eligible_strategy_count} paper-experiment strategies eligible",
+            {
+                "eligible_count": eligible_strategy_count,
+                "eligible_ids": [r.get("strategy_id") for r in eligible_strats[:10]],
+                "blocked_count": len(scan.get("blocked") or []),
+            },
+            commit=False,
+        )
 
         evaluated = 0
         for row in eligible_strats[:3]:
@@ -73,7 +98,6 @@ class PushPullScanService:
                 if evaluated >= max_evaluate:
                     break
                 evaluated += 1
-                u_row = next((x for x in universe if x.get("symbol") == sym), None)
                 fresh = self.bar.check(sym)
                 if not fresh.get("executable"):
                     reason_counts["data_stale"] += 1
@@ -109,6 +133,8 @@ class PushPullScanService:
                         reason_counts["quote_currency_unfunded"] += 1
                     elif rc in ("duplicate_buy",):
                         reason_counts["duplicate_buy"] += 1
+                    elif rc in ("data_stale",):
+                        reason_counts["data_stale"] += 1
                     elif rc in ("no_stop_loss", "not_eligible", "mode_disabled"):
                         reason_counts["no_push_signal"] += 1
                     else:
@@ -118,7 +144,7 @@ class PushPullScanService:
             if approved_count > 0:
                 break
 
-        if not eligible_strats and universe:
+        if eligible_strategy_count == 0:
             reason_counts["no_eligible_strategy"] += 1
         if push_signals == 0 and not reason_counts:
             reason_counts["no_push_signal"] = len(active) or len(universe)
@@ -127,6 +153,9 @@ class PushPullScanService:
             symbols_scanned=len(universe),
             active=len(active),
             blocked=len(blocked),
+            fresh=fresh_bar_count,
+            stale=stale_bar_count,
+            eligible_strats=eligible_strategy_count,
             push_signals=push_signals,
             approved=approved_count,
             skipped=skipped_count,
@@ -136,6 +165,9 @@ class PushPullScanService:
 
         return {
             "symbols_scanned_count": len(universe),
+            "fresh_bar_count": fresh_bar_count,
+            "stale_bar_count": stale_bar_count,
+            "eligible_strategy_count": eligible_strategy_count,
             "active_symbols_count": len(active),
             "blocked_symbols_count": len(blocked),
             "watch_only_count": len(watch),
@@ -157,6 +189,9 @@ def _plain_tick_summary(
     symbols_scanned: int,
     active: int,
     blocked: int,
+    fresh: int,
+    stale: int,
+    eligible_strats: int,
     push_signals: int,
     approved: int,
     skipped: int,
@@ -164,9 +199,9 @@ def _plain_tick_summary(
     reasons: Counter,
 ) -> str:
     if orders:
-        return f"Scanned {symbols_scanned} symbols — paper order submitted ({orders})."
+        return f"Scanned {symbols_scanned} symbols ({fresh} fresh bars) — paper order submitted ({orders})."
     if approved:
-        return f"Scanned {symbols_scanned} symbols — entry approved, awaiting fill."
+        return f"Scanned {symbols_scanned} symbols ({fresh} fresh) — entry approved, awaiting fill."
     parts = []
     label_map = {
         "no_push_signal": "no push signal",
@@ -180,4 +215,7 @@ def _plain_tick_summary(
     for code, n in reasons.most_common(8):
         parts.append(f"{n} {label_map.get(code, code.replace('_', ' '))}")
     detail = ", ".join(parts) if parts else "no stronger entry this tick"
-    return f"Scanned {symbols_scanned} symbols ({active} active, {blocked} blocked). No approved candidate: {detail}."
+    return (
+        f"Scanned {symbols_scanned} symbols ({fresh} fresh, {stale} stale bars, "
+        f"{eligible_strats} eligible strategies). No approved candidate: {detail}."
+    )

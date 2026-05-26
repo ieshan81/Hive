@@ -1275,6 +1275,30 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             ).universe_scan_summary(session, cfg_brain),
             export_errors,
         ),
+        "bar_freshness.json": safe_export_section(
+            "bar_freshness.json",
+            lambda: __import__(
+                "app.services.market_data_refresh_service", fromlist=["MarketDataRefreshService"]
+            ).MarketDataRefreshService(session, cfg_brain).freshness_report(asset_type="crypto"),
+            export_errors,
+        ),
+        "market_data_refresh.json": safe_export_section(
+            "market_data_refresh.json",
+            lambda: {
+                "note": "Run POST /api/market-data/refresh-bars to populate; export is freshness snapshot only.",
+                **__import__(
+                    "app.services.market_data_refresh_service", fromlist=["MarketDataRefreshService"]
+                ).MarketDataRefreshService(session, cfg_brain).freshness_report(asset_type="crypto"),
+            },
+            export_errors,
+        ),
+        "strategy_eligibility.json": safe_export_section(
+            "strategy_eligibility.json",
+            lambda: __import__(
+                "app.services.push_pull_strategy_seed", fromlist=["strategy_eligibility_export"]
+            ).strategy_eligibility_export(session),
+            export_errors,
+        ),
         "push_pull_signals.json": safe_export_section(
             "push_pull_signals.json",
             lambda: __import__(

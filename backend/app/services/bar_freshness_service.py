@@ -22,7 +22,14 @@ class BarFreshnessService:
         self.hist = HistoricalDataService(session, self.config)
 
     def check(self, symbol: str, timeframe: str = "5Min") -> dict[str, Any]:
-        bars, meta = self.hist.get_bars(symbol, timeframe=timeframe, min_rows=10, lookback_days=7)
+        bars, meta = self.hist.get_bars(
+            symbol,
+            timeframe=timeframe,
+            min_rows=10,
+            lookback_days=3,
+            max_staleness_hours=MAX_BAR_STALENESS_HOURS,
+            force_refresh=False,
+        )
         if not bars:
             return {
                 "fresh": False,

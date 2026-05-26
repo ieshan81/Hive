@@ -18,6 +18,7 @@ from app.routers import (
     universe,
     activity,
     performance,
+    market_data,
     push_pull,
     reports_hub,
     candle_lab,
@@ -68,6 +69,7 @@ app.include_router(mission_control.router)
 app.include_router(universe.router)
 app.include_router(activity.router)
 app.include_router(performance.router)
+app.include_router(market_data.router)
 app.include_router(push_pull.router)
 app.include_router(ai_manager.router)
 app.include_router(danger_zone.router)

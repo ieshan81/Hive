@@ -37,6 +37,9 @@ def start_fresh_paper_learning(session: Session, operator: str = "operator") -> 
 
     from app.services.paper_execution_service import PaperExecutionService
 
+    from app.services.push_pull_strategy_seed import ensure_crypto_push_pull_baseline
+
+    ensure_crypto_push_pull_baseline(session, cfg_mgr.get_current())
     PaperExecutionService(session).enable(operator=operator)
 
     from app.services.fast_crypto_training_loop import FastCryptoTrainingLoop

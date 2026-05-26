@@ -10,6 +10,7 @@ export const ALLOWED_POST_EXACT_PATHS = [
 ] as const;
 
 export const ALLOWED_POST_PREFIXES = [
+  "/api/market-data/",
   "/api/fast-training/",
   "/api/autonomous-paper-learning/",
   "/api/strategy-proposals/",

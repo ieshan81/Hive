@@ -242,8 +242,10 @@ class HistoricalDataService:
         timeframe: str = "1Hour",
         min_rows: int = 30,
         lookback_days: Optional[int] = None,
+        max_staleness_hours: Optional[float] = None,
+        force_refresh: bool = False,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        """Load from DB or fetch from Alpaca if insufficient; trim to lookback window."""
+        """Load from DB or fetch from Alpaca if insufficient or stale; trim to lookback window."""
         lb = lookback_days or 90
         rows = list(
             self.session.exec(
@@ -253,9 +255,23 @@ class HistoricalDataService:
             ).all()
         )
         meta: dict[str, Any] = {"source": "database", "synthetic": False, "gaps_detected": False}
-        if len(rows) < min_rows:
+
+        def _needs_fetch() -> bool:
+            if force_refresh or len(rows) < min_rows:
+                return True
+            if not rows or max_staleness_hours is None:
+                return False
+            last_ts = rows[-1].timestamp
+            age_h = (datetime.utcnow() - last_ts).total_seconds() / 3600.0
+            return age_h > max_staleness_hours
+
+        if _needs_fetch():
+            fetch_lb = min(lb, 7) if max_staleness_hours else lb
             fetch = self.fetch_and_store(
-                symbol, timeframe=timeframe, limit=min(500, lb * 24), lookback_days=lb
+                symbol,
+                timeframe=timeframe,
+                limit=min(500, max(100, fetch_lb * 24 * 12)),
+                lookback_days=fetch_lb,
             )
             if fetch.get("status") != "ok":
                 return [], {"error": fetch.get("message"), "confidence": "none", **fetch}
