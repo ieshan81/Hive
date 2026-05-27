@@ -77,7 +77,7 @@ def start_export_job() -> dict[str, Any]:
     def _worker() -> None:
         try:
             from app.services.diagnostic_export import (
-                bundle_as_zip_bytes_safe,
+                bundle_dict_as_zip_bytes,
                 diagnostic_bundle_filename,
                 export_diagnostic_bundle_safe,
             )
@@ -92,7 +92,7 @@ def start_export_job() -> dict[str, Any]:
                 with _JOB_LOCK:
                     _JOBS[job_id]["progress_pct"] = 70
                     _JOBS[job_id]["failed_sections"] = failed[:20]
-                zip_bytes = bundle_as_zip_bytes_safe(session)
+                zip_bytes = bundle_dict_as_zip_bytes(bundle)
                 fname = diagnostic_bundle_filename(session)
             with _JOB_LOCK:
                 _JOBS[job_id].update(

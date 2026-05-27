@@ -77,6 +77,14 @@ class PushPullScanService:
         scan = self.pl.scan_experiment_eligibility()
         eligible_strats = scan.get("eligible") or []
         eligible_strategy_count = len(eligible_strats)
+        eligible_by_asset: dict[str, dict] = {}
+        for row in eligible_strats:
+            asset = str(row.get("asset_class") or "").lower()
+            sid = str(row.get("strategy_id") or "")
+            if not asset:
+                asset = "crypto" if sid.startswith("crypto_") else ("stock" if sid.startswith("stock_") else "")
+            if asset in ("crypto", "stock") and asset not in eligible_by_asset:
+                eligible_by_asset[asset] = row
 
         from app.services.activity_logger import log_activity
 
@@ -95,7 +103,6 @@ class PushPullScanService:
 
         ranked = scoring.get("scores") or []
         selected = scoring.get("selected_candidate")
-        strategy_id = (eligible_strats[0].get("strategy_id") if eligible_strats else None) or "crypto_push_pull_baseline"
 
         evaluated = 0
         for row_score in ranked:
@@ -105,6 +112,14 @@ class PushPullScanService:
             if not sym:
                 continue
             evaluated += 1
+            asset_class = str(row_score.get("asset_class") or ("crypto" if "/" in sym else "stock")).lower()
+            strategy_row = eligible_by_asset.get(asset_class) or (eligible_strats[0] if eligible_strats else None)
+            strategy_id = (strategy_row or {}).get("strategy_id")
+            if not strategy_id:
+                skipped_count += 1
+                reason_counts[f"no_{asset_class}_strategy"] += 1
+                decisions_out.append({"score": row_score, "decision": "skipped", "reason": f"no_{asset_class}_strategy"})
+                continue
             push_signals += 1
             candidates_created += 1
 
@@ -272,6 +287,8 @@ def _plain_tick_summary(
         "no_edge_after_cost": "no edge after cost",
         "allocator_block": "allocator or validator block",
         "negative_edge_after_cost": "negative edge after cost",
+        "no_stock_strategy": "no stock paper strategy",
+        "no_crypto_strategy": "no crypto paper strategy",
     }
     for code, n in reasons.most_common(8):
         parts.append(f"{n} {label_map.get(code, code.replace('_', ' '))}")

@@ -15,7 +15,6 @@ from app.services.engine_config import cfg_get
 from app.services.fast_crypto_training_loop import FastCryptoTrainingLoop
 from app.services.fast_training_lease_service import AUTONOMOUS_LEASE_KEY, FastTrainingLeaseService
 from app.services.live_lock_tripwire import live_lock_tripwire_status
-from app.services.paper_execution_service import PaperExecutionService
 from app.services.research_lab_service import ResearchLabService
 from app.services.session_engine import SessionEngine
 
@@ -237,6 +236,48 @@ class AutonomousPaperLearningService:
         ensure_crypto_push_pull_baseline(self.session, self.config)
         log_activity(self.session, "tick_started", "Push-pull tick started", {"operator": operator}, commit=False)
 
+        refresh_summary: dict[str, Any] = {"status": "skipped", "reason": "disabled"}
+        if bool(cfg_get(self.config, "autonomous_paper_learning.refresh_market_data_before_tick", True)):
+            try:
+                from app.services.market_data_refresh_service import MarketDataRefreshService
+                from app.services.capital_allocator import CapitalAllocatorService
+
+                market_mode = CapitalAllocatorService(self.session, self.config).build_plan().get("current_market_mode")
+                refresher = MarketDataRefreshService(self.session, self.config)
+                lookback_hours = int(
+                    cfg_get(self.config, "autonomous_paper_learning.refresh_lookback_hours", 12) or 12
+                )
+                runs: list[dict[str, Any]] = []
+                runs.append(refresher.refresh_bars(
+                    asset_type="crypto",
+                    timeframe="5Min",
+                    lookback_hours=lookback_hours,
+                    operator=operator,
+                ))
+                if market_mode == "US_STOCK_OPEN" and bool(
+                    cfg_get(self.config, "autonomous_paper_learning.refresh_stocks_during_market_hours", True)
+                ):
+                    runs.append(refresher.refresh_bars(
+                        asset_type="stock",
+                        timeframe="5Min",
+                        lookback_hours=lookback_hours,
+                        operator=operator,
+                    ))
+                refresh_summary = {
+                    "status": "ok" if any(r.get("refreshed_count") for r in runs) else "partial",
+                    "market_mode": market_mode,
+                    "runs": runs,
+                    "fresh_count": sum(int(r.get("fresh_count") or 0) for r in runs),
+                    "stale_count": sum(int(r.get("stale_count") or 0) for r in runs),
+                    "refreshed_count": sum(int(r.get("refreshed_count") or 0) for r in runs),
+                }
+            except Exception as exc:
+                refresh_summary = {
+                    "status": "error",
+                    "reason": "market_data_refresh_failed",
+                    "message": str(exc)[:200],
+                }
+
         orders_before = self._order_count()
         result = self.ft.run_once(actor=operator)
         orders_after = self._order_count()
@@ -248,6 +289,7 @@ class AutonomousPaperLearningService:
             "orders_after": orders_after,
             "orders_created": max(0, orders_after - orders_before),
             "cycle_type": "autonomous_paper_learning",
+            "market_data_refresh": refresh_summary,
         }
         if entries.get("action") == "no_trade" or entries.get("reason") == "no_account_eligible_symbols":
             out["status"] = "ok"
@@ -261,6 +303,7 @@ class AutonomousPaperLearningService:
         audit_payload = {
             "new_orders": out["orders_created"],
             "orders_created": out["orders_created"],
+            "market_data_refresh": refresh_summary,
             "action": out.get("action") or entries.get("action"),
             "reason": out.get("reason") or entries.get("reason") or tick_summary.get("result"),
             "plain_summary": tick_summary.get("plain_summary") or out.get("message"),

@@ -37,6 +37,11 @@ FORBIDDEN_AST_NAMES = frozenset(
         "globals",
         "locals",
         "environ",
+        "__class__",
+        "__mro__",
+        "__subclasses__",
+        "__globals__",
+        "__dict__",
     }
 )
 
@@ -214,10 +219,12 @@ class StrategyImportService:
             elif isinstance(node, ast.Call):
                 if isinstance(node.func, ast.Name) and node.func.id in FORBIDDEN_AST_NAMES:
                     violations.append(f"forbidden call: {node.func.id}")
+                elif isinstance(node.func, ast.Attribute) and node.func.attr in FORBIDDEN_AST_NAMES:
+                    violations.append(f"forbidden call attribute: {node.func.attr}")
             elif isinstance(node, ast.Attribute):
-                if isinstance(node.func, ast.Name) if False else False:
-                    pass
                 val = node.value
+                if node.attr in FORBIDDEN_AST_NAMES:
+                    violations.append(f"forbidden attribute: {node.attr}")
                 if isinstance(val, ast.Name) and val.id in FORBIDDEN_AST_NAMES:
                     violations.append(f"forbidden attribute base: {val.id}")
         if violations:

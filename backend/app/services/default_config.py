@@ -361,6 +361,9 @@ DEFAULT_CONFIG = {
         "broker_error_pause_after": 3,
         "no_averaging_down": True,
         "no_duplicate_symbol_buy": True,
+        "refresh_market_data_before_tick": True,
+        "refresh_stocks_during_market_hours": True,
+        "refresh_lookback_hours": 12,
     },
     "confidence": {
         "weights": {

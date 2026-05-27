@@ -30,7 +30,11 @@ def build_merged_universe(
     from app.services.universe_mode_service import get_universe_mode
 
     mode = get_universe_mode(cfg)
-    lightweight = mode == "curated_watchlist"
+    # Preserve explicit lightweight=True from fast page-state / scanner callers.
+    # The old assignment silently turned lightweight off in Hybrid Radar mode,
+    # which made supposedly cached UI endpoints fan out into slower discovery
+    # paths and contributed to pool pressure under page load.
+    lightweight = bool(lightweight or mode == "curated_watchlist")
     by_sym: dict[str, dict[str, Any]] = {}
 
     priority_crypto = [
@@ -232,9 +236,13 @@ def build_merged_universe(
             else {"fresh": True, "executable": True, "bar_freshness": "unknown", "plain": ""}
         )
         qfresh = (
-            quote_svc.check(sym)
-            if "/" in sym and lightweight
-            else {"quote_freshness": "unknown", "executable": True, "plain": ""}
+            {"quote_freshness": "not_checked_cached_view", "executable": True, "plain": "Quote checked later by scorer/preflight"}
+            if lightweight
+            else (
+                quote_svc.check(sym)
+                if "/" in sym
+                else {"quote_freshness": "unknown", "executable": True, "plain": ""}
+            )
         )
         bar_ok = bool(fresh.get("executable"))
         quote_ok = bool(qfresh.get("executable", True))

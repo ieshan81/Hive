@@ -9,6 +9,7 @@ import { apiGet } from "@/lib/apiClient";
 type Funnel = {
   available: number;
   cached: number;
+  fresh?: number;
   eligible: number;
   ranked: number;
   execution_shortlist: number;
@@ -37,6 +38,8 @@ type Payload = {
   counts?: {
     available_usd_pairs?: number;
     cached_usd_pairs?: number;
+    fresh?: number;
+    fresh_count?: number;
     eligible?: number;
     ranked?: number;
     execution_shortlist?: number;
@@ -52,10 +55,25 @@ type Payload = {
 const STAGE_DEFS = [
   { key: "available" as const, label: "Available", color: "#849495" },
   { key: "cached" as const, label: "Cached", color: "#b9cacb" },
+  { key: "fresh" as const, label: "Fresh Data", color: "#c8f3f5" },
   { key: "eligible" as const, label: "Eligible", color: "#00dbe9" },
   { key: "ranked" as const, label: "Ranked", color: "#00f0ff" },
   { key: "execution_shortlist" as const, label: "Shortlist", color: "#00FF66" },
 ];
+
+function humanizeBlocker(key: string): string {
+  const known: Record<string, string> = {
+    stale_bar: "Stale candle data",
+    stale_bar_1m: "Stale one-minute candles",
+    stale_or_missing_quote: "Missing fresh quote",
+    liquidity_too_low: "Liquidity too low",
+    insufficient_historical_bars: "Not enough candle history",
+    account_not_eligible: "Account cannot trade pair",
+    spread_too_wide: "Spread too wide",
+    edge_after_cost_not_positive: "No edge after cost",
+  };
+  return known[key] ?? key.replace(/_/g, " ");
+}
 
 export function UniverseRadarFunnel() {
   const [data, setData] = useState<Payload | null>(null);
@@ -68,7 +86,8 @@ export function UniverseRadarFunnel() {
       const ps = r.data;
       setData({
         status: String(ps.status ?? "ok"),
-        answer: ps.reason ? String(ps.reason) : undefined,
+        answer: ps.answer ? String(ps.answer) : ps.reason ? String(ps.reason) : undefined,
+        block_breakdown: (ps.block_breakdown as Record<string, number>) ?? {},
         counts: ps.counts as Payload["counts"],
         pipeline: { cycle_id: "cached", funnel: ps.funnel as Funnel, shortlist: [] },
       });
@@ -86,6 +105,7 @@ export function UniverseRadarFunnel() {
     ? {
         available: data.counts.available_usd_pairs ?? data.counts.cached_usd_pairs ?? 0,
         cached: data.counts.cached_usd_pairs ?? data.counts.available_usd_pairs ?? 0,
+        fresh: data.counts.fresh ?? data.counts.fresh_count ?? 0,
         eligible: data.counts.eligible ?? 0,
         ranked: data.counts.ranked ?? 0,
         execution_shortlist: data.counts.execution_shortlist ?? 0,
@@ -94,6 +114,10 @@ export function UniverseRadarFunnel() {
   const shortlist =
     (data?.pipeline?.shortlist as Shortlist[]) ??
     ((data as { execution_shortlist?: Shortlist[] })?.execution_shortlist ?? []);
+  const blockers = Object.entries(data?.block_breakdown ?? {})
+    .filter(([, value]) => Number(value) > 0)
+    .sort((a, b) => Number(b[1]) - Number(a[1]))
+    .slice(0, 4);
 
   return (
     <GlassPanel
@@ -150,9 +174,24 @@ export function UniverseRadarFunnel() {
         {loading ? (
           <p className="text-[11px] text-[#849495]">Loading rankings…</p>
         ) : shortlist.length === 0 ? (
-          <p className="text-[11px] text-[#849495]">
-            No symbols passed the ranking gate this cycle.
-          </p>
+          <div className="rounded-md border border-white/[0.06] bg-black/20 px-3 py-2">
+            <p className="text-[11px] text-[#b9cacb]">
+              No execution shortlist yet. Cached symbols are visible; paper entries still require fresh candles,
+              fresh quotes, positive edge, and risk cage approval during the tick.
+            </p>
+            {blockers.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {blockers.map(([key, value]) => (
+                  <span
+                    key={key}
+                    className="rounded border border-amber-300/20 bg-amber-300/10 px-2 py-0.5 text-[10px] text-amber-200"
+                  >
+                    {humanizeBlocker(key)}: {Number(value)}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
         ) : (
           <ul className="space-y-1.5">
             {shortlist.map((s) => (

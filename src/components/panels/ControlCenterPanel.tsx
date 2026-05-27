@@ -14,6 +14,10 @@ type ControlCenterStatus = {
   operator_actions?: { label: string; endpoint: string }[];
 };
 
+function humanize(key: string): string {
+  return key.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
 export function ControlCenterPanel() {
   const [data, setData] = useState<ControlCenterStatus | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -33,6 +37,7 @@ export function ControlCenterPanel() {
   }, []);
 
   async function repairBootstrap() {
+    if (!window.confirm("Run database bootstrap repair? This does not unlock live trading.")) return;
     setBusy(true);
     setMsg(null);
     const res = await apiPostOperator("/api/admin/repair-database-bootstrap", {});
@@ -54,7 +59,7 @@ export function ControlCenterPanel() {
           Control Center
         </h1>
         <p className="text-sm text-slate-400 mt-1">
-          System state, risk cage, strategy parameters, and operator actions — live trading remains locked.
+          Operator controls for paper learning, risk settings, and diagnostics. Live trading remains locked.
         </p>
       </div>
 
@@ -62,7 +67,7 @@ export function ControlCenterPanel() {
         <dl className="grid grid-cols-2 gap-2 text-sm">
           {Object.entries(sys).map(([k, v]) => (
             <div key={k}>
-              <dt className="text-slate-500 capitalize">{k.replace(/_/g, " ")}</dt>
+              <dt className="text-slate-500">{humanize(k)}</dt>
               <dd className="text-white font-medium">{String(v)}</dd>
             </div>
           ))}
@@ -73,7 +78,7 @@ export function ControlCenterPanel() {
         <dl className="grid grid-cols-2 gap-2 text-sm">
           {Object.entries(risk).map(([k, v]) => (
             <div key={k}>
-              <dt className="text-slate-500">{k.replace(/_/g, " ")}</dt>
+              <dt className="text-slate-500">{humanize(k)}</dt>
               <dd className="text-white">{String(v)}</dd>
             </div>
           ))}
@@ -84,7 +89,7 @@ export function ControlCenterPanel() {
         <dl className="grid grid-cols-2 gap-2 text-sm">
           {Object.entries(params).map(([k, v]) => (
             <div key={k}>
-              <dt className="text-slate-500">{k.replace(/_/g, " ")}</dt>
+              <dt className="text-slate-500">{humanize(k)}</dt>
               <dd className="text-white">{String(v)}</dd>
             </div>
           ))}
@@ -94,7 +99,7 @@ export function ControlCenterPanel() {
       <GlassPanel title="Operator Actions" icon={<Wrench className="h-4 w-4" />}>
         <ul className="text-sm text-slate-300 space-y-1">
           {(data.operator_actions ?? []).map((a) => (
-            <li key={a.endpoint}>{a.label} — <span className="text-slate-500">{a.endpoint}</span></li>
+            <li key={a.endpoint}>{a.label}</li>
           ))}
         </ul>
         <button

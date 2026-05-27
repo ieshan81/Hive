@@ -9,31 +9,55 @@ import { symbolIdentity } from "@/lib/symbolIdentity";
 
 type SymbolRow = {
   symbol: string;
-  asset_type: string;
-  status: string;
-  tradable_now: boolean;
+  asset_type?: string;
+  status?: string;
+  tradable_now?: boolean;
   source?: string;
   blocked_reason?: string;
+  block_reason?: string;
   quote_currency?: string;
   funding_status?: string;
   bar_freshness?: string;
   quote_freshness?: string;
   last_scan_at?: string;
+  universe_rank_score?: number;
 };
 
 type SourcesSummary = {
   source_counts?: Record<string, number>;
-  why_only_8_crypto_displayed?: string;
+  source_note?: string;
   alpaca_crypto_api_called?: boolean;
   last_refresh_at?: string;
 };
 
+const FILTERS = ["all", "ranked", "crypto", "stock", "blocked", "watch"] as const;
+
+function humanize(key: string): string {
+  const known: Record<string, string> = {
+    stale_bar: "Stale candle data",
+    stale_bar_1m: "Stale one-minute candles",
+    stale_or_missing_quote: "Missing fresh quote",
+    liquidity_too_low: "Liquidity too low",
+    insufficient_historical_bars: "Not enough candle history",
+    account_not_eligible: "Account cannot trade pair",
+    spread_too_wide: "Spread too wide",
+    edge_after_cost_not_positive: "No edge after cost",
+  };
+  return known[key] ?? key.replace(/_/g, " ");
+}
+
 export function UniversePanel() {
   const [symbols, setSymbols] = useState<SymbolRow[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
+  const [blockBreakdown, setBlockBreakdown] = useState<Record<string, number>>({});
   const [sources, setSources] = useState<SourcesSummary | null>(null);
-  const [mode, setMode] = useState<{ mode_label?: string; mode_explanation?: string; stocks_session_note?: string; active_mode?: string } | null>(null);
-  const [filter, setFilter] = useState<"all" | "active" | "crypto" | "stock" | "blocked" | "watch">("all");
+  const [mode, setMode] = useState<{
+    mode_label?: string;
+    mode_explanation?: string;
+    stocks_session_note?: string;
+    active_mode?: string;
+  } | null>(null);
+  const [filter, setFilter] = useState<(typeof FILTERS)[number]>("all");
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -41,33 +65,40 @@ export function UniversePanel() {
     const ps = await apiGet<Record<string, unknown>>("/api/page-state/universe");
     if (ps.ok && ps.data) {
       const d = ps.data;
-      const syms = (d.symbols as SymbolRow[]) ?? [];
-      setSymbols(syms);
+      const syms = ((d.symbols as SymbolRow[]) ?? []).filter((s) => s.symbol);
+      const f = (d.funnel as Record<string, number>) ?? {};
+      const blockers = (d.block_breakdown as Record<string, number>) ?? {};
       const c = (d.counts as Record<string, number>) ?? {};
-      setCounts({
-        total: c.available_usd_pairs ?? syms.length,
-        active: syms.filter((s) => s.status === "Active" || s.status === "Ranked" || s.status === "Cached").length,
-        blocked: syms.filter((s) => s.status === "Blocked").length,
-        crypto: syms.length,
-      });
       const sp = (d.source_proof as Record<string, unknown>) ?? {};
+
+      setSymbols(syms);
+      setBlockBreakdown(blockers);
+      setCounts({
+        total: f.available ?? c.available_usd_pairs ?? syms.length,
+        cached: f.cached ?? c.cached_usd_pairs ?? syms.length,
+        fresh: f.fresh ?? c.fresh ?? c.fresh_count ?? 0,
+        eligible: f.eligible ?? c.eligible ?? 0,
+        ranked: f.ranked ?? c.ranked ?? 0,
+        shortlist: f.execution_shortlist ?? c.execution_shortlist ?? 0,
+        displayed: syms.length,
+      });
       setSources({
         source_counts: {
           alpaca_crypto_assets_api: Number(sp.usd_pair_count ?? syms.length),
-          curated_crypto_watchlist: Number(sp.curated_crypto_displayed ?? syms.length),
+          displayed_pairs: Number(sp.curated_crypto_displayed ?? syms.length),
         },
         alpaca_crypto_api_called: Boolean(sp.api_called),
         last_refresh_at: sp.last_successful_scan as string | undefined,
-        why_only_8_crypto_displayed:
+        source_note:
           syms.length > 8
-            ? `Hybrid radar shows ${syms.length} cached USD pairs`
-            : "Curated subset on display",
+            ? `Hybrid radar is showing ${syms.length} cached USD pairs, not a tiny curated list.`
+            : "This is a reduced cached display. Run a radar refresh to rebuild the broader universe.",
       });
       setMode({
         mode_label: String(d.mode_label ?? "Hybrid Radar"),
         active_mode: String(d.active_mode ?? "hybrid_radar"),
         mode_explanation: d.cached_data_used
-          ? "Using cached radar snapshot — live refresh available via Control Center"
+          ? "Using cached radar truth. The paper tick refreshes candles before symbols can become entry-eligible."
           : undefined,
       });
     }
@@ -80,19 +111,25 @@ export function UniversePanel() {
 
   const filtered = useMemo(() => {
     return symbols.filter((r) => {
+      const status = String(r.status ?? "");
+      const assetType = String(r.asset_type ?? "");
       if (filter === "all") return true;
-      if (filter === "active") return r.status === "Active";
-      if (filter === "crypto") return r.asset_type === "Crypto";
-      if (filter === "stock") return r.asset_type === "Stock";
-      if (filter === "blocked") return r.status === "Blocked";
-      if (filter === "watch") return r.status === "Watch-only";
+      if (filter === "ranked") return status === "Ranked" || Number(r.universe_rank_score ?? 0) > 0;
+      if (filter === "crypto") return assetType === "Crypto";
+      if (filter === "stock") return assetType === "Stock";
+      if (filter === "blocked") return status === "Blocked" || Boolean(r.blocked_reason ?? r.block_reason);
+      if (filter === "watch") return status === "Watch-only" || status === "Cached";
       return true;
     });
   }, [symbols, filter]);
 
-  if (loading) return <EmptyState message="Loading universe…" />;
+  if (loading) return <EmptyState message="Loading universe..." />;
 
   const sc = sources?.source_counts ?? {};
+  const topBlockers = Object.entries(blockBreakdown)
+    .filter(([, value]) => Number(value) > 0)
+    .sort((a, b) => Number(b[1]) - Number(a[1]))
+    .slice(0, 6);
 
   return (
     <section className="space-y-4 max-w-5xl">
@@ -101,42 +138,69 @@ export function UniversePanel() {
         Universe
       </h1>
       <p className="text-sm text-slate-400">
-        Mode: <span className="text-hive-cyan">{mode?.mode_label ?? "—"}</span> ·{" "}
-        {counts.total ?? symbols.length} displayed · {counts.active ?? 0} active · {counts.blocked ?? 0} blocked
+        Mode: <span className="text-hive-cyan">{mode?.mode_label ?? "Hybrid Radar"}</span> |{" "}
+        {counts.total ?? symbols.length} available | {counts.cached ?? 0} cached | {counts.eligible ?? 0} eligible
       </p>
       {mode?.mode_explanation && <p className="text-[11px] text-slate-500">{mode.mode_explanation}</p>}
       {mode?.stocks_session_note && <p className="text-[11px] text-amber-300/80">{mode.stocks_session_note}</p>}
+
+      <GlassPanel title="Radar funnel">
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-6">
+          {[
+            ["Available", counts.total],
+            ["Cached", counts.cached],
+            ["Fresh Data", counts.fresh],
+            ["Eligible", counts.eligible],
+            ["Ranked", counts.ranked],
+            ["Shortlist", counts.shortlist],
+          ].map(([label, value]) => (
+            <div key={String(label)} className="rounded-md border border-white/10 bg-white/[0.03] p-3">
+              <p className="text-[10px] uppercase tracking-wide text-slate-500">{label}</p>
+              <p className="text-lg font-semibold text-white">{String(value ?? 0)}</p>
+            </div>
+          ))}
+        </div>
+        {topBlockers.length > 0 ? (
+          <div className="mt-3">
+            <p className="text-[11px] uppercase tracking-wide text-slate-500">Top blockers</p>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {topBlockers.map(([key, value]) => (
+                <span
+                  key={key}
+                  className="rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1 text-[11px] text-amber-200"
+                >
+                  {humanize(key)}: {Number(value)}
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </GlassPanel>
 
       <GlassPanel title="Source proof">
         <dl className="grid grid-cols-2 md:grid-cols-3 gap-2 text-[11px]">
           <div>
             <dt className="text-slate-500">Alpaca crypto API</dt>
-            <dd className="text-white">{sc.alpaca_crypto_assets_api ?? "—"} assets</dd>
+            <dd className="text-white">{sc.alpaca_crypto_assets_api ?? "-"} assets</dd>
           </div>
           <div>
-            <dt className="text-slate-500">Curated crypto</dt>
-            <dd className="text-white">{sc.curated_crypto_watchlist ?? 8} shown</dd>
-          </div>
-          <div>
-            <dt className="text-slate-500">Curated stocks</dt>
-            <dd className="text-white">{sc.curated_stock_watchlist ?? 10}</dd>
+            <dt className="text-slate-500">Displayed pairs</dt>
+            <dd className="text-white">{sc.displayed_pairs ?? symbols.length}</dd>
           </div>
           <div>
             <dt className="text-slate-500">API called</dt>
-            <dd className="text-white">{sources?.alpaca_crypto_api_called ? "yes" : "no"}</dd>
+            <dd className="text-white">{sources?.alpaca_crypto_api_called ? "Yes" : "No"}</dd>
           </div>
           <div>
             <dt className="text-slate-500">Last refresh</dt>
-            <dd className="text-white">{sources?.last_refresh_at?.slice(0, 19) ?? "—"}</dd>
+            <dd className="text-white">{sources?.last_refresh_at?.slice(0, 19) ?? "-"}</dd>
           </div>
         </dl>
-        {sources?.why_only_8_crypto_displayed && (
-          <p className="text-[10px] text-slate-500 mt-2">{sources.why_only_8_crypto_displayed}</p>
-        )}
+        {sources?.source_note && <p className="text-[10px] text-slate-500 mt-2">{sources.source_note}</p>}
       </GlassPanel>
 
       <div className="flex flex-wrap gap-1">
-        {(["all", "active", "crypto", "stock", "blocked", "watch"] as const).map((key) => (
+        {FILTERS.map((key) => (
           <button
             key={key}
             type="button"
@@ -167,24 +231,21 @@ export function UniversePanel() {
             <tbody>
               {filtered.map((r) => {
                 const id = symbolIdentity(r.symbol);
-                const dimStock = r.asset_type === "Stock" && r.status === "Blocked";
+                const block = r.blocked_reason || r.block_reason || "";
                 return (
-                  <tr
-                    key={r.symbol}
-                    className={`border-t border-white/5 text-slate-300 ${dimStock ? "opacity-50" : ""}`}
-                  >
+                  <tr key={r.symbol} className="border-t border-white/5 text-slate-300">
                     <td className="py-1.5 pr-2 font-medium text-white flex items-center gap-2">
                       <span className="inline-flex h-6 w-6 items-center justify-center rounded bg-hive-cyan/10 text-[10px] text-hive-cyan">
                         {id.glyph || id.name.slice(0, 2)}
                       </span>
                       {r.symbol}
                     </td>
-                  <td className="py-1.5 pr-2">{r.asset_type}</td>
-                  <td className="py-1.5 pr-2 text-slate-500">{(r.source ?? "—").replace(/_/g, " ")}</td>
-                  <td className="py-1.5 pr-2">{r.status}</td>
-                  <td className="py-1.5 pr-2">{r.bar_freshness ?? "—"}</td>
-                  <td className="py-1.5 pr-2">{r.quote_freshness ?? "—"}</td>
-                    <td className="py-1.5 text-slate-500">{r.blocked_reason || "—"}</td>
+                    <td className="py-1.5 pr-2">{r.asset_type ?? "Crypto"}</td>
+                    <td className="py-1.5 pr-2 text-slate-500">{humanize(r.source ?? "-")}</td>
+                    <td className="py-1.5 pr-2">{r.status ?? "Cached"}</td>
+                    <td className="py-1.5 pr-2">{humanize(r.bar_freshness ?? "-")}</td>
+                    <td className="py-1.5 pr-2">{humanize(r.quote_freshness ?? "-")}</td>
+                    <td className="py-1.5 text-slate-500">{block ? humanize(block) : "-"}</td>
                   </tr>
                 );
               })}

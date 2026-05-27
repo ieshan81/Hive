@@ -29,6 +29,13 @@ def _strategy_version(session: Session) -> str:
     return str(params.get("version") or STRATEGY_VERSION_DEFAULT)
 
 
+def _asset_class_for(symbol: str, row: Optional[dict] = None) -> str:
+    asset = str((row or {}).get("asset_type") or "").lower()
+    if asset in ("crypto", "stock"):
+        return asset
+    return "crypto" if "/" in symbol else "stock"
+
+
 def _thresholds(config: dict) -> dict[str, float]:
     pp = config.get("push_pull") or {}
     return {
@@ -82,10 +89,12 @@ def score_symbol(
     has_position: bool = False,
 ) -> dict[str, Any]:
     """Score one symbol with research model score_push_pull_setup."""
+    asset_class = _asset_class_for(symbol, universe_row)
+    strategy_id = "crypto_push_pull_baseline" if asset_class == "crypto" else "stock_push_pull_baseline"
     bar_svc = BarFreshnessService(session, config)
     quote_svc = QuoteFreshnessService(session, config)
     bar_chk = bar_svc.check(symbol, timeframe="5Min", allow_fetch=False)
-    quote_chk = quote_svc.check(symbol, asset_class="crypto")
+    quote_chk = quote_svc.check(symbol, asset_class=asset_class)
     quote = {
         "bid": quote_chk.get("bid"),
         "ask": quote_chk.get("ask"),
@@ -103,7 +112,7 @@ def score_symbol(
     if bar_chk.get("staleness_hours") is not None:
         bar_age_min = float(bar_chk["staleness_hours"]) * 60.0
 
-    tier = "TIER_MAJOR" if symbol in ("BTC/USD", "ETH/USD") else "TIER_ALT"
+    tier = "TIER_MAJOR" if symbol in ("BTC/USD", "ETH/USD", "SPY", "QQQ", "AAPL", "MSFT", "NVDA") else "TIER_ALT"
     scored = score_push_pull_setup(
         config,
         symbol=symbol,
@@ -124,7 +133,8 @@ def score_symbol(
     th = _thresholds(config)
     return {
         "symbol": symbol,
-        "strategy_id": "crypto_push_pull_baseline",
+        "strategy_id": strategy_id,
+        "asset_class": asset_class,
         "strategy_version": version,
         "scoring_model": SCORING_MODEL,
         "push_score": scored.push_score,
@@ -151,7 +161,7 @@ def score_active_universe(
     universe: Optional[list[dict]] = None,
     limit: int = 24,
 ) -> dict[str, Any]:
-    """Score active crypto symbols; rank by trade_quality_score."""
+    """Score active paper symbols; rank by trade_quality_score."""
     cfg = config or ConfigManager(session).get_current()
     from app.services.alpaca_adapter import AlpacaAdapter
 
@@ -180,14 +190,14 @@ def score_active_universe(
         if (p.qty or 0) > 0
     }
 
-    active_crypto = [
+    active_assets = [
         u
         for u in universe
-        if u.get("status") == "Active" and (u.get("asset_type") == "Crypto" or "/" in str(u.get("symbol", "")))
+        if u.get("status") == "Active" and u.get("asset_type") in ("Crypto", "Stock")
     ][:limit]
 
     scored_rows: list[dict[str, Any]] = []
-    for row in active_crypto:
+    for row in active_assets:
         sym = row.get("symbol") or ""
         norm = sym.upper().replace("/", "")
         has_pos = norm in open_syms

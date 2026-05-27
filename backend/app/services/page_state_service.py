@@ -164,8 +164,36 @@ def page_state_universe(session: Session) -> dict[str, Any]:
         cfg = ConfigManager(session).get_current()
         mode = get_universe_mode(cfg)
         cached = _LAST_SUCCESS.get("payload") or {}
-        counts = cached.get("counts") or minimal_radar_counts(session, cfg)
-        pipe = cached.get("pipeline") or {}
+        try:
+            from app.services.universe_strategy_discovery_service import build_funnel_breakdown
+
+            radar = build_funnel_breakdown(
+                session,
+                cfg,
+                max_evaluate=int((cfg.get("universe") or {}).get("max_scanned_symbols_per_cycle", 36) or 36),
+                fetch_quotes=False,
+            )
+        except Exception as exc:
+            radar = {
+                "status": "degraded",
+                "reason": "cached_radar_failed",
+                "answer": str(exc)[:160],
+                "pipeline": cached.get("pipeline") or {},
+                "funnel": cached.get("funnel") or {},
+                "block_breakdown": cached.get("block_breakdown") or {},
+            }
+        pipe = radar.get("pipeline") or cached.get("pipeline") or {}
+        rfunnel = radar.get("funnel") or {}
+        counts = {
+            **minimal_radar_counts(session, cfg),
+            **(cached.get("counts") or {}),
+            "fresh": int(rfunnel.get("fresh") or (pipe.get("funnel") or {}).get("fresh") or 0),
+            "eligible": int(rfunnel.get("eligible") or (pipe.get("funnel") or {}).get("eligible") or 0),
+            "ranked": int(rfunnel.get("ranked") or (pipe.get("funnel") or {}).get("ranked") or 0),
+            "execution_shortlist": int(
+                rfunnel.get("execution_shortlist") or (pipe.get("funnel") or {}).get("execution_shortlist") or 0
+            ),
+        }
         funnel = pipe.get("funnel") or {
             "available": counts.get("available_usd_pairs") or counts.get("cached_usd_pairs") or 0,
             "cached": counts.get("cached_usd_pairs") or counts.get("available_usd_pairs") or 0,
@@ -206,6 +234,22 @@ def page_state_universe(session: Session) -> dict[str, Any]:
                 for r in cached["ranked_candidates"][:36]
                 if r.get("symbol")
             ] or symbols_table
+        ranked_rows = pipe.get("all_ranked") or []
+        if ranked_rows:
+            symbols_table = [
+                {
+                    "symbol": r.get("symbol"),
+                    "asset_type": "Crypto" if "/" in str(r.get("symbol") or "") else "Stock",
+                    "status": "Ranked" if r.get("eligible") and not r.get("dropped") else "Blocked",
+                    "source": "cached_radar_score",
+                    "universe_rank_score": r.get("universe_rank_score"),
+                    "bar_freshness": "fresh" if float(r.get("freshness") or 0) > 0.1 else "stale",
+                    "quote_freshness": "cached_proxy" if r.get("cached_proxy_quote") else "not_checked_cached_view",
+                    "blocked_reason": r.get("ineligible_reason"),
+                }
+                for r in ranked_rows[:36]
+                if r.get("symbol")
+            ] or symbols_table
 
         scan = last_successful_scan()
         return _envelope(
@@ -216,6 +260,8 @@ def page_state_universe(session: Session) -> dict[str, Any]:
                 "counts": counts,
                 "symbols": symbols_table,
                 "lesser_known_highlights": cached.get("lesser_known_highlights") or [],
+                "answer": radar.get("answer"),
+                "block_breakdown": radar.get("block_breakdown") or {},
                 "source_proof": {
                     "alpaca_crypto_api": "connected" if usd_pairs else "degraded",
                     "api_called": bool(scan.get("last_successful_scan")),
@@ -225,7 +271,7 @@ def page_state_universe(session: Session) -> dict[str, Any]:
                     "curated_crypto_displayed": len(symbols_table),
                 },
                 "cached_data_used": True,
-                "reason": cached.get("reason") or ("no_live_refresh" if not scan.get("last_successful_scan") else None),
+                "reason": radar.get("reason") or cached.get("reason") or ("no_live_refresh" if not scan.get("last_successful_scan") else None),
             },
             warnings=["Showing cached radar snapshot — live refresh not run on this request"] if not scan.get("last_successful_scan") else [],
             missing_sections=[] if funnel.get("available") else ["live_funnel"],

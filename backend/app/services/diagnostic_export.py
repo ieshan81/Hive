@@ -2346,5 +2346,31 @@ def bundle_as_zip_bytes_safe(session: Session) -> bytes:
         return buf.getvalue()
 
 
+def bundle_dict_as_zip_bytes(bundle: dict[str, Any]) -> bytes:
+    """Encode an already-built bundle without re-running DB-heavy export code."""
+    import io
+    import zipfile
+
+    from app.services.export_safe import json_safe
+
+    bundle = dict(bundle)
+    ai_bundle = bundle.pop("ai_bundle", None)
+    research_bundle = bundle.pop("research_bundle", None)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, content in bundle.items():
+            if name.endswith(".md"):
+                zf.writestr(name, str(content))
+            else:
+                zf.writestr(name, json.dumps(json_safe(content), indent=2))
+        if ai_bundle:
+            for name, content in ai_bundle.items():
+                zf.writestr(f"ai_bundle/{name}", json.dumps(json_safe(content), indent=2))
+        if research_bundle:
+            for name, content in research_bundle.items():
+                zf.writestr(f"research_bundle/{name}", json.dumps(json_safe(content), indent=2))
+    return buf.getvalue()
+
+
 def bundle_as_zip_bytes(session: Session) -> bytes:
     return bundle_as_zip_bytes_safe(session)

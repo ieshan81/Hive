@@ -10,8 +10,8 @@ from app.services.us_market_calendar import calendar_available_for, us_market_ho
 
 NY = ZoneInfo("America/New_York")
 
-STOCK_STRATEGIES = frozenset({"momentum_orb", "mean_reversion_pairs"})
-CRYPTO_STRATEGIES = frozenset({"crypto_night_momentum", "crypto_push_pull"})
+STOCK_STRATEGIES = frozenset({"momentum_orb", "mean_reversion_pairs", "stock_push_pull_baseline"})
+CRYPTO_STRATEGIES = frozenset({"crypto_night_momentum", "crypto_push_pull", "crypto_push_pull_baseline"})
 
 
 @dataclass

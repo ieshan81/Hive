@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 from sqlmodel import Session, select
 
-from app.database import SettingsActionAudit
+from app.database import HistoricalBar, SettingsActionAudit
 from app.services.account_pair_eligibility_service import AccountPairEligibilityService
 from app.services.alpaca_adapter import AlpacaAdapter
 from app.services.alpaca_crypto_assets import fetch_crypto_assets
@@ -47,6 +47,29 @@ def _load_usd_universe() -> tuple[list[str], dict[str, dict]]:
     assets = fetch_crypto_assets(force=False) or {}
     usd = sorted(s for s in assets.keys() if s.endswith("/USD"))
     return usd, assets
+
+
+def _db_bars_only(session: Session, symbol: str, timeframe: str, limit: int) -> list[dict[str, Any]]:
+    rows = list(
+        session.exec(
+            select(HistoricalBar)
+            .where(HistoricalBar.symbol == symbol, HistoricalBar.timeframe == timeframe)
+            .order_by(HistoricalBar.timestamp.desc())
+            .limit(limit)
+        ).all()
+    )
+    rows.reverse()
+    return [
+        {
+            "timestamp": r.timestamp.isoformat() + "Z",
+            "open": r.open,
+            "high": r.high,
+            "low": r.low,
+            "close": r.close,
+            "volume": r.volume,
+        }
+        for r in rows
+    ]
 
 
 def evaluate_symbol_blocks(
@@ -100,18 +123,40 @@ def evaluate_symbol_blocks(
             blocks.append("stale_or_missing_quote")
             quote = {"fresh": False, "quote": {}}
 
-    bars_5m, bar_meta = hist.get_bars(symbol, timeframe="5Min", min_rows=14, lookback_days=14)
+    if fetch_quote:
+        bars_5m, bar_meta = hist.get_bars(symbol, timeframe="5Min", min_rows=14, lookback_days=14)
+    else:
+        bars_5m = _db_bars_only(session, symbol, "5Min", 80)
+        bar_meta = {} if len(bars_5m) >= 14 else {"error": f"Only {len(bars_5m)} cached 5Min bars"}
     if bar_meta.get("error") or len(bars_5m) < 14:
         blocks.append("insufficient_historical_bars")
 
     bars_1m = []
     if not bar_meta.get("error"):
-        bars_1m, _ = hist.get_bars(symbol, timeframe="1Min", min_rows=30, lookback_days=7)
+        if fetch_quote:
+            bars_1m, _ = hist.get_bars(symbol, timeframe="1Min", min_rows=30, lookback_days=7)
+        else:
+            bars_1m = _db_bars_only(session, symbol, "1Min", 80)
 
     metrics = {}
     try:
+        quote_for_metrics = quote.get("quote") if fetch_quote and isinstance(quote, dict) else {}
+        # Cached/page-state scans must not make every symbol vanish merely
+        # because we intentionally skipped live quotes. Use the latest bar as a
+        # proxy quote for ranking visibility only. Execution still requires a
+        # fresh real quote in PaperExecutionService preflight.
+        if not fetch_quote and bars_5m:
+            last_close = float((bars_5m[-1] or {}).get("close") or 0)
+            if last_close > 0:
+                quote_for_metrics = {
+                    "bid": last_close * 0.9995,
+                    "ask": last_close * 1.0005,
+                    "mid": last_close,
+                    "spread_pct": 0.001,
+                    "cached_proxy_quote": True,
+                }
         metrics = urs.extract_symbol_metrics(
-            symbol, bars_5m or [], quote.get("quote") if fetch_quote and isinstance(quote, dict) else (quote if fetch_quote else {})
+            symbol, bars_5m or [], quote_for_metrics
         )
     except Exception:
         metrics = {
@@ -248,6 +293,24 @@ def build_funnel_breakdown(
             eligible_rows.append({**m, "blocks": r.get("blocks")})
 
     snapshot = urs.build_pipeline_snapshot(available, metrics, ranked, max_shortlist=10)
+    # build_pipeline_snapshot only knows metric-level eligibility. Override
+    # the candidate/shortlist layers with the stricter deterministic gate
+    # result from evaluate_symbol_blocks so stale bars, account blocks, and
+    # other cage blockers do not leak into execution shortlist.
+    snapshot["eligible"] = eligible_rows
+    snapshot["shortlist"] = eligible_rows[:10]
+    snapshot.setdefault("funnel", {})
+    fresh_count = sum(
+        1
+        for r in per_symbol
+        if "stale_bar" not in (r.get("blocks") or [])
+        and "stale_bar_1m" not in (r.get("blocks") or [])
+        and "insufficient_historical_bars" not in (r.get("blocks") or [])
+    )
+    snapshot["funnel"]["fresh"] = fresh_count
+    snapshot["funnel"]["eligible"] = len(eligible_rows)
+    snapshot["funnel"]["ranked"] = len(eligible_rows)
+    snapshot["funnel"]["execution_shortlist"] = len(snapshot["shortlist"])
 
     n_avail = len(available)
     n_eval = len(eval_syms)
@@ -280,6 +343,7 @@ def build_funnel_breakdown(
         "funnel": snapshot.get("funnel"),
         "available_symbols": n_avail,
         "evaluated_symbols": n_eval,
+        "fresh_count": fresh_count,
         "eligible_count": n_eligible,
         "ranked_count": n_ranked,
         "execution_shortlist_count": n_short,

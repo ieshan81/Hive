@@ -115,10 +115,15 @@ def cache(session: Session = Depends(get_session)):
 
 @router.get("/rankings")
 def rankings(session: Session = Depends(get_session)):
-    """Universe radar funnel with exact block-reason breakdown."""
+    """Fast universe radar funnel.
+
+    GET is page-safe: it does not live-fetch every quote. Symbols may rank from
+    cached bars, but execution still requires fresh quotes in the risk cage.
+    Use POST /api/universe/refresh for an operator-triggered live rebuild.
+    """
     from app.services.universe_strategy_discovery_service import build_funnel_breakdown
 
-    return build_funnel_breakdown(session, max_evaluate=36, fetch_quotes=True)
+    return build_funnel_breakdown(session, max_evaluate=36, fetch_quotes=False)
 
 
 @router.get("/execution-shortlist")
@@ -142,6 +147,7 @@ def execution_shortlist(session: Session = Depends(get_session)):
 def refresh(session: Session = Depends(get_session)):
     """Force a universe pipeline rebuild + symbol identity cache refresh."""
     from app.services import symbol_identity_service
+    from app.services.universe_strategy_discovery_service import build_funnel_breakdown
 
     symbol_identity_service.refresh_cache()
-    return rankings(session)
+    return build_funnel_breakdown(session, max_evaluate=36, fetch_quotes=True)

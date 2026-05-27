@@ -169,6 +169,8 @@ class AggressivePaperLearningService:
 
     def symbol_tier(self, symbol: str) -> str:
         s = symbol.upper()
+        if "/" not in s and s.isalnum():
+            return "STOCK_SUPPORTED"
         if "DOGE" in s or "SHIB" in s or "PEPE" in s:
             return "MEME_SUPPORTED"
         if symbol in MAJOR_SYMBOLS or "BTC" in s or "ETH" in s or "SOL" in s:
@@ -179,7 +181,14 @@ class AggressivePaperLearningService:
         eligible, blocked = [], []
         for reg in self.session.exec(select(StrategyRegistry)).all():
             ok, reason, codes = self._eligibility_for(reg)
-            row = {"strategy_id": reg.strategy_id, "stage": reg.current_stage, "reason": reason, "codes": codes}
+            row = {
+                "strategy_id": reg.strategy_id,
+                "stage": reg.current_stage,
+                "asset_class": reg.asset_class,
+                "family": reg.family,
+                "reason": reason,
+                "codes": codes,
+            }
             if ok:
                 eligible.append(row)
             else:
@@ -356,8 +365,15 @@ class AggressivePaperLearningService:
         from app.services.session_engine import SessionEngine
 
         sess = SessionEngine().detect()
-        if strategy_id in ("momentum_orb", "mean_reversion_pairs") and not sess.stock_trading_allowed:
+        stock_strategy = (
+            strategy_id in ("momentum_orb", "mean_reversion_pairs", "stock_push_pull_baseline")
+            or strategy_id.startswith("stock_")
+            or "/" not in symbol
+        )
+        if stock_strategy and not sess.stock_trading_allowed:
             return "stock_market_closed", sess.us_stock_close_reason or "U.S. stock market is closed"
+        if "/" in symbol and not sess.crypto_trading_allowed:
+            return "crypto_market_closed", "Crypto trading session unavailable"
         elig = AccountPairEligibilityService(self.session, self.config).preflight_block(symbol, side, strategy_id)
         if elig:
             return elig[0], elig[1]
