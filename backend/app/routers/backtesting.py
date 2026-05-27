@@ -41,3 +41,26 @@ def run_push_pull_backtest(
         "lookback_days": body.get("lookback_days", 90),
     }
     return ResearchLabService(session).run_backtest(payload)
+
+
+@router.post("/promotion-verdict")
+def promotion_verdict(body: dict = Body(default={})):
+    """Pure DSR + walk-forward gate on a list of returns. No DB writes."""
+    from app.services.dsr_engine import build_promotion_verdict
+
+    returns = [float(r) for r in (body.get("returns") or [])]
+    n_trials = int(body.get("n_trials", 1))
+    return {"status": "ok", **build_promotion_verdict(returns, n_trials)}
+
+
+@router.get("/result/{run_id}")
+def result(run_id: str, session: Session = Depends(get_session)):
+    from app.services.research_backtest_engine import ResearchBacktestEngine
+    from app.services.config_manager import ConfigManager
+
+    cfg = ConfigManager(session).get_current()
+    runs = ResearchBacktestEngine(session, cfg).list_runs(200)
+    match = next((r for r in runs if str(r.get("id")) == str(run_id) or str(r.get("run_id")) == str(run_id)), None)
+    if not match:
+        return {"status": "not_found", "run_id": run_id}
+    return {"status": "ok", "run": match}

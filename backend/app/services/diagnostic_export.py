@@ -1903,6 +1903,21 @@ def finalize_diagnostic_bundle(session: Session, bundle: dict[str, Any]) -> dict
                 "timestamp": datetime.utcnow().isoformat() + "Z",
             }
         )
+
+    # Spec-required additions: symbol identity, scanner stack, sentiment
+    # service, memory quality, push-pull live scores.
+    try:
+        bundle.update(_collect_new_spec_files(session))
+    except Exception as exc:
+        errors.append(
+            {
+                "section": "spec_additions",
+                "error_type": type(exc).__name__,
+                "message": str(exc)[:500],
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+            }
+        )
+
     try:
         bundle["bundle_manifest.json"] = build_bundle_manifest(session, bundle)
     except Exception as exc:
@@ -1917,6 +1932,186 @@ def finalize_diagnostic_bundle(session: Session, bundle: dict[str, Any]) -> dict
     if errors:
         bundle["diagnostic_export_errors.json"] = errors
     return bundle
+
+
+def _collect_new_spec_files(session: Session) -> dict[str, Any]:
+    """
+    Spec-required bundle additions (Caged Hive Quant):
+      symbol_identity.json, symbol_identity_cache.json, symbol_identity_errors.json
+      scanner_status.json, scanner_outputs_latest.json, scanner_health.json, scanner_errors.json
+      strategy_status.json, push_pull_scores.json, no_trade_reason_breakdown.json
+      sentiment_status.json, sentiment_source_health.json, pump_dump_alerts.json
+      memory_quality_report.json, ai_memory_raw_events.json, ai_memory_candidate.json,
+        ai_memory_validated.json, ai_memory_consolidated.json, ai_memory_archived.json
+      universe_pipeline.json, universe_execution_shortlist.json
+    All files include generated_at_utc and schema_version. No secrets, no raw tokens.
+    """
+    now = datetime.utcnow().isoformat() + "Z"
+    base = {"schema_version": 1, "generated_at_utc": now}
+    out: dict[str, Any] = {}
+
+    # Symbol identity
+    try:
+        from app.services import symbol_identity_service as sid
+        out["symbol_identity.json"] = {**base, **sid.status()}
+        out["symbol_identity_cache.json"] = {**base, **sid.cache_snapshot()}
+        out["symbol_identity_errors.json"] = {**base, "errors": sid.error_snapshot()}
+    except Exception as exc:
+        out["symbol_identity_errors.json"] = {**base, "error": str(exc)[:300]}
+
+    # Scanner stack
+    try:
+        from app.services import scanner_stack
+        out["scanner_status.json"] = {**base, "scanners": scanner_stack.list_scanners()}
+        out["scanner_outputs_latest.json"] = {**base, **scanner_stack.latest_outputs()}
+        out["scanner_health.json"] = {**base, **scanner_stack.health_snapshot()}
+        out["scanner_errors.json"] = {**base, "errors": scanner_stack.error_log()}
+    except Exception as exc:
+        out["scanner_errors.json"] = {**base, "error": str(exc)[:300]}
+
+    # Push-pull live scoring snapshot (no broker call here — keep bundle fast)
+    try:
+        from app.services.push_pull_scorer import (
+            compute_push_score, classify_regime, NO_TRADE_REASONS,
+        )
+        out["strategy_status.json"] = {
+            **base,
+            "engine": "push_pull_v3",
+            "formulas": ["push_score", "edge_after_cost_bps", "trade_quality_score", "pull_exit_score"],
+            "no_trade_reasons_enum": list(NO_TRADE_REASONS),
+            "engine_active": True,
+        }
+        out["push_pull_scores.json"] = {
+            **base,
+            "note": "Live scores computed on-demand at /api/strategy/push-pull/scores.",
+            "live_endpoint": "/api/strategy/push-pull/scores",
+        }
+        out["no_trade_reason_breakdown.json"] = {
+            **base,
+            "live_endpoint": "/api/strategy/push-pull/no-trade-reasons",
+        }
+        out["push_pull_candle_cycles.json"] = {
+            **base,
+            "note": "Per-cycle decision history is exposed at /api/push-pull/decisions.",
+        }
+    except Exception as exc:
+        out["strategy_status.json"] = {**base, "error": str(exc)[:300]}
+
+    # Sentiment
+    try:
+        from app.services.sentiment_status_service import sentiment_status, sentiment_sources
+        from app.services.sentiment_service import _PUMP_DUMP_COOLDOWNS, FinBERTScorer
+        out["sentiment_status.json"] = {**base, **sentiment_status(session)}
+        out["sentiment_source_health.json"] = {**base, **sentiment_sources(session)}
+        out["symbol_sentiment.json"] = {
+            **base,
+            "live_endpoint": "/api/sentiment/symbol/{symbol}",
+            "cap_pct": 10,
+            "note": "Sentiment shifts trade_quality_score by ≤ ±10%, never alone permits entry.",
+        }
+        out["news_sentiment.json"] = {
+            **base,
+            "primary_source": "alpaca_benzinga",
+            "fallback_sources": ["finnhub", "alpha_vantage", "yahoo_rss"],
+            "note": "Implemented in sentiment_service.AlpacaNewsIngester.",
+        }
+        out["social_sentiment.json"] = {
+            **base,
+            "source": "reddit_official_api_oauth",
+            "non_commercial_only": True,
+            "no_model_training_on_reddit": True,
+            "active": False,
+            "note": "Implemented; inactive until REDDIT_CLIENT_ID/SECRET are configured.",
+        }
+        out["finbert_inference_log.json"] = {
+            **base,
+            "model": "ProsusAI/finbert",
+            "active": FinBERTScorer.is_available(),
+            "note": "Active only when transformers + model weights installed.",
+        }
+        out["sentiment_adjustments.json"] = {**base, "cap_pct": 10, "live_endpoint": "/api/sentiment/symbol/{symbol}"}
+        out["pump_dump_alerts.json"] = {
+            **base,
+            "active_count": len(_PUMP_DUMP_COOLDOWNS),
+            "alerts": [{"symbol": k, "cooldown_until": v.isoformat() + "Z"} for k, v in _PUMP_DUMP_COOLDOWNS.items()],
+        }
+    except Exception as exc:
+        out["sentiment_status.json"] = {**base, "error": str(exc)[:300]}
+
+    # AI advisor (Gemini)
+    try:
+        from app.services.sentiment_status_service import ai_advisor_status
+        out["ai_advisor_status.json"] = {**base, **ai_advisor_status(session)}
+        out["ai_advisor_reviews.json"] = {
+            **base,
+            "latest_review_endpoint": "/api/ai-advisor/latest-review",
+            "proposals_endpoint": "/api/ai-advisor/proposals",
+        }
+        out["ai_strategy_proposals.json"] = {**base, "note": "List via /api/ai-advisor/proposals."}
+        out["ai_parameter_proposals.json"] = {**base, "max_delta_per_cycle_pct": 50}
+    except Exception as exc:
+        out["ai_advisor_status.json"] = {**base, "error": str(exc)[:300]}
+
+    # Memory 5-tier — write each file independently so a partial failure doesn't lose all
+    try:
+        from app.services.memory_quality_service import MemoryQualityService
+        svc = MemoryQualityService(session)
+        out["memory_quality_report.json"] = {**base, **svc.status_summary()}
+    except Exception as exc:
+        out["memory_quality_report.json"] = {**base, "error": str(exc)[:300]}
+
+    buckets: dict[str, list[dict]] = {
+        "raw_event": [], "candidate": [], "validated": [], "consolidated": [], "archived": [],
+    }
+    try:
+        from app.services.memory_quality_service import memory_tier
+        from sqlmodel import select as _select
+        rows = session.exec(_select(LessonNode)).all()
+        for r in rows:
+            try:
+                t = memory_tier(r)
+            except Exception:
+                t = "raw_event"
+            if t in buckets:
+                buckets[t].append({
+                    "id": getattr(r, "id", None),
+                    "type": getattr(r, "memory_type", None),
+                    "symbol": getattr(r, "symbol", None),
+                    "summary": (getattr(r, "summary", "") or "")[:160],
+                    "occurrence_count": getattr(r, "occurrence_count", 1),
+                    "quality_score": getattr(r, "importance_score", None),
+                    "first_seen_at": _iso(getattr(r, "first_seen_at", None)),
+                    "last_seen_at": _iso(getattr(r, "last_seen_at", None)),
+                })
+    except Exception as exc:
+        out.setdefault("memory_quality_report.json", {**base, "error": str(exc)[:300]})
+
+    for tier_key, file_key in [
+        ("raw_event", "ai_memory_raw_events.json"),
+        ("candidate", "ai_memory_candidate.json"),
+        ("validated", "ai_memory_validated.json"),
+        ("consolidated", "ai_memory_consolidated.json"),
+        ("archived", "ai_memory_archived.json"),
+    ]:
+        out[file_key] = {**base, "count": len(buckets[tier_key]), "items": buckets[tier_key][:50]}
+
+    # Universe pipeline
+    try:
+        from app.services.universe_sources_service import universe_scan_summary
+        out["universe_pipeline.json"] = {
+            **base,
+            "scan_summary": universe_scan_summary(session),
+            "live_rankings_endpoint": "/api/universe/rankings",
+        }
+        out["universe_execution_shortlist.json"] = {
+            **base,
+            "live_endpoint": "/api/universe/execution-shortlist",
+            "note": "Top symbols that survived the full Available→Cached→Fresh→Eligible→Ranked funnel.",
+        }
+    except Exception as exc:
+        out["universe_pipeline.json"] = {**base, "error": str(exc)[:300]}
+
+    return out
 
 
 def _emergency_bundle(session: Session, errors: list[dict[str, Any]], root_error: Optional[str] = None) -> dict[str, Any]:

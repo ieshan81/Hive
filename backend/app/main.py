@@ -39,6 +39,8 @@ from app.routers import (
     control_center,
     sentiment,
     ai_advisor,
+    scanners,
+    symbol_identity,
 )
 from app.services.database_bootstrap_service import repair_database_bootstrap
 from app.services.startup import bootstrap_database
@@ -92,6 +94,8 @@ app.include_router(admin.router)
 app.include_router(control_center.router)
 app.include_router(sentiment.router)
 app.include_router(ai_advisor.router)
+app.include_router(scanners.router)
+app.include_router(symbol_identity.router)
 
 
 @app.on_event("startup")

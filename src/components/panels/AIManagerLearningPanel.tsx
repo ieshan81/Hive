@@ -117,11 +117,16 @@ export function AIManagerLearningPanel() {
             <li>Cannot change live lock: {advisor.cannot_change_live_lock ? "yes" : "no"}</li>
             <li>Cannot apply config directly: {advisor.cannot_directly_apply_config ? "yes" : "no"}</li>
           </ul>
-          {(advisor.latest_review as Record<string, unknown>)?.summary && (
-            <p className="text-xs text-slate-400 mt-2 border-t border-white/5 pt-2">
-              Latest review: {String((advisor.latest_review as Record<string, unknown>).summary).slice(0, 200)}
-            </p>
-          )}
+          {(() => {
+            const review = advisor.latest_review as Record<string, unknown> | null | undefined;
+            const summary = review?.summary;
+            if (!summary) return null;
+            return (
+              <p className="text-xs text-slate-400 mt-2 border-t border-white/5 pt-2">
+                Latest review: {String(summary).slice(0, 200)}
+              </p>
+            );
+          })()}
         </GlassPanel>
 
         <GlassPanel title="Sentiment" icon={<Sparkles className="h-4 w-4 text-slate-500" />}>
@@ -143,7 +148,7 @@ export function AIManagerLearningPanel() {
             </p>
           ) : (
             <p className="text-sm text-slate-500">
-              {String(graph.meaningful_memory_count ?? 0)} meaningful memories — raw events hidden by default.
+              {String((graph as Record<string, unknown>).meaningful_memory_count ?? 0)} meaningful memories — raw events hidden by default.
             </p>
           )}
           <ul className="mt-2 max-h-48 overflow-y-auto space-y-1">

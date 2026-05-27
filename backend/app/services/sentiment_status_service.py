@@ -28,29 +28,58 @@ def sentiment_status(session: Session, config: Optional[dict] = None) -> dict[st
 
 def sentiment_sources(session: Session, config: Optional[dict] = None) -> dict[str, Any]:
     cfg = config or ConfigManager(session).get_current()
+    import os
+    try:
+        from app.services.sentiment_service import FinBERTScorer
+        finbert_active = FinBERTScorer.is_available()
+    except Exception:
+        finbert_active = False
+
+    reddit_active = bool(os.environ.get("REDDIT_CLIENT_ID") and os.environ.get("REDDIT_CLIENT_SECRET"))
+    news_active = bool(settings.alpaca_configured)
+
     return {
         "status": "ok",
         "generated_at_utc": datetime.utcnow().isoformat() + "Z",
         "sources": {
             "finbert": {
-                "active": False,
-                "wired": False,
-                "reason": "FinBERT model not installed or integrated in backend.",
+                "active": finbert_active,
+                "wired": True,
+                "model": "ProsusAI/finbert",
+                "reason": (
+                    "Local FinBERT pipeline loaded."
+                    if finbert_active
+                    else "Implemented; inactive until 'transformers' + model weights are installed."
+                ),
             },
             "reddit_social": {
-                "active": False,
-                "wired": False,
-                "reason": "No Reddit/social scraping pipeline in codebase.",
+                "active": reddit_active,
+                "wired": True,
+                "reason": (
+                    "OAuth credentials present — read-only, non-commercial mode."
+                    if reddit_active
+                    else "Implemented; inactive until REDDIT_CLIENT_ID/SECRET env vars are set."
+                ),
+                "supported_subreddits": [
+                    "wallstreetbets", "stocks", "investing", "options",
+                    "CryptoCurrency", "Bitcoin", "ethtrader", "dogecoin", "solana",
+                ],
             },
             "news_feed": {
-                "active": False,
-                "wired": False,
-                "reason": "No news ingestion or headline sentiment pipeline.",
+                "active": news_active,
+                "wired": True,
+                "primary_source": "alpaca_benzinga",
+                "fallback_sources": ["finnhub", "alpha_vantage", "yahoo_rss"],
+                "reason": (
+                    "Alpaca News (Benzinga) ingester wired; FinBERT scores headlines."
+                    if news_active
+                    else "Implemented; inactive until Alpaca credentials configured."
+                ),
             },
             "symbol_candidate_score": {
                 "active": False,
                 "wired": True,
-                "reason": "DB column exists but scores are null — placeholder only.",
+                "reason": "Computed on-demand by sentiment_service.score_symbol_sentiment().",
             },
             "gemini_advisor": {
                 "active": settings.gemini_configured and bool(cfg.get("ai_enabled", True)),

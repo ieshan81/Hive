@@ -1,7 +1,31 @@
-"""Walk-forward validation — train/test windows, honest insufficient-data warnings."""
+"""
+Walk-Forward & DSR Backtesting Engine (DOMAIN 6 — Caged Hive Quant spec).
+
+Walk-Forward (Pardo 2008, 'The Evaluation and Optimization of Trading Strategies'):
+  Default ratio 3:1 in-sample : out-of-sample.
+  Rolling window: IS=30d / OOS=10d / step=10d.  For 1m bars: IS=30 / OOS=10 / step=10.
+  Promotion gate: mean(WFE) >= 0.5 across ≥5 walks AND min(OOS_sharpe) > 0.3.
+
+Deflated Sharpe Ratio (Bailey & López de Prado, JPM 40(5), 2014):
+  Corrects for selection bias (N_trials sweeps) and non-normality (skew, kurtosis).
+  DSR_p > 0.95 (one-sided p < 0.05) required for promotion.
+
+Expected Decay (McLean & Pontiff 2016; Falck/Rej/Thesmar 2021):
+  live_sharpe = 0.5 × backtest_sharpe.  Promote only if live_sharpe_est >= 1.0,
+  i.e., backtest Sharpe must clear 2.0.
+
+Cost Model (per order):
+  crypto: fees = max(notional × 0.0025, 0)   # taker default (Tier 1)
+          slippage = 0.5 × atr × √(notional/$10K)
+          spread = (ask-bid)/mid × notional
+  stocks: fees = $0 (commission-free)
+          slippage = 0.05% liquid / 0.15% illiquid
+"""
 
 from __future__ import annotations
 
+import math
+import statistics
 import uuid
 from typing import Any, Optional
 

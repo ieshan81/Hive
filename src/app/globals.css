@@ -1,15 +1,67 @@
 @import "tailwindcss";
 
+/* Stitch Hive Design System tokens
+ * Source: stitch_hive_design_system/caged_hive/DESIGN.md
+ * Brand: sentient, tactical, authoritative — institutional cockpit
+ */
+
 @theme {
-  --color-hive-bg: #05070a;
-  --color-hive-surface: rgba(12, 18, 28, 0.72);
-  --color-hive-border: rgba(0, 209, 255, 0.12);
+  /* Base obsidian + tonal layers */
+  --color-hive-bg: #0B0C10;
+  --color-hive-surface: rgba(20, 24, 33, 0.65);
+  --color-hive-border: rgba(255, 255, 255, 0.08);
+
+  /* Surface scale (Material-style) */
+  --color-stitch-surface: #121317;
+  --color-stitch-surface-dim: #121317;
+  --color-stitch-surface-bright: #38393e;
+  --color-stitch-surface-lowest: #0d0e12;
+  --color-stitch-surface-low: #1a1b20;
+  --color-stitch-surface-mid: #1f1f24;
+  --color-stitch-surface-high: #292a2e;
+  --color-stitch-surface-highest: #343439;
+  --color-stitch-on-surface: #e3e2e8;
+  --color-stitch-on-surface-variant: #b9cacb;
+  --color-stitch-outline: #849495;
+  --color-stitch-outline-variant: #3b494b;
+
+  /* Primary / accent: neon cyan */
+  --color-stitch-primary: #dbfcff;
+  --color-stitch-primary-container: #00f0ff;
+  --color-stitch-primary-fixed-dim: #00dbe9;
   --color-hive-cyan: #00d1ff;
+
+  /* Secondary: electric blue */
+  --color-stitch-secondary: #afc6ff;
+  --color-stitch-secondary-container: #548dff;
+
+  /* Tertiary: vivid violet (Hive Brain) */
+  --color-stitch-tertiary: #fef2ff;
+  --color-stitch-tertiary-container: #eeceff;
   --color-hive-violet: #8a2be2;
+
+  /* Functional states */
+  --color-stitch-tactical-green: #00FF66;
+  --color-stitch-caution-amber: #F59E0B;
+  --color-stitch-boundary-crimson: #EF4444;
   --color-hive-emerald: #10b981;
   --color-hive-amber: #f59e0b;
   --color-hive-crimson: #ef4444;
+
+  /* Glassmorphism */
+  --color-stitch-glass-surface: rgba(20, 24, 33, 0.65);
+  --color-stitch-glass-border: rgba(255, 255, 255, 0.08);
+
+  /* Typography */
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Spacing rhythm (4px base) */
+  --spacing-stitch-xs: 4px;
+  --spacing-stitch-sm: 8px;
+  --spacing-stitch-md: 12px;
+  --spacing-stitch-lg: 16px;
+  --spacing-stitch-xl: 24px;
 }
 
 @layer base {
@@ -22,7 +74,7 @@
     height: 100%;
     margin: 0;
     background: var(--color-hive-bg);
-    color: #e2e8f0;
+    color: var(--color-stitch-on-surface);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -30,10 +82,28 @@
 
   body {
     background-image:
-      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0, 209, 255, 0.08), transparent),
-      radial-gradient(ellipse 60% 40% at 100% 50%, rgba(138, 43, 226, 0.06), transparent),
-      radial-gradient(ellipse 50% 30% at 0% 80%, rgba(0, 209, 255, 0.04), transparent);
+      radial-gradient(circle at 0% 0%, rgba(0, 219, 233, 0.04) 0%, transparent 40%),
+      radial-gradient(circle at 100% 100%, rgba(110, 0, 171, 0.04) 0%, transparent 40%),
+      radial-gradient(ellipse 60% 30% at 50% 100%, rgba(0, 209, 255, 0.03), transparent);
     background-attachment: fixed;
+  }
+
+  /* Tabular numerals for all financial figures */
+  .mono-metric,
+  .tabular-num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  /* Label caps — JetBrains Mono caps, wide tracking (per spec) */
+  .label-caps {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    line-height: 14px;
   }
 }
 
