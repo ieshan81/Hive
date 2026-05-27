@@ -36,14 +36,19 @@ def universe_mode_status(session: Session, config: Optional[dict] = None) -> dic
 
     if mode == "hybrid_radar":
         from app.services.alpaca_crypto_assets import fetch_crypto_assets
-        from app.services.hybrid_radar_service import hybrid_radar_snapshot
+        from app.services.radar_resilience import last_successful_scan, minimal_radar_counts
 
         assets = fetch_crypto_assets(force=False) or {}
         usd_pairs = [s for s in assets.keys() if s.endswith("/USD")]
-        radar = hybrid_radar_snapshot(session, cfg, fetch_quotes=False)
-        counts = radar.get("counts") or {}
+        cached = last_successful_scan()
+        counts = minimal_radar_counts(session, cfg)
+        if cached.get("cached_snapshot_available"):
+            from app.services.radar_resilience import _LAST_SUCCESS
+
+            payload = _LAST_SUCCESS.get("payload") or {}
+            counts = {**counts, **(payload.get("counts") or {})}
         return {
-            "status": radar.get("status", "ok"),
+            "status": "ok",
             "generated_at_utc": datetime.utcnow().isoformat() + "Z",
             "active_mode": mode,
             "mode_label": "Hybrid Radar",
@@ -69,7 +74,7 @@ def universe_mode_status(session: Session, config: Optional[dict] = None) -> dic
                 if not sess.stock_trading_allowed
                 else "U.S. stock session allows stock entries when other gates pass."
             ),
-            "reason": radar.get("reason"),
+            **cached,
         }
 
     lightweight = mode == "curated_watchlist"

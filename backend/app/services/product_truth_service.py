@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from sqlmodel import Session, select
+from sqlmodel import Session, select, func
 
 from app.database import LessonNode
 from app.services.config_manager import ConfigManager
@@ -54,7 +54,7 @@ def product_truth(session: Session, config: Optional[dict] = None) -> dict[str, 
         current_mode = "off"
 
     primary = resolve_primary_blocker(block.get("blockers") or [], env)
-    lesson_count = len(list(session.exec(select(LessonNode)).all()))
+    lesson_count = session.exec(select(func.count()).select_from(LessonNode)).one()
     fresh_brain = lesson_count == 0 or nuke_st.get("post_nuke_lesson_count", 0) == 0
 
     sess = SessionEngine().detect()
