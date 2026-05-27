@@ -12,6 +12,7 @@ export const ALLOWED_POST_EXACT_PATHS = [
 export const ALLOWED_POST_PREFIXES = [
   "/api/market-data/",
   "/api/universe/",
+  "/api/mission-control/",
   "/api/execution/paper/",
   "/api/backtesting/",
   "/api/research/targeted-experiment/",

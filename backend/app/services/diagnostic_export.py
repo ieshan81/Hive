@@ -1903,7 +1903,7 @@ def build_bundle_manifest(session: Session, bundle: dict[str, Any]) -> dict[str,
 
     from app.services.export_safe import json_safe
     from app.services.live_lock_tripwire import live_lock_tripwire_status
-    from app.services.mission_control_cockpit_service import mission_control_cockpit
+    from app.services.mission_control_snapshot_service import mission_control_status_fast
     from app.services.nuke_epoch_service import get_latest_reset_epoch
 
     epoch = get_latest_reset_epoch(session)
@@ -1918,7 +1918,7 @@ def build_bundle_manifest(session: Session, bundle: dict[str, Any]) -> dict[str,
     lock = live_lock_tripwire_status(ConfigManager(session).get_current())
     cockpit = {}
     try:
-        cockpit = mission_control_cockpit(session)
+        cockpit = mission_control_status_fast(session)
     except Exception:
         pass
     acct = cockpit.get("account_survival") or {}

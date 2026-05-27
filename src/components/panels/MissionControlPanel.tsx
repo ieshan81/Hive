@@ -19,6 +19,17 @@ import { apiGet } from "@/lib/apiClient";
 import { symbolIdentity } from "@/lib/symbolIdentity";
 
 type Cockpit = {
+  status?: string;
+  snapshot_age_seconds?: number;
+  data_freshness?: string;
+  refresh_in_progress?: boolean;
+  degraded?: boolean;
+  warnings?: string[];
+  last_successful_refresh?: string;
+  next_refresh_at?: string;
+  finbert?: { active?: boolean; fresh?: boolean };
+  universe?: { status?: string; available_symbols?: number; cached_data_used?: boolean };
+  crypto?: { status?: string; paper_trade_allowed?: boolean; reason?: string };
   cockpit_bar?: Record<string, string | boolean | number | null | undefined>;
   mission_summary?: Record<string, string | boolean | number | null | undefined>;
   hive_brain_preview?: {
@@ -102,19 +113,20 @@ export function MissionControlPanel() {
   }, [load]);
 
   if (loading) return <EmptyState message="Loading Mission Control cockpit…" className="min-h-[320px]" />;
-  if (error) {
-    return (
-      <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-amber-200 text-sm">
-        Mission Control unavailable: {error}
-      </div>
-    );
+
+  const isDegraded = data?.status === "degraded" || data?.degraded;
+  const freshness = data?.data_freshness ?? "unknown";
+  const ageSec = data?.snapshot_age_seconds;
+
+  if (!data && !error) {
+    return <EmptyState message="No Mission Control data yet." className="min-h-[200px]" />;
   }
 
   const bar = data?.cockpit_bar ?? {};
   const acct = data?.account_survival ?? {};
   const alloc = data?.capital_allocator?.detail ?? {};
   const spark = data?.capital_allocator?.sparkline ?? [];
-  const maxSpark = Math.max(...spark, acct.current_paper_equity as number ?? 1, 1);
+  const maxSpark = Math.max(...spark, (acct.current_paper_equity as number) ?? 1, 1);
   const graph = data?.capital_graph?.points ?? [];
   const maxEq = Math.max(...graph.map((p) => p.equity ?? 0), 1);
   const hive = data?.hive_brain_preview ?? {};
@@ -124,6 +136,42 @@ export function MissionControlPanel() {
   return (
     <section className="relative space-y-4 max-w-6xl">
       <HoneycombBg />
+
+      {(isDegraded || data?.refresh_in_progress) && (
+        <div
+          className={`relative rounded-xl border px-4 py-3 text-sm ${
+            data?.refresh_in_progress
+              ? "border-hive-cyan/30 bg-hive-cyan/5 text-cyan-100"
+              : "border-amber-500/30 bg-amber-500/5 text-amber-100"
+          }`}
+        >
+          <p className="font-medium flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            {data?.refresh_in_progress
+              ? "Refresh in progress — showing last snapshot"
+              : "Using cached snapshot — some subsystems degraded"}
+          </p>
+          <p className="text-xs mt-1 opacity-90">
+            System alive · Live locked · Paper broker · Hybrid radar · FinBERT{" "}
+            {data?.finbert?.active ? "active" : "check status"}
+            {ageSec != null && ` · Last updated ${Math.round(ageSec)}s ago`}
+            {freshness !== "fresh" && ` · Data freshness: ${freshness}`}
+          </p>
+          {(data?.warnings?.length ?? 0) > 0 && (
+            <ul className="text-[11px] mt-2 space-y-0.5 list-disc list-inside opacity-80">
+              {data!.warnings!.slice(0, 4).map((w, i) => (
+                <li key={i}>{w}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {error && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-amber-200 text-sm">
+          Mission Control unavailable: {error}
+        </div>
+      )}
 
       <header className="relative rounded-2xl border border-hive-cyan/20 bg-gradient-to-br from-hive-cyan/10 via-violet-950/20 to-black/40 p-5 overflow-hidden">
         <div className="flex items-start justify-between gap-4 flex-wrap">
