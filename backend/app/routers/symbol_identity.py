@@ -14,7 +14,7 @@ def identity_status():
     return symbol_identity_service.status()
 
 
-@router.get("/identity/{symbol}")
+@router.get("/identity/{symbol:path}")
 def identity_for(symbol: str, allow_network: bool = Query(default=True)):
     return symbol_identity_service.get_identity(symbol, allow_network=allow_network)
 
