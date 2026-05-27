@@ -32,7 +32,6 @@ def universe_mode_status(session: Session, config: Optional[dict] = None) -> dic
     cfg = config or ConfigManager(session).get_current()
     mode = get_universe_mode(cfg)
     sess = SessionEngine().detect()
-    src = universe_sources(session, cfg)
 
     if mode == "hybrid_radar":
         from app.services.alpaca_crypto_assets import fetch_crypto_assets
