@@ -126,6 +126,7 @@ def crypto_readiness(session: Session = Depends(get_session)):
     paper_allowed = bool(
         status == "ok"
         and radar.get("paper_trade_allowed")
+        and int(radar.get("counts", {}).get("eligible") or 0) > 0
         and shortlist_count > 0
         and sess.crypto_trading_allowed
     )

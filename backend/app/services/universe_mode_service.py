@@ -47,6 +47,11 @@ def universe_mode_status(session: Session, config: Optional[dict] = None) -> dic
 
             payload = _LAST_SUCCESS.get("payload") or {}
             counts = {**counts, **(payload.get("counts") or {})}
+        broker_totals = {
+            "alpaca_crypto_assets_api": len(assets),
+            "alpaca_crypto_tradable": len([1 for m in assets.values() if m.get("tradable", True)]),
+            "alpaca_crypto_usd_pairs": len(usd_pairs),
+        }
         return {
             "status": "ok",
             "generated_at_utc": datetime.utcnow().isoformat() + "Z",
@@ -68,7 +73,7 @@ def universe_mode_status(session: Session, config: Optional[dict] = None) -> dic
                 "stock": 0,
             },
             "radar_counts": counts,
-            "broker_totals": src.get("source_counts"),
+            "broker_totals": broker_totals,
             "stocks_session_note": (
                 "Stocks currently inactive — U.S. market is closed."
                 if not sess.stock_trading_allowed

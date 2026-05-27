@@ -113,6 +113,13 @@ def hybrid_radar_snapshot(
         if funnel.get("degraded") or rate_limited:
             shortlist = []
 
+        eligible_count = int(funnel.get("eligible_count") or 0)
+        paper_trade_allowed = bool(
+            not funnel.get("degraded")
+            and not rate_limited
+            and eligible_count > 0
+            and shortlist
+        )
         tier_counts: dict[str, int] = {}
         tier_samples: dict[str, list[str]] = {}
         for sym in usd_pairs[:max_eval]:
@@ -132,7 +139,7 @@ def hybrid_radar_snapshot(
             "retry_after_seconds": funnel.get("retry_after_seconds"),
             "stale_symbols": funnel.get("stale_symbols") or [],
             "unavailable_symbols": funnel.get("unavailable_symbols") or [],
-            "paper_trade_allowed": False if (funnel.get("degraded") or rate_limited) else bool(shortlist),
+            "paper_trade_allowed": paper_trade_allowed,
             "pipeline": pipe,
             "execution_shortlist": shortlist,
             "labels": {
