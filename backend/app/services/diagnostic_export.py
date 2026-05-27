@@ -2123,6 +2123,26 @@ def _collect_new_spec_files(session: Session) -> dict[str, Any]:
     except Exception as exc:
         out["sentiment_status.json"] = {**base, "error": str(exc)[:300]}
 
+    try:
+        from app.routers.market_sessions import crypto_readiness, stocks_readiness
+        from app.services.session_engine import SessionEngine
+
+        out["crypto_readiness.json"] = {**base, **crypto_readiness(session)}
+        out["session_status.json"] = {
+            **base,
+            "session": SessionEngine().detect().to_dict(),
+        }
+        out["stock_market_open_readiness.json"] = {**base, **stocks_readiness(session)}
+    except Exception as exc:
+        out["crypto_readiness.json"] = {**base, "error": str(exc)[:300]}
+
+    try:
+        from app.services.targeted_experiment_service import experiment_status
+
+        out["targeted_experiment_status.json"] = {**base, **experiment_status(session)}
+    except Exception as exc:
+        out["targeted_experiment_status.json"] = {**base, "error": str(exc)[:300]}
+
     # AI advisor (Gemini)
     try:
         from app.services.sentiment_status_service import ai_advisor_status
