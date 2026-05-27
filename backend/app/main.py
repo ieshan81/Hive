@@ -41,6 +41,10 @@ from app.routers import (
     ai_advisor,
     scanners,
     symbol_identity,
+    social_reddit,
+    news,
+    research_experiments,
+    market_sessions,
 )
 from app.services.database_bootstrap_service import repair_database_bootstrap
 from app.services.startup import bootstrap_database
@@ -96,6 +100,10 @@ app.include_router(sentiment.router)
 app.include_router(ai_advisor.router)
 app.include_router(scanners.router)
 app.include_router(symbol_identity.router)
+app.include_router(social_reddit.router)
+app.include_router(news.router)
+app.include_router(research_experiments.router)
+app.include_router(market_sessions.router)
 
 
 @app.on_event("startup")

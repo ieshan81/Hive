@@ -16,6 +16,7 @@ from app.services.memory_categories import (
     MEMORY_LEVEL_CONSOLIDATED,
     MEMORY_LEVEL_CORE,
     MEMORY_LEVEL_RAW,
+    RESEARCH_MEMORY_TYPES,
     TRAINING_MEMORY_TYPES,
     memory_graph_cluster,
 )
@@ -62,7 +63,8 @@ class HiveBrainGraphService:
             "nodes": [],
             "edges": [],
             "meta": {
-                "graph_mode": "hive_brain",
+                "graph_mode": graph_mode if graph_mode != "default" else "hive_brain",
+                "system_skeleton_nodes": sum(1 for n in nodes if n.get("type") == "system"),
                 "fresh_brain": True,
                 "learned_memory_nodes": 0,
                 "system_skeleton_nodes": 0,
@@ -142,7 +144,8 @@ class HiveBrainGraphService:
             "nodes": nodes,
             "edges": edges,
             "meta": {
-                "graph_mode": "hive_brain",
+                "graph_mode": graph_mode if graph_mode != "default" else "hive_brain",
+                "system_skeleton_nodes": sum(1 for n in nodes if n.get("type") == "system"),
                 "fresh_brain": False,
                 "learned_memory_nodes": learned,
                 "system_skeleton_nodes": 1,
@@ -160,10 +163,11 @@ class HiveBrainGraphService:
         show_raw: bool = False,
         expand_cluster: Optional[str] = None,
         max_nodes: Optional[int] = None,
+        graph_mode: str = "default",
     ) -> dict[str, Any]:
         max_n = max_nodes or int(self.policy.get("max_default_graph_nodes", 50))
         lessons = filter_lessons_post_nuke(
-            self.session, self._select_lessons(show_raw, expand_cluster)
+            self.session, self._select_lessons(show_raw, expand_cluster, graph_mode=graph_mode)
         )
         reset_epoch = get_latest_reset_epoch(self.session) or {}
         if not lessons:
@@ -304,6 +308,7 @@ class HiveBrainGraphService:
                     n["latest_lesson"] = stats.get("latest")
                     n["confidence"] = stats.get("confidence", 0.9)
 
+        self._append_system_skeleton(nodes, edges)
         self._append_positions(nodes, edges)
         self._append_strategies(nodes, edges, max_n)
 
@@ -326,7 +331,8 @@ class HiveBrainGraphService:
             "nodes": nodes,
             "edges": edges,
             "meta": {
-                "graph_mode": "hive_brain",
+                "graph_mode": graph_mode if graph_mode != "default" else "hive_brain",
+                "system_skeleton_nodes": sum(1 for n in nodes if n.get("type") == "system"),
                 "total_raw_memories": raw_total,
                 "consolidated_memories": consolidated,
                 "core_ai_memories": sum(1 for l in lessons if l.memory_level == MEMORY_LEVEL_CORE),
@@ -347,9 +353,18 @@ class HiveBrainGraphService:
             },
         }
 
-    def _select_lessons(self, show_raw: bool, expand_cluster: Optional[str]) -> list[LessonNode]:
+    def _select_lessons(
+        self, show_raw: bool, expand_cluster: Optional[str], *, graph_mode: str = "default"
+    ) -> list[LessonNode]:
         q = select(LessonNode).where(LessonNode.status == "active", LessonNode.visible_in_graph == True)  # noqa: E712
-        if not show_raw:
+        if graph_mode == "validated":
+            q = q.where(LessonNode.memory_level.in_(("core_ai_lesson", "consolidated_lesson")))
+        elif graph_mode == "research":
+            q = q.where(
+                (LessonNode.memory_type.in_(list(RESEARCH_MEMORY_TYPES)))
+                | (LessonNode.memory_level.in_(("core_ai_lesson", "consolidated_lesson", "pattern_memory")))
+            )
+        elif not show_raw:
             q = q.where(
                 LessonNode.memory_level.in_(
                     ("core_ai_lesson", "consolidated_lesson", "pattern_memory")
@@ -374,6 +389,48 @@ class HiveBrainGraphService:
             raw_sample = [r for r in rows if r.memory_level == MEMORY_LEVEL_RAW][:3]
             return prioritized + raw_sample
         return rows
+
+    def _append_system_skeleton(self, nodes: list[dict], edges: list[dict]) -> None:
+        """Pipeline skeleton — always visible so graph is never empty."""
+        skeleton = [
+            ("universe-radar", "Universe Radar", 38, 42),
+            ("scanner-stack", "Scanner Stack", 44, 38),
+            ("push-pull", "Push-Pull", 50, 32),
+            ("risk-cage", "Risk Cage", 56, 38),
+            ("paper-exec", "Paper Execution", 62, 44),
+            ("backtest-lab", "Backtest Lab", 56, 50),
+            ("memory-core", "Memory", 44, 50),
+        ]
+        chain = ["hive"] + [s[0] for s in skeleton]
+        for sid, label, x, y in skeleton:
+            if any(n["id"] == sid for n in nodes):
+                continue
+            nodes.append(
+                {
+                    "id": sid,
+                    "label": label,
+                    "type": "system",
+                    "severity": "LOW",
+                    "confidence": 1.0,
+                    "status": "active",
+                    "x": x,
+                    "y": y,
+                    "color": "#00dbe9",
+                    "stability": "skeleton",
+                    "visible_by_default": True,
+                }
+            )
+        for i in range(len(chain) - 1):
+            edges.append(
+                {
+                    "id": f"e-skel-{chain[i]}-{chain[i+1]}",
+                    "source": chain[i],
+                    "target": chain[i + 1],
+                    "relation": "pipeline",
+                    "weight": 1.0,
+                    "weight_tier": "core",
+                }
+            )
 
     def _append_positions(self, nodes: list[dict], edges: list[dict]) -> None:
         from app.services.broker_reconciliation_service import BrokerReconciliationService

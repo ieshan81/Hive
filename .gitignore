@@ -34,3 +34,6 @@ backend/*.db
 # IDE
 .idea/
 .vscode/
+
+# Local design extraction (not part of product build)
+_design_spec/

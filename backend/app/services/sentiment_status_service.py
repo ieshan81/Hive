@@ -14,15 +14,33 @@ from app.services.config_manager import ConfigManager
 
 def sentiment_status(session: Session, config: Optional[dict] = None) -> dict[str, Any]:
     cfg = config or ConfigManager(session).get_current()
-    enabled = bool(cfg_get_sentiment(cfg))
+    sources_payload = sentiment_sources(session, cfg)
+    fin = sources_payload.get("sources", {}).get("finbert", {})
+    reddit = sources_payload.get("sources", {}).get("reddit_social", {})
     return {
         "status": "ok",
         "generated_at_utc": datetime.utcnow().isoformat() + "Z",
-        "sentiment_influence_ranking": False,
+        "sentiment_affects_ranking": bool((cfg.get("sentiment") or {}).get("influence_ranking")),
+        "sentiment_affects_trading": False,
+        "sentiment_can_place_trades": False,
+        "sentiment_influence_ranking": bool((cfg.get("sentiment") or {}).get("influence_ranking")),
         "sentiment_influence_trading": False,
-        "overall_active": False,
-        "message": "Sentiment engines are not wired into live ranking or execution. Gemini advisor is separate.",
-        "sources": sentiment_sources(session, cfg)["sources"],
+        "overall_active": bool(fin.get("active") or reddit.get("active")),
+        "max_adjustment_pct": (cfg.get("sentiment") or {}).get("max_adjustment_pct", 10),
+        "finbert": {
+            "implemented": True,
+            "worker_url_configured": fin.get("worker_url_configured", False),
+            "worker_connected": fin.get("worker_connected", False),
+            "model_loaded": fin.get("model_loaded", False),
+            "active": fin.get("active", False),
+        },
+        "reddit": {
+            "mode": reddit.get("mode", "inactive"),
+            "active": reddit.get("active", False),
+            "read_only": True,
+        },
+        "message": "Sentiment adjusts ranking only (capped). Never permits trades.",
+        "sources": sources_payload.get("sources"),
     }
 
 
@@ -31,11 +49,27 @@ def sentiment_sources(session: Session, config: Optional[dict] = None) -> dict[s
     import os
     try:
         from app.services.sentiment_service import FinBERTScorer
-        finbert_active = FinBERTScorer.is_available()
+        from app.services.finbert_client import finbert_health
+
+        from app.services.finbert_client import finbert_service_url
+
+        remote = finbert_health()
+        worker_url = bool(finbert_service_url())
+        worker_connected = remote.get("status") in ("ok", "degraded") and remote.get("configured")
+        model_loaded = bool(remote.get("model_loaded")) or FinBERTScorer.is_available()
+        finbert_active = model_loaded and (worker_connected or FinBERTScorer.is_available())
     except Exception:
+        remote = {}
+        worker_url = False
+        worker_connected = False
+        model_loaded = False
         finbert_active = False
 
-    reddit_active = bool(os.environ.get("REDDIT_CLIENT_ID") and os.environ.get("REDDIT_CLIENT_SECRET"))
+    from app.services.reddit_scanner_service import reddit_status as rs
+
+    rs_payload = rs()
+    reddit_active = bool(rs_payload.get("active"))
+    reddit_mode = rs_payload.get("mode", "inactive")
     # News provider can be configured even when FinBERT is unavailable; we keep truth explicit:
     # provider_wired may be true, but sentiment_scoring is inactive without FinBERT.
     news_provider_wired = bool(settings.alpaca_configured)
@@ -47,22 +81,25 @@ def sentiment_sources(session: Session, config: Optional[dict] = None) -> dict[s
         "sources": {
             "finbert": {
                 "active": finbert_active,
+                "implemented": True,
                 "wired": True,
+                "worker_url_configured": worker_url,
+                "worker_connected": worker_connected,
+                "model_loaded": model_loaded,
                 "model": "ProsusAI/finbert",
                 "reason": (
-                    "Local FinBERT pipeline loaded."
+                    "FinBERT microservice connected."
                     if finbert_active
-                    else "Implemented; inactive until 'transformers' + model weights are installed."
+                    else "Implemented; inactive until FINBERT_SERVICE_URL healthy or local transformers."
                 ),
             },
             "reddit_social": {
                 "active": reddit_active,
+                "mode": reddit_mode,
                 "wired": True,
-                "reason": (
-                    "OAuth credentials present — read-only, non-commercial mode."
-                    if reddit_active
-                    else "Implemented; inactive until REDDIT_CLIENT_ID/SECRET env vars are set."
-                ),
+                "read_only": True,
+                "posting_enabled": False,
+                "reason": rs_payload.get("reason", "Reddit scanner read-only."),
                 "supported_subreddits": [
                     "wallstreetbets", "stocks", "investing", "options",
                     "CryptoCurrency", "Bitcoin", "ethtrader", "dogecoin", "solana",

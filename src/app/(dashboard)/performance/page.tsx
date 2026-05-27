@@ -65,18 +65,35 @@ export default function PerformancePage() {
 
       <GlassPanel title="Equity curve">
         {points.length === 0 ? (
-          <p className="text-sm text-slate-500">Fresh paper baseline — equity points appear after broker sync.</p>
+          <p className="text-sm text-slate-500">
+            No closed paper trades after reset yet. Performance is based on open broker position only.
+          </p>
         ) : (
-          <div className="flex items-end gap-0.5 h-32">
-            {points.map((p, i) => (
-              <div
-                key={`${p.t}-${i}`}
-                className="flex-1 min-w-[2px] bg-cyan-500/60 rounded-t"
-                style={{ height: `${Math.max(4, ((p.equity ?? 0) / maxEq) * 100)}%` }}
-                title={`${p.t}: $${p.equity}`}
-              />
-            ))}
-          </div>
+          <svg viewBox="0 0 400 120" className="w-full h-32 text-cyan-400" preserveAspectRatio="none">
+            <polyline
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              points={points
+                .map((p, i) => {
+                  const x = (i / Math.max(points.length - 1, 1)) * 400;
+                  const y = 110 - ((p.equity ?? 0) / maxEq) * 100;
+                  return `${x},${y}`;
+                })
+                .join(" ")}
+            />
+            <polygon
+              fill="currentColor"
+              fillOpacity="0.12"
+              points={`0,120 ${points
+                .map((p, i) => {
+                  const x = (i / Math.max(points.length - 1, 1)) * 400;
+                  const y = 110 - ((p.equity ?? 0) / maxEq) * 100;
+                  return `${x},${y}`;
+                })
+                .join(" ")} 400,120`}
+            />
+          </svg>
         )}
       </GlassPanel>
     </section>

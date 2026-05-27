@@ -63,6 +63,24 @@ def health_check(session: Session = Depends(get_session)):
     }
 
 
+@router.get("/live-lock/status")
+def live_lock_status_endpoint(session: Session = Depends(get_session)):
+    from app.services.broker_safety import broker_base_url, is_paper_broker_url, live_lock_status
+
+    cfg = ConfigManager(session).get_current()
+    lock = live_lock_status(cfg)
+    return {
+        "status": "ok",
+        "paper_broker": is_paper_broker_url(),
+        "broker_base_url": broker_base_url(),
+        "live_trading_enabled": False,
+        "live_orders_enabled": lock.get("live_orders_enabled", False),
+        "live_lock_status": "locked",
+        "message": "Simple API key swap cannot enable live — all gates required",
+        **lock,
+    }
+
+
 @router.post("/cycle/run")
 def run_cycle(
     session: Session = Depends(get_session),
@@ -336,6 +354,7 @@ def memory_graph(
     brain: bool = True,
     show_raw: bool = False,
     expand_cluster: str | None = None,
+    mode: str | None = None,
     session: Session = Depends(get_session),
 ):
     from app.services.config_manager import ConfigManager
@@ -344,8 +363,15 @@ def memory_graph(
 
     config = ConfigManager(session).get_current()
     if brain and graph_default and not category and not graph_filter:
+        graph_mode = mode or graph_filter or "default"
+        if graph_mode in ("skeleton", "research", "validated"):
+            pass
+        else:
+            graph_mode = "default"
         graph = HiveBrainGraphService(session, config).build(
-            show_raw=show_raw, expand_cluster=expand_cluster
+            show_raw=show_raw,
+            expand_cluster=expand_cluster,
+            graph_mode=graph_mode,
         )
     else:
         graph = LessonMemoryService(session, config).build_graph(

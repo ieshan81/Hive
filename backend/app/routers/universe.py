@@ -80,6 +80,21 @@ def block_reasons(session: Session = Depends(get_session)):
 # Full-pipeline endpoints (Caged Hive Quant Universe Radar)
 # ─────────────────────────────────────────────────────────────────────────
 
+@router.get("/radar")
+def radar(session: Session = Depends(get_session)):
+    """Hybrid radar snapshot — full funnel, tiers, ranked, shortlist."""
+    from app.services.hybrid_radar_service import hybrid_radar_snapshot
+
+    return hybrid_radar_snapshot(session)
+
+
+@router.get("/tiers")
+def tiers(session: Session = Depends(get_session)):
+    from app.services.hybrid_radar_service import universe_tiers
+
+    return universe_tiers(session)
+
+
 @router.get("/cache")
 def cache(session: Session = Depends(get_session)):
     """Universe cache snapshot — counts, freshness, source metadata."""

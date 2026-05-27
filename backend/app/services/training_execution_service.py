@@ -143,14 +143,22 @@ class TrainingExecutionService:
         alpaca_min = float(cfg_get(self.config, "execution.alpaca_crypto_min_notional_usd", 10.0))
         buffer = float(cfg_get(self.config, "execution.alpaca_min_notional_buffer_usd", 0.5))
         target_min = float(cfg_get(self.config, "allocator.paper_trade_notional_min_usd", 20.0))
+        from app.services.engine_config import cfg_get
+
+        exp = self.config.get("exploration") or {}
+        exp_max = float(cfg_get(self.config, "exploration.max_trade_notional_usd", 20.0))
         default_notional = max(
             float(dec.approved_notional or self.pl.cfg.get("default_experiment_notional_usd", target_min)),
             alpaca_min + buffer,
             target_min,
         )
         notional = default_notional
-        qty = round(notional / mid, 8)
+        if exp.get("enabled", True):
+            notional = min(notional, exp_max)
         tier_info = self.tiers.classify(dec.symbol)
+        if getattr(tier_info, "tier", "") in ("TIER_WATCH", "TIER_MEME_SUPPORTED"):
+            notional = min(notional, exp_max * 0.75)
+        qty = round(notional / mid, 8)
         tier = getattr(tier_info, "tier", str(tier_info))
         cpp = self.config.get("crypto_push_pull") or {}
         stop_pct = float(cpp.get("stop_loss_pct", 0.02))

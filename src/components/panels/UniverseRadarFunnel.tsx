@@ -32,6 +32,14 @@ type Shortlist = {
 
 type Payload = {
   status: string;
+  answer?: string;
+  block_breakdown?: Record<string, number>;
+  counts?: {
+    available_usd_pairs?: number;
+    eligible?: number;
+    ranked?: number;
+    execution_shortlist?: number;
+  };
   pipeline?: {
     cycle_id: string;
     funnel: Funnel;
@@ -54,7 +62,7 @@ export function UniverseRadarFunnel() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const r = await apiGet<Payload>("/api/universe/rankings");
+    const r = await apiGet<Payload>("/api/universe/radar");
     if (r.ok && r.data) setData(r.data);
     setLoading(false);
   }, []);
@@ -65,17 +73,30 @@ export function UniverseRadarFunnel() {
     return () => clearInterval(t);
   }, [load]);
 
-  const funnel = data?.pipeline?.funnel;
-  const shortlist = data?.pipeline?.shortlist ?? [];
+  const funnel = data?.pipeline?.funnel ?? (data?.counts
+    ? {
+        available: data.counts.available_usd_pairs ?? 0,
+        cached: data.counts.available_usd_pairs ?? 0,
+        eligible: data.counts.eligible ?? 0,
+        ranked: data.counts.ranked ?? 0,
+        execution_shortlist: data.counts.execution_shortlist ?? 0,
+      }
+    : undefined);
+  const shortlist =
+    (data?.pipeline?.shortlist as Shortlist[]) ??
+    ((data as { execution_shortlist?: Shortlist[] })?.execution_shortlist ?? []);
 
   return (
     <GlassPanel
       title="Universe Radar"
       icon={<Radar className="h-4 w-4" style={{ color: "#00dbe9" }} />}
     >
-      <p className="text-[11px] text-[#b9cacb] mb-4">
-        Available → Cached → Fresh → Eligible → Ranked → Execution Shortlist
+      <p className="text-[11px] text-[#b9cacb] mb-2">
+        Radar scanned available assets → cached → fresh → eligible → ranked → execution shortlist
       </p>
+      {data?.answer && (
+        <p className="text-[10px] text-slate-500 mb-3">{String(data.answer).slice(0, 280)}</p>
+      )}
 
       {/* Funnel chips */}
       <div className="flex items-center gap-1.5 flex-wrap mb-5">

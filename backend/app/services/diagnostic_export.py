@@ -1526,10 +1526,14 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             from app.services.hardcoded_symbol_scan import scan_repository as hardcoded_scan
 
             cfg_fb = ConfigManager(session).get_current()
-            brain_graph = HiveBrainGraphService(session, cfg_fb).build_full()
+            brain_svc = HiveBrainGraphService(session, cfg_fb)
+            brain_graph = brain_svc.build_full()
             strategy_registry_exports.update(
                 {
                     "hive_brain_graph.json": brain_graph,
+                    "memory_graph_research.json": brain_svc.build_full(graph_mode="research"),
+                    "memory_graph_skeleton.json": brain_svc.build_full(graph_mode="skeleton"),
+                    "memory_graph_validated.json": brain_svc.build_full(graph_mode="validated"),
                     "hive_brain_clusters.json": brain_graph.get("clusters", []),
                     "hive_brain_edges.json": brain_graph.get("edges", [])[:100],
                     "hive_brain_legend.json": brain_graph.get("legend", []),
@@ -2080,19 +2084,35 @@ def _collect_new_spec_files(session: Session) -> dict[str, Any]:
             "fallback_sources": ["finnhub", "alpha_vantage", "yahoo_rss"],
             "note": "Implemented in sentiment_service.AlpacaNewsIngester.",
         }
+        from app.services.finbert_client import finbert_health
+        from app.services.reddit_scanner_service import reddit_latest, reddit_status
+
+        rs = reddit_status()
+        rl = reddit_latest()
+        fh = finbert_health()
         out["social_sentiment.json"] = {
             **base,
-            "source": "reddit_official_api_oauth",
+            "source": "reddit_read_only",
+            "mode": rs.get("mode"),
+            "active": rs.get("active"),
             "non_commercial_only": True,
             "no_model_training_on_reddit": True,
-            "active": False,
-            "note": "Implemented; inactive until REDDIT_CLIENT_ID/SECRET are configured.",
         }
+        out["reddit_status.json"] = {**base, **rs}
+        out["reddit_mentions.json"] = {
+            **base,
+            "symbol_mentions": rl.get("symbol_mentions") or {},
+            "post_count": len(rl.get("posts") or []),
+        }
+        out["reddit_symbol_velocity.json"] = {**base, "items": rl.get("reddit_symbol_velocity") or []}
+        out["reddit_hype_risk.json"] = {**base, "items": rl.get("hype_risk") or []}
+        out["finbert_service_status.json"] = {**base, **fh}
         out["finbert_inference_log.json"] = {
             **base,
             "model": "ProsusAI/finbert",
-            "active": FinBERTScorer.is_available(),
-            "note": "Active only when transformers + model weights installed.",
+            "active": bool(fh.get("model_loaded")) or FinBERTScorer.is_available(),
+            "worker_url_configured": fh.get("configured", False),
+            "note": "Remote FinBERT microservice preferred; local fallback if transformers installed.",
         }
         out["sentiment_adjustments.json"] = {**base, "cap_pct": 10, "live_endpoint": "/api/sentiment/symbol/{symbol}"}
         out["pump_dump_alerts.json"] = {

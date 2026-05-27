@@ -13,6 +13,7 @@ import {
   Radar,
 } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
+import { WhyNoTradeCard } from "@/components/panels/WhyNoTradeCard";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { apiGet } from "@/lib/apiClient";
 import { symbolIdentity } from "@/lib/symbolIdentity";
@@ -200,6 +201,7 @@ export function MissionControlPanel() {
       </div>
 
       <div className="relative grid gap-4 lg:grid-cols-2">
+        <WhyNoTradeCard />
         <GlassPanel title="AI fund manager" icon={<Brain className="h-4 w-4" />}>
           <p className="text-xs text-slate-400 mb-2">
             Status:{" "}

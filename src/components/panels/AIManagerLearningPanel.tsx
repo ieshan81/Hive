@@ -144,6 +144,11 @@ export function AIManagerLearningPanel() {
             {udisc.next_test_plan && (
               <p className="text-[10px] text-slate-500 mt-1">Next: {String(udisc.next_test_plan)}</p>
             )}
+            <p className="text-[10px] text-slate-500 mt-2">
+              Targeted experiment (HYPE/RENDER): operator action via Control Center — POST
+              /api/research/targeted-experiment/run
+            </p>
+            <p className="text-[10px] text-amber-400/90">Do not promote yet badge — verdict must be promising with sample.</p>
           </div>
         </GlassPanel>
 

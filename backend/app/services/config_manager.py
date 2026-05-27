@@ -54,6 +54,17 @@ class ConfigManager:
         if merged.get("config_version", 0) < DEFAULT_CONFIG.get("config_version", 1):
             merged["config_version"] = DEFAULT_CONFIG["config_version"]
             self._activate(merged, changed_by="system", reason="Merged default config v2")
+            merged = self.get_current()
+        # Migrate legacy curated default → hybrid radar (production safety: debug mode still available).
+        uni = merged.get("universe") or {}
+        if str(uni.get("mode", "")).lower() in ("curated_watchlist", "curated", ""):
+            patch = {
+                "universe": DEFAULT_CONFIG.get("universe"),
+                "exploration": DEFAULT_CONFIG.get("exploration"),
+            }
+            merged = _deep_merge(merged, patch)
+            row = self._activate(merged, changed_by="system", reason="Migrate universe.mode to hybrid_radar")
+            return _apply_locked_caps(row.config_json)
         return _apply_locked_caps(merged)
 
     def _activate(self, config: dict, changed_by: str, reason: str) -> ConfigCurrent:

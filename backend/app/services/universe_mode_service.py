@@ -14,21 +14,26 @@ from app.services.session_engine import SessionEngine
 from app.services.universe_builder import build_merged_universe
 from app.services.universe_sources_service import CURATED_CRYPTO, CURATED_STOCKS, universe_sources
 
-MODES = ("curated_watchlist", "dynamic_tradable")
+MODES = ("hybrid_radar", "curated_watchlist", "dynamic_tradable")
 
 
 def get_universe_mode(config: dict) -> str:
-    mode = str(cfg_get(config, "universe.mode", "curated_watchlist") or "curated_watchlist").lower()
+    mode = str(cfg_get(config, "universe.mode", "hybrid_radar") or "hybrid_radar").lower()
     if mode in ("dynamic", "dynamic_tradable"):
         return "dynamic_tradable"
-    return "curated_watchlist"
+    if mode in ("hybrid", "hybrid_radar", "radar"):
+        return "hybrid_radar"
+    if mode == "curated_watchlist":
+        return "curated_watchlist"
+    return "hybrid_radar"
 
 
 def universe_mode_status(session: Session, config: Optional[dict] = None) -> dict[str, Any]:
     cfg = config or ConfigManager(session).get_current()
     mode = get_universe_mode(cfg)
     lightweight = mode == "curated_watchlist"
-    rows = build_merged_universe(session, cfg, limit=80 if lightweight else 120, lightweight=lightweight)
+    limit = 80 if lightweight else 120
+    rows = build_merged_universe(session, cfg, limit=limit, lightweight=lightweight)
     src = universe_sources(session, cfg)
     sess = SessionEngine().detect()
 
@@ -36,12 +41,22 @@ def universe_mode_status(session: Session, config: Optional[dict] = None) -> dic
         "status": "ok",
         "generated_at_utc": datetime.utcnow().isoformat() + "Z",
         "active_mode": mode,
-        "mode_label": "Curated Watchlist" if lightweight else "Dynamic Tradable Universe",
-        "mode_explanation": (
-            "Small operator-safe subset for lightweight scanning and rate-limit safety."
-            if lightweight
-            else "Built live from Alpaca tradable assets plus eligibility and freshness filters."
-        ),
+        "mode_label": {
+            "hybrid_radar": "Hybrid Radar",
+            "curated_watchlist": "Curated Watchlist",
+            "dynamic_tradable": "Dynamic Tradable Universe",
+        }.get(mode, mode),
+        "mode_explanation": {
+            "hybrid_radar": (
+                "Full broker universe cached and ranked; execution uses a strict shortlist only."
+            ),
+            "curated_watchlist": (
+                "Small operator-safe subset for lightweight scanning and rate-limit safety."
+            ),
+            "dynamic_tradable": (
+                "Built live from Alpaca tradable assets plus eligibility and freshness filters."
+            ),
+        }.get(mode, ""),
         "can_switch_to_dynamic": True,
         "can_switch_to_curated": True,
         "config_key": "universe.mode",
