@@ -54,21 +54,72 @@ class HiveBrainGraphService:
         self.policy = load_memory_policy(session, config)
 
     def _build_fresh_brain_empty_payload(
-        self, nuke_epoch: dict[str, Any], *, show_raw: bool, expand_cluster: Optional[str]
+        self,
+        nuke_epoch: dict[str, Any],
+        *,
+        show_raw: bool,
+        expand_cluster: Optional[str],
+        graph_mode: str = "default",
     ) -> dict[str, Any]:
+        nodes: list[dict] = [
+            {
+                "id": "hive",
+                "label": "HIVE BRAIN",
+                "type": "hive",
+                "severity": "LOW",
+                "confidence": 1.0,
+                "status": "active",
+                "count": 0,
+                "x": 50,
+                "y": 50,
+                "color": "#00d1ff",
+                "stability": "core",
+            }
+        ]
+        edges: list[dict] = []
+        if graph_mode in ("skeleton", "research", "validated", "default"):
+            self._append_system_skeleton(nodes, edges)
+        if graph_mode in ("research", "validated"):
+            for sym, x, y in (("HYPE/USD", 48, 28), ("RENDER/USD", 52, 28)):
+                nid = f"lead-{sym.replace('/', '')}"
+                nodes.append(
+                    {
+                        "id": nid,
+                        "label": sym,
+                        "type": "research_lead",
+                        "severity": "LOW",
+                        "confidence": 0.6,
+                        "status": "watch",
+                        "x": x,
+                        "y": y,
+                        "color": "#f59e0b",
+                        "stability": "research",
+                    }
+                )
+                edges.append(
+                    {
+                        "id": f"e-universe-{nid}",
+                        "source": "universe-radar",
+                        "target": nid,
+                        "relation": "research_lead",
+                        "weight": 0.8,
+                        "weight_tier": "medium",
+                    }
+                )
+        learned = sum(1 for n in nodes if n.get("type") == "lesson")
+        mode_label = graph_mode if graph_mode != "default" else "hive_brain"
         return {
             "status": "ok",
-            "fresh_brain": True,
-            "message": FRESH_BRAIN_HEADLINE,
-            "nodes": [],
-            "edges": [],
+            "fresh_brain": learned == 0,
+            "message": FRESH_BRAIN_HEADLINE if learned == 0 else "Research skeleton visible.",
+            "nodes": nodes,
+            "edges": edges,
             "meta": {
-                "graph_mode": graph_mode if graph_mode != "default" else "hive_brain",
+                "graph_mode": mode_label,
                 "system_skeleton_nodes": sum(1 for n in nodes if n.get("type") == "system"),
-                "fresh_brain": True,
-                "learned_memory_nodes": 0,
-                "system_skeleton_nodes": 0,
-                "visible_nodes": 0,
+                "fresh_brain": learned == 0,
+                "learned_memory_nodes": learned,
+                "visible_nodes": len(nodes),
                 "show_raw": show_raw,
                 "expand_cluster": expand_cluster,
                 "empty_state_headline": FRESH_BRAIN_HEADLINE,
@@ -85,6 +136,7 @@ class HiveBrainGraphService:
         nuke_epoch: dict[str, Any],
         *,
         max_n: int,
+        graph_mode: str = "default",
     ) -> dict[str, Any]:
         nodes: list[dict] = [
             {
@@ -148,7 +200,6 @@ class HiveBrainGraphService:
                 "system_skeleton_nodes": sum(1 for n in nodes if n.get("type") == "system"),
                 "fresh_brain": False,
                 "learned_memory_nodes": learned,
-                "system_skeleton_nodes": 1,
                 "visible_nodes": len(nodes),
                 "post_nuke": True,
                 "nuke_epoch_id": nuke_epoch.get("nuke_epoch_id"),
@@ -172,10 +223,15 @@ class HiveBrainGraphService:
         reset_epoch = get_latest_reset_epoch(self.session) or {}
         if not lessons:
             return self._build_fresh_brain_empty_payload(
-                reset_epoch, show_raw=show_raw, expand_cluster=expand_cluster
+                reset_epoch,
+                show_raw=show_raw,
+                expand_cluster=expand_cluster,
+                graph_mode=graph_mode,
             )
         if reset_epoch:
-            return self._build_post_nuke_lesson_graph(lessons, reset_epoch, max_n=max_n)
+            return self._build_post_nuke_lesson_graph(
+                lessons, reset_epoch, max_n=max_n, graph_mode=graph_mode
+            )
 
         nodes: list[dict] = [
             {
@@ -565,10 +621,16 @@ class HiveBrainGraphService:
         show_raw: bool = False,
         expand_cluster: Optional[str] = None,
         max_nodes: Optional[int] = None,
+        graph_mode: str = "default",
     ) -> dict[str, Any]:
         """Full hive-brain API contract."""
-        base = self.build(show_raw=show_raw, expand_cluster=expand_cluster, max_nodes=max_nodes)
-        if base.get("fresh_brain"):
+        base = self.build(
+            show_raw=show_raw,
+            expand_cluster=expand_cluster,
+            max_nodes=max_nodes,
+            graph_mode=graph_mode,
+        )
+        if base.get("fresh_brain") and not base.get("nodes"):
             meta = base.get("meta") or {}
             return {
                 "status": "ok",
@@ -588,6 +650,31 @@ class HiveBrainGraphService:
                     "visible_labels": 0,
                     "last_built_at": datetime.utcnow().isoformat() + "Z",
                     "source_truth_status": "post_nuke_fresh",
+                    "data_freshness": "live",
+                },
+            }
+        if base.get("fresh_brain") and base.get("nodes"):
+            nodes = base["nodes"]
+            edges = base["edges"]
+            meta = base.get("meta") or {}
+            return {
+                "status": "ok",
+                "fresh_brain": True,
+                "message": base.get("message") or "System skeleton visible.",
+                "learned_memory_nodes": 0,
+                "center": next((n for n in nodes if n.get("type") == "hive"), None),
+                "clusters": [n for n in nodes if n.get("type") == "cluster"],
+                "nodes": nodes,
+                "edges": edges,
+                "legend": COLOR_LEGEND,
+                "shape_legend": SHAPE_LEGEND,
+                "color_legend": COLOR_LEGEND,
+                "meta": {
+                    **meta,
+                    "layout_mode": "skeleton",
+                    "visible_labels": len(nodes),
+                    "last_built_at": datetime.utcnow().isoformat() + "Z",
+                    "source_truth_status": "skeleton_only",
                     "data_freshness": "live",
                 },
             }

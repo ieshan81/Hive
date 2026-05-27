@@ -31,12 +31,50 @@ def get_universe_mode(config: dict) -> str:
 def universe_mode_status(session: Session, config: Optional[dict] = None) -> dict[str, Any]:
     cfg = config or ConfigManager(session).get_current()
     mode = get_universe_mode(cfg)
+    sess = SessionEngine().detect()
+    src = universe_sources(session, cfg)
+
+    if mode == "hybrid_radar":
+        from app.services.alpaca_crypto_assets import fetch_crypto_assets
+        from app.services.hybrid_radar_service import hybrid_radar_snapshot
+
+        assets = fetch_crypto_assets(force=False) or {}
+        usd_pairs = [s for s in assets.keys() if s.endswith("/USD")]
+        radar = hybrid_radar_snapshot(session, cfg, fetch_quotes=False)
+        counts = radar.get("counts") or {}
+        return {
+            "status": radar.get("status", "ok"),
+            "generated_at_utc": datetime.utcnow().isoformat() + "Z",
+            "active_mode": mode,
+            "mode_label": "Hybrid Radar",
+            "mode_explanation": (
+                "Full broker universe cached and ranked; execution uses a strict shortlist only."
+            ),
+            "can_switch_to_dynamic": True,
+            "can_switch_to_curated": True,
+            "config_key": "universe.mode",
+            "session": sess.to_dict(),
+            "display_counts": {
+                "total": counts.get("available_usd_pairs", len(usd_pairs)),
+                "active": counts.get("eligible", 0),
+                "blocked": max(0, counts.get("evaluated", 0) - counts.get("eligible", 0)),
+                "watch_only": counts.get("ranked", 0),
+                "crypto": counts.get("available_usd_pairs", len(usd_pairs)),
+                "stock": 0,
+            },
+            "radar_counts": counts,
+            "broker_totals": src.get("source_counts"),
+            "stocks_session_note": (
+                "Stocks currently inactive — U.S. market is closed."
+                if not sess.stock_trading_allowed
+                else "U.S. stock session allows stock entries when other gates pass."
+            ),
+            "reason": radar.get("reason"),
+        }
+
     lightweight = mode == "curated_watchlist"
     limit = 80 if lightweight else 120
     rows = build_merged_universe(session, cfg, limit=limit, lightweight=lightweight)
-    src = universe_sources(session, cfg)
-    sess = SessionEngine().detect()
-
     return {
         "status": "ok",
         "generated_at_utc": datetime.utcnow().isoformat() + "Z",

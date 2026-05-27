@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Optional
 
 from sqlmodel import Session, select, func
@@ -41,7 +42,16 @@ def mission_control_cockpit(session: Session, config: Optional[dict] = None) -> 
     universe_mode = universe_mode_status(session, cfg)
     exit_mon = exit_monitor_status(session, cfg)
     tick_narr = last_tick_narrative(session, cfg)
-    candidates = candidate_rankings(session, cfg)
+    try:
+        candidates = candidate_rankings(session, cfg)
+    except Exception:
+        candidates = {
+            "status": "degraded",
+            "generated_at_utc": datetime.utcnow().isoformat() + "Z",
+            "active_count": 0,
+            "top_ranked": [],
+            "note": "Candidate ranking skipped — broker rate limit or stale data.",
+        }
     latest_logs = list_execution_logs(session, scope="latest_tick", limit=3)
 
     hive_preview = _hive_brain_preview(session, memory)

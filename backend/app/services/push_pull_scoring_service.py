@@ -153,6 +153,21 @@ def score_active_universe(
 ) -> dict[str, Any]:
     """Score active crypto symbols; rank by trade_quality_score."""
     cfg = config or ConfigManager(session).get_current()
+    from app.services.alpaca_adapter import AlpacaAdapter
+
+    adapter = AlpacaAdapter(session)
+    if getattr(adapter, "broker_sync_rate_limited", False):
+        return {
+            "status": "degraded",
+            "generated_at_utc": datetime.utcnow().isoformat() + "Z",
+            "reason": "alpaca_rate_limited",
+            "scoring_model": SCORING_MODEL,
+            "strategy_version": _strategy_version(session),
+            "scores": [],
+            "selected_candidate": None,
+            "rejected_candidates": [],
+            "no_trade_reason_breakdown": {"alpaca_rate_limited": 1},
+        }
     if universe is None:
         from app.services.universe_builder import build_merged_universe
 
