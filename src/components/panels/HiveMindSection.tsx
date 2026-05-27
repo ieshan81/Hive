@@ -25,7 +25,7 @@ export function HiveMindSection() {
   const [showArchived, setShowArchived] = useState(false);
 
   const load = useCallback(async () => {
-    const result = await apiGet<Record<string, unknown>>("/api/memory/hive-mind");
+    const result = await apiGet<Record<string, unknown>>("/api/page-state/ai-manager");
     if (result.ok && result.data) {
       setMind(result.data as typeof mind);
       setMeta({

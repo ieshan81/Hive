@@ -362,26 +362,28 @@ def memory_graph(
     from app.services.lesson_memory_service import LessonMemoryService
 
     config = ConfigManager(session).get_current()
-    if brain and graph_default and not category and not graph_filter:
-        graph_mode = mode or graph_filter or "default"
-        if graph_mode in ("skeleton", "research", "validated"):
-            pass
+    try:
+        if brain and graph_default and not category and not graph_filter:
+            graph_mode = mode or graph_filter or "research"
+            if graph_mode not in ("skeleton", "research", "validated", "default"):
+                graph_mode = "research"
+            graph = HiveBrainGraphService(session, config).build(
+                show_raw=show_raw,
+                expand_cluster=expand_cluster,
+                graph_mode=graph_mode,
+            )
         else:
-            graph_mode = "default"
-        graph = HiveBrainGraphService(session, config).build(
-            show_raw=show_raw,
-            expand_cluster=expand_cluster,
-            graph_mode=graph_mode,
-        )
-    else:
-        graph = LessonMemoryService(session, config).build_graph(
-            category=category,
-            graph_filter=graph_filter,
-            severity=severity,
-            include_archived=include_archived,
-            graph_default=graph_default,
-        )
-    return {"status": "ok", **graph}
+            graph = LessonMemoryService(session, config).build_graph(
+                category=category,
+                graph_filter=graph_filter,
+                severity=severity,
+                include_archived=include_archived,
+                graph_default=graph_default,
+            )
+        return {"status": "ok", **graph}
+    except Exception as exc:
+        graph = HiveBrainGraphService(session, config).build(graph_mode="skeleton")
+        return {"status": "degraded", "error": str(exc)[:120], **graph}
 
 
 @router.get("/memory/hive-mind")

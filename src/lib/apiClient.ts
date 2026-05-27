@@ -14,7 +14,14 @@ export type ApiFetchResult<T> = {
   contentType: string | null;
   rawKeys: string[];
   corsBlocked?: boolean;
+  timedOut?: boolean;
+  degraded?: boolean;
 };
+
+/** Default page/card fetch budget — never block UI for 45s. */
+export const API_TIMEOUT_MS = 3000;
+export const CARD_TIMEOUT_MS = 2000;
+export const DIAGNOSTIC_POLL_MS = 2500;
 
 const PRODUCTION_BACKEND_DEFAULT = "https://hive-production-7343.up.railway.app";
 
@@ -63,16 +70,21 @@ function keysOf(json: unknown): string[] {
 
 export async function apiGet<T = unknown>(
   path: string,
-  options?: { forServer?: boolean; signal?: AbortSignal }
+  options?: { forServer?: boolean; signal?: AbortSignal; timeoutMs?: number }
 ): Promise<ApiFetchResult<T>> {
   const url = buildApiUrl(path, options?.forServer);
+  const timeoutMs = options?.timeoutMs ?? API_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const signal = options?.signal ?? controller.signal;
   try {
     const res = await fetch(url, {
       method: "GET",
       headers: { Accept: "application/json" },
       cache: "no-store",
-      signal: options?.signal,
+      signal,
     });
+    clearTimeout(timer);
     const contentType = res.headers.get("content-type");
     let data: T | null = null;
     let error: string | null = null;
@@ -106,7 +118,9 @@ export async function apiGet<T = unknown>(
       rawKeys: keysOf(data),
     };
   } catch (e) {
+    clearTimeout(timer);
     const msg = e instanceof Error ? e.message : String(e);
+    const timedOut = msg.includes("abort") || msg.includes("Abort");
     const corsBlocked =
       typeof window !== "undefined" &&
       (msg.includes("Failed to fetch") || msg.includes("NetworkError"));
@@ -115,12 +129,16 @@ export async function apiGet<T = unknown>(
       status: 0,
       url,
       data: null,
-      error: corsBlocked
-        ? `CORS or network blocked: ${msg} (called ${url})`
-        : msg,
+      error: timedOut
+        ? `Data temporarily unavailable — using last snapshot (${timeoutMs}ms)`
+        : corsBlocked
+          ? `CORS or network blocked: ${msg} (called ${url})`
+          : msg,
       contentType: null,
       rawKeys: [],
       corsBlocked,
+      timedOut,
+      degraded: timedOut,
     };
   }
 }

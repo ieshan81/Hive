@@ -20,8 +20,15 @@ export function ControlCenterPanel() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    void apiGet<ControlCenterStatus>("/api/control-center/status").then((res) => {
-      if (res.ok && res.data) setData(res.data);
+    void apiGet<ControlCenterStatus & { strategy_parameters_labeled?: Record<string, number> }>(
+      "/api/page-state/control-center"
+    ).then((res) => {
+      if (res.ok && res.data) {
+        setData({
+          ...res.data,
+          strategy_parameters: res.data.strategy_parameters_labeled ?? res.data.strategy_parameters,
+        });
+      }
     });
   }, []);
 

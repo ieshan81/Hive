@@ -119,6 +119,14 @@ class FastCryptoTrainingLoop:
 
     def _entry_blockers(self, pf: Optional[dict] = None) -> list[str]:
         blockers: list[str] = []
+        try:
+            from app.services.entry_safety_service import entry_safety_status
+
+            safety = entry_safety_status(self.session, self.config)
+            if not safety.get("new_paper_entries_allowed"):
+                blockers.extend(safety.get("blockers") or ["system_degraded_blocks_entries"])
+        except Exception:
+            blockers.append("entry_safety_check_failed")
         if not bool(self.ft.get("fast_training_loop_enabled")):
             blockers.append("fast_training_loop_disabled")
         if not bool(self.pl.cfg.get("mode_enabled")):

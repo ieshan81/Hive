@@ -31,12 +31,20 @@ def hive_brain_status(session: Session = Depends(get_session)):
 def hive_brain_graph(
     show_raw: bool = False,
     expand_cluster: str | None = None,
+    mode: str = "research",
     session: Session = Depends(get_session),
 ):
     cfg = ConfigManager(session).get_current()
-    return HiveBrainGraphService(session, cfg).build_full(
-        show_raw=show_raw, expand_cluster=expand_cluster
-    )
+    graph_mode = mode if mode in ("skeleton", "research", "validated", "default") else "research"
+    try:
+        return HiveBrainGraphService(session, cfg).build_full(
+            show_raw=show_raw, expand_cluster=expand_cluster, graph_mode=graph_mode
+        )
+    except Exception as exc:
+        out = HiveBrainGraphService(session, cfg).build_full(show_raw=False, graph_mode="skeleton")
+        out["status"] = "degraded"
+        out["error"] = str(exc)[:120]
+        return out
 
 
 @router.get("/node/{node_id}")

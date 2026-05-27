@@ -1043,7 +1043,21 @@ class StrategyCandidate(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
-engine = create_engine(settings.resolve_database_url(), echo=False)
+def _create_db_engine():
+    url = settings.resolve_database_url()
+    kwargs: dict = {"echo": False}
+    if url.startswith("postgresql") or url.startswith("postgres"):
+        kwargs.update(
+            pool_pre_ping=True,
+            pool_size=8,
+            max_overflow=12,
+            pool_timeout=30,
+            pool_recycle=1800,
+        )
+    return create_engine(url, **kwargs)
+
+
+engine = _create_db_engine()
 
 
 def _migrate_columns() -> None:

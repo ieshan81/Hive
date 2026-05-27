@@ -45,6 +45,8 @@ from app.routers import (
     news,
     research_experiments,
     market_sessions,
+    page_state,
+    diagnostics_export,
 )
 from app.services.database_bootstrap_service import repair_database_bootstrap
 from app.services.startup import bootstrap_database
@@ -104,6 +106,8 @@ app.include_router(social_reddit.router)
 app.include_router(news.router)
 app.include_router(research_experiments.router)
 app.include_router(market_sessions.router)
+app.include_router(page_state.router)
+app.include_router(diagnostics_export.router)
 
 
 @app.on_event("startup")

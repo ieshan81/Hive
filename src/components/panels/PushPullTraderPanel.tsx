@@ -20,29 +20,30 @@ export function PushPullTraderPanel() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const sym = encodeURIComponent(signalSymbol);
-    const [st, dec, les, sig, tick, proof, diag] = await Promise.all([
-      apiGet<Record<string, unknown>>("/api/push-pull/status"),
-      apiGet<{ decisions?: Record<string, unknown>[] }>("/api/push-pull/decisions?limit=30"),
-      apiGet<{ lessons?: Record<string, unknown>[] }>("/api/push-pull/lessons?limit=15"),
-      apiGet<Record<string, unknown>>(`/api/push-pull/signals?symbol=${sym}`),
-      apiGet<Record<string, unknown>>("/api/push-pull/latest-tick"),
-      apiGet<Record<string, unknown>>("/api/push-pull/paper-order-proof"),
-      apiGet<Record<string, unknown>>("/api/push-pull/diagnosis"),
-    ]);
-    if (st.ok) setStatus(st.data);
-    if (dec.ok) setDecisions(dec.data?.decisions ?? []);
-    if (les.ok) setLessons(les.data?.lessons ?? []);
-    if (sig.ok) setSignals(sig.data);
-    if (tick.ok) setLatestTick(tick.data);
-    if (proof.ok) setOrderProof(proof.data);
-    if (diag.ok) setDiagnosis(diag.data);
+    const ps = await apiGet<Record<string, unknown>>("/api/page-state/push-pull");
+    if (ps.ok && ps.data) {
+      const d = ps.data;
+      setStatus({
+        operator_messages: [String(d.next_action ?? "")],
+        entry_safety: d.entry_safety,
+        why_blocked: d.why_blocked,
+      });
+      setLatestTick((d.latest_tick as Record<string, unknown>) ?? null);
+      setOrderProof((d.paper_order_proof as Record<string, unknown>) ?? null);
+      setLessons((d.lessons as Record<string, unknown>[]) ?? []);
+      setDiagnosis({
+        no_trade_reasons: d.no_trade_reasons,
+        next_action: d.next_action,
+        experiments: d.experiments,
+      });
+      setDecisions([]);
+    }
     setLoading(false);
   }, [signalSymbol]);
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 45000);
+    const t = setInterval(load, 30000);
     return () => clearInterval(t);
   }, [load]);
 

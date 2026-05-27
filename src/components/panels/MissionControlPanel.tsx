@@ -69,11 +69,14 @@ type Cockpit = {
   primary_blocker_plain?: string;
 };
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, reason }: { label: string; value: string; reason?: string | null }) {
   return (
     <div className="rounded-lg border border-white/5 bg-black/20 px-3 py-2">
       <p className="text-[9px] uppercase tracking-wider text-slate-500">{label}</p>
       <p className="text-sm font-semibold text-white mt-0.5 truncate">{value}</p>
+      {reason && value === "—" && (
+        <p className="text-[9px] text-amber-300/80 mt-0.5 line-clamp-2">{reason}</p>
+      )}
     </div>
   );
 }
@@ -96,9 +99,12 @@ export function MissionControlPanel() {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const res = await apiGet<Cockpit>("/api/mission-control/status");
-    if (res.ok && res.data) {
-      setData(res.data);
+    const res = await apiGet<Cockpit & { mission_control?: Cockpit; cards?: Record<string, { value?: unknown; reason?: string }> }>(
+      "/api/page-state/mission-control"
+    );
+    const payload = res.data?.mission_control ? { ...res.data.mission_control, cards: res.data.cards } : res.data;
+    if (res.ok && payload) {
+      setData(payload as Cockpit);
       setError(null);
     } else {
       setError(res.error || `HTTP ${res.status}`);
@@ -108,7 +114,7 @@ export function MissionControlPanel() {
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 30000);
+    const t = setInterval(load, 15000);
     return () => clearInterval(t);
   }, [load]);
 
@@ -212,10 +218,26 @@ export function MissionControlPanel() {
 
         <GlassPanel title="Capital allocator" icon={<TrendingUp className="h-4 w-4" />} className="lg:col-span-1">
           <div className="grid grid-cols-2 gap-2 text-sm">
-            <Stat label="Deployable" value={`$${alloc.deployable_capital ?? "—"}`} />
-            <Stat label="Cash reserve" value={`$${alloc.cash_reserve ?? "—"}`} />
-            <Stat label="Crypto budget" value={`$${alloc.crypto_budget ?? "—"}`} />
-            <Stat label="Stock budget" value={`$${alloc.stock_budget ?? "—"}`} />
+            <Stat
+              label="Deployable"
+              value={alloc.deployable_capital != null ? `$${alloc.deployable_capital}` : "—"}
+              reason={(data as { cards?: Record<string, { reason?: string }> })?.cards?.deployable?.reason}
+            />
+            <Stat
+              label="Cash reserve"
+              value={alloc.cash_reserve != null ? `$${alloc.cash_reserve}` : "—"}
+              reason={(data as { cards?: Record<string, { reason?: string }> })?.cards?.cash_reserve?.reason}
+            />
+            <Stat
+              label="Crypto budget"
+              value={alloc.crypto_budget != null ? `$${alloc.crypto_budget}` : "—"}
+              reason={(data as { cards?: Record<string, { reason?: string }> })?.cards?.crypto_budget?.reason}
+            />
+            <Stat
+              label="Stock budget"
+              value={alloc.stock_budget != null ? `$${alloc.stock_budget}` : "—"}
+              reason={(data as { cards?: Record<string, { reason?: string }> })?.cards?.stock_budget?.reason}
+            />
           </div>
           {spark.length > 0 && (
             <div className="flex items-end gap-0.5 h-10 mt-3">

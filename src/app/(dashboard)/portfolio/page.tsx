@@ -32,6 +32,7 @@ export default function PortfolioPage() {
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [orderSummary, setOrderSummary] = useState<OrderSummaryCounts | undefined>();
   const [recon, setRecon] = useState<Record<string, unknown> | null>(null);
+  const [nextAction, setNextAction] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [meta, setMeta] = useState<Record<string, PanelLoadMeta>>({});
 
@@ -40,15 +41,19 @@ export default function PortfolioPage() {
     const m: Record<string, PanelLoadMeta> = {};
     const ts = new Date().toISOString();
 
-    const [pRes, oRes, dashRes, reconRes] = await Promise.all([
-      apiGet("/api/positions"),
-      apiGet("/api/orders"),
-      apiGet("/api/dashboard"),
-      apiGet("/api/portfolio/reconciliation"),
-    ]);
+    const psRes = await apiGet<Record<string, unknown>>("/api/page-state/portfolio");
+    const pRes = psRes.ok ? psRes : await apiGet("/api/positions");
+    const oRes = psRes.ok
+      ? ({ ok: true, data: { orders: psRes.data?.orders }, status: 200, error: null } as const)
+      : await apiGet("/api/orders");
+    const reconRes = psRes.ok
+      ? ({ ok: true, data: psRes.data?.reconciliation, status: 200, error: null } as const)
+      : await apiGet("/api/portfolio/reconciliation");
+    const dashRes = await apiGet("/api/dashboard");
 
     if (pRes.ok) {
-      setPositions(normalizePositions(pRes.data));
+      const posPayload = psRes.ok ? { positions: psRes.data?.positions } : pRes.data;
+      setPositions(normalizePositions(posPayload));
       m.positions = { source: "live_api", lastUpdated: ts, endpoint: "/api/positions", httpStatus: pRes.status };
     } else {
       setPositions([]);
@@ -63,6 +68,9 @@ export default function PortfolioPage() {
 
     if (reconRes.ok) setRecon(reconRes.data as Record<string, unknown>);
     else setRecon(null);
+    if (psRes.ok && psRes.data) {
+      setNextAction(String(psRes.data.next_action ?? psRes.data.message ?? ""));
+    }
 
     if (dashRes.ok && dashRes.data && typeof dashRes.data === "object") {
       const d = dashRes.data as Record<string, unknown>;
@@ -114,10 +122,13 @@ export default function PortfolioPage() {
         <EmptyState message="Loading broker positions…" />
       ) : (
         <>
-          {warning && (
+          {(warning || nextAction) && (
             <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
               <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-              {warning}
+              <div>
+                {warning && <p>{warning}</p>}
+                {nextAction && <p className="text-xs mt-1 opacity-90">{nextAction}</p>}
+              </div>
             </div>
           )}
 

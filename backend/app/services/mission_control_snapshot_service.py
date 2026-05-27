@@ -194,11 +194,15 @@ def _subsystem_product_truth_fast(session: Session, cfg: dict) -> dict[str, Any]
     apl = dict(cfg.get("autonomous_paper_learning") or {})
     desired_learning = bool(apl.get("mode_enabled"))
     desired_execution = bool((cfg.get("execution") or {}).get("paper_orders_enabled"))
+    from app.services.entry_safety_service import entry_safety_status
+
+    safety = entry_safety_status(session, cfg)
     can_place = (
         desired_learning
         and desired_execution
         and not env.get("any_env_pause")
         and lock.get("live_lock_status") == "locked"
+        and safety.get("new_paper_entries_allowed")
     )
     mode = "push_pull_paper_learning" if can_place else (
         "push_pull_scanning" if desired_learning else "paper_learning_off"
@@ -212,10 +216,11 @@ def _subsystem_product_truth_fast(session: Session, cfg: dict) -> dict[str, Any]
         "current_mode_label": mode.replace("_", " ").title(),
         "primary_blocker": "ready" if can_place else "blocked",
         "primary_blocker_plain": (
-            "Push-pull paper learning is active."
-            if can_place
-            else "Paper learning active; entries gated by risk or data freshness."
+            safety.get("operator_message")
+            if not can_place
+            else "Push-pull paper learning is active."
         ),
+        "entry_safety": safety,
         "operator_desired_paper_learning": desired_learning,
         "env_pause_status": env,
         "fresh": True,

@@ -36,6 +36,7 @@ type Payload = {
   block_breakdown?: Record<string, number>;
   counts?: {
     available_usd_pairs?: number;
+    cached_usd_pairs?: number;
     eligible?: number;
     ranked?: number;
     execution_shortlist?: number;
@@ -62,21 +63,29 @@ export function UniverseRadarFunnel() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const r = await apiGet<Payload>("/api/universe/radar");
-    if (r.ok && r.data) setData(r.data);
+    const r = await apiGet<Record<string, unknown>>("/api/page-state/universe");
+    if (r.ok && r.data) {
+      const ps = r.data;
+      setData({
+        status: String(ps.status ?? "ok"),
+        answer: ps.reason ? String(ps.reason) : undefined,
+        counts: ps.counts as Payload["counts"],
+        pipeline: { cycle_id: "cached", funnel: ps.funnel as Funnel, shortlist: [] },
+      });
+    }
     setLoading(false);
   }, []);
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 30000);
+    const t = setInterval(load, 60000);
     return () => clearInterval(t);
   }, [load]);
 
   const funnel = data?.pipeline?.funnel ?? (data?.counts
     ? {
-        available: data.counts.available_usd_pairs ?? 0,
-        cached: data.counts.available_usd_pairs ?? 0,
+        available: data.counts.available_usd_pairs ?? data.counts.cached_usd_pairs ?? 0,
+        cached: data.counts.cached_usd_pairs ?? data.counts.available_usd_pairs ?? 0,
         eligible: data.counts.eligible ?? 0,
         ranked: data.counts.ranked ?? 0,
         execution_shortlist: data.counts.execution_shortlist ?? 0,

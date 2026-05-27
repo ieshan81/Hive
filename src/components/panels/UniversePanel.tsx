@@ -38,24 +38,44 @@ export function UniversePanel() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [st, src, md] = await Promise.all([
-      apiGet<{ symbols?: SymbolRow[]; counts?: Record<string, number> }>("/api/universe/status"),
-      apiGet<SourcesSummary>("/api/universe/sources"),
-      apiGet<{ mode_label?: string; mode_explanation?: string; stocks_session_note?: string; active_mode?: string }>("/api/universe/mode"),
-    ]);
-    if (st.ok) {
-      setSymbols(st.data?.symbols ?? []);
-      setCounts(st.data?.counts ?? {});
+    const ps = await apiGet<Record<string, unknown>>("/api/page-state/universe");
+    if (ps.ok && ps.data) {
+      const d = ps.data;
+      const syms = (d.symbols as SymbolRow[]) ?? [];
+      setSymbols(syms);
+      const c = (d.counts as Record<string, number>) ?? {};
+      setCounts({
+        total: c.available_usd_pairs ?? syms.length,
+        active: syms.filter((s) => s.status === "Active" || s.status === "Ranked" || s.status === "Cached").length,
+        blocked: syms.filter((s) => s.status === "Blocked").length,
+        crypto: syms.length,
+      });
+      const sp = (d.source_proof as Record<string, unknown>) ?? {};
+      setSources({
+        source_counts: {
+          alpaca_crypto_assets_api: Number(sp.usd_pair_count ?? syms.length),
+          curated_crypto_watchlist: Number(sp.curated_crypto_displayed ?? syms.length),
+        },
+        alpaca_crypto_api_called: Boolean(sp.api_called),
+        last_refresh_at: sp.last_successful_scan as string | undefined,
+        why_only_8_crypto_displayed:
+          syms.length > 8
+            ? `Hybrid radar shows ${syms.length} cached USD pairs`
+            : "Curated subset on display",
+      });
+      setMode({
+        mode_label: String(d.mode_label ?? "Hybrid Radar"),
+        active_mode: String(d.active_mode ?? "hybrid_radar"),
+        mode_explanation: d.cached_data_used
+          ? "Using cached radar snapshot — live refresh available via Control Center"
+          : undefined,
+      });
     }
-    if (src.ok) setSources(src.data ?? null);
-    if (md.ok) setMode(md.data ?? null);
     setLoading(false);
   }, []);
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 60000);
-    return () => clearInterval(t);
   }, [load]);
 
   const filtered = useMemo(() => {
