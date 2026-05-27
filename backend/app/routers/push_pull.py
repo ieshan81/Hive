@@ -100,7 +100,36 @@ def _score_live(session: Session, symbols: list[str]) -> dict:
             regime=regime,
             side="buy",
         )
-        out.append(evaluation)
+        # Normalize keys to acceptance contract (without changing core scorer).
+        edge_after_cost_bps = evaluation.get("edge_bps")
+        trade_quality_score = evaluation.get("quality_score")
+        no_trade_reason = None if evaluation.get("pass") else (evaluation.get("reason") or "no_trade")
+        out.append(
+            {
+                **evaluation,
+                "edge_after_cost_bps": edge_after_cost_bps,
+                "trade_quality_score": trade_quality_score,
+                "no_trade_reason": no_trade_reason,
+                "scoring_model": "push_pull_scorer.evaluate_entry",
+                "score_components": {
+                    "push_score": evaluation.get("push_score"),
+                    "edge_after_cost_bps": edge_after_cost_bps,
+                    "trade_quality_score": trade_quality_score,
+                    "universe_rank_score": evaluation.get("universe_rank_score"),
+                    "sentiment_alignment": evaluation.get("sentiment_alignment"),
+                    "regime": evaluation.get("regime"),
+                    "five_m_confirms": evaluation.get("five_m_confirms"),
+                    "bar_age_s": evaluation.get("bar_age_s"),
+                    "quote_age_s": evaluation.get("quote_age_s"),
+                    "atr14": evaluation.get("atr14"),
+                },
+                "threshold_values": {
+                    "min_push_enter": 70.0,
+                    "min_quality": 60.0,
+                    "min_edge_bps": 25.0,
+                },
+            }
+        )
     return {
         "status": "ok",
         "generated_at_utc": datetime.utcnow().isoformat() + "Z",
