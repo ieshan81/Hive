@@ -36,7 +36,10 @@ def sentiment_sources(session: Session, config: Optional[dict] = None) -> dict[s
         finbert_active = False
 
     reddit_active = bool(os.environ.get("REDDIT_CLIENT_ID") and os.environ.get("REDDIT_CLIENT_SECRET"))
-    news_active = bool(settings.alpaca_configured)
+    # News provider can be configured even when FinBERT is unavailable; we keep truth explicit:
+    # provider_wired may be true, but sentiment_scoring is inactive without FinBERT.
+    news_provider_wired = bool(settings.alpaca_configured)
+    news_active = bool(news_provider_wired and finbert_active)
 
     return {
         "status": "ok",
@@ -70,10 +73,16 @@ def sentiment_sources(session: Session, config: Optional[dict] = None) -> dict[s
                 "wired": True,
                 "primary_source": "alpaca_benzinga",
                 "fallback_sources": ["finnhub", "alpha_vantage", "yahoo_rss"],
+                "provider_wired": news_provider_wired,
+                "sentiment_scoring_requires_finbert": True,
                 "reason": (
-                    "Alpaca News (Benzinga) ingester wired; FinBERT scores headlines."
+                    "Alpaca News (Benzinga) ingester wired and FinBERT available — headline scoring active."
                     if news_active
-                    else "Implemented; inactive until Alpaca credentials configured."
+                    else (
+                        "Alpaca News provider is configured, but FinBERT is unavailable — news sentiment scoring is inactive."
+                        if news_provider_wired
+                        else "Implemented; inactive until Alpaca credentials configured."
+                    )
                 ),
             },
             "symbol_candidate_score": {
