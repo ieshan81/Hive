@@ -46,6 +46,7 @@ class ResearchMemoryService:
             "parameter_sweep_no_variation",
             "sample_size_warning",
             "repeated_losing_parameter_family",
+            "strategy_discovery_verdict",
         ):
             cat = CATEGORY_RESEARCH
         return self.lessons.upsert_lesson(

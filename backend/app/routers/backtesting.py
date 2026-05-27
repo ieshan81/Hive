@@ -53,6 +53,31 @@ def promotion_verdict(body: dict = Body(default={})):
     return {"status": "ok", **build_promotion_verdict(returns, n_trials)}
 
 
+@router.get("/universe-discovery/status")
+def universe_discovery_status(session: Session = Depends(get_session)):
+    from app.services.universe_strategy_discovery_service import discovery_status
+
+    return discovery_status(session)
+
+
+@router.get("/universe-discovery/latest")
+def universe_discovery_latest(session: Session = Depends(get_session)):
+    from app.services.universe_strategy_discovery_service import discovery_latest
+
+    return discovery_latest(session)
+
+
+@router.post("/run-universe-discovery")
+def run_universe_discovery(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
+    from app.services.universe_strategy_discovery_service import run_universe_discovery
+
+    return run_universe_discovery(session, body, operator=_op)
+
+
 @router.get("/result/{run_id}")
 def result(run_id: str, session: Session = Depends(get_session)):
     from app.services.research_backtest_engine import ResearchBacktestEngine

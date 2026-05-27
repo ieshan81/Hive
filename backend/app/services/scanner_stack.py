@@ -129,6 +129,8 @@ def _safe_run(callable_fn, *args, **kwargs) -> dict[str, Any]:
 
 def _scan_universe(session: Session) -> dict[str, Any]:
     from app.services.alpaca_adapter import AlpacaAdapter
+    from app.services.universe_strategy_discovery_service import build_funnel_breakdown
+
     adapter = AlpacaAdapter(session)
     if not adapter.configured:
         return {"available_crypto": 0, "available_stocks": 0, "configured": False}
@@ -137,10 +139,16 @@ def _scan_universe(session: Session) -> dict[str, Any]:
         crypto = AlpacaCryptoAssetsService(session).list_tradable()
     except Exception:
         crypto = []
+    funnel = build_funnel_breakdown(session, max_evaluate=36, fetch_quotes=False)
     return {
         "configured": True,
         "available_crypto": len(crypto) if isinstance(crypto, list) else 0,
         "sample_crypto_symbols": [c.get("symbol") for c in (crypto or [])][:10],
+        "usd_pairs_available": funnel.get("available_symbols"),
+        "evaluated_symbols": funnel.get("evaluated_symbols"),
+        "eligible_count": funnel.get("eligible_count"),
+        "block_breakdown": funnel.get("block_breakdown"),
+        "funnel_answer": funnel.get("answer"),
     }
 
 

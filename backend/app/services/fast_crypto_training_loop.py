@@ -389,20 +389,24 @@ class FastCryptoTrainingLoop:
         }
 
     def _block_memory(self, reason_code: str, details: dict) -> None:
-        blockers = details.get("blockers") or [reason_code]
+        blockers = sorted(details.get("blockers") or [reason_code])
+        # One consolidated lesson per blocker-set — avoid spamming on every tick.
+        pattern_key = "ft_blocked|" + "|".join(blockers[:8])
+        summary = f"Paper cycle blocked: {', '.join(blockers[:6])}. No broker order submitted."
         self.lessons.upsert_lesson(
             memory_type="fast_training_blocked_memory",
             title="Paper cycle blocked",
-            summary=f"Run-once blocked: {', '.join(blockers[:6])}. No broker order submitted.",
+            summary=summary,
             detailed_lesson=(
                 "Fast training uses exits-first ordering and TrainingExecutionService→PaperExecutionService only. "
-                f"Reason: {reason_code}. Details: {details}"
+                f"Blockers: {blockers}. Details: {details}"
             ),
             source="fast_crypto_training_loop",
-            pattern_key=f"ft_blocked|{reason_code}|{datetime.utcnow().isoformat(timespec='seconds')}",
+            pattern_key=pattern_key,
             can_influence_ranking=False,
             visible_to_ai=True,
             category="ai_learning_memory",
+            aggregate=True,
         )
 
     def start_loop(self) -> dict[str, Any]:

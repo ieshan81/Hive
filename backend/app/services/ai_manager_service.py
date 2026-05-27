@@ -94,21 +94,43 @@ class AIManagerService:
         }
 
     def backtest_lab(self) -> dict[str, Any]:
+        from app.services.universe_strategy_discovery_service import discovery_latest, discovery_status, strategy_verdict
+
         ResearchLabService(self.session).ensure_library()
         runs = ResearchBacktestEngine(self.session, self.config).list_runs(5)
         latest = runs[0] if runs else None
         lesson = None
-        if latest:
-            for row in self.lessons(limit=10).get("lessons") or []:
-                if "backtest" in str(row.get("memory_type") or "").lower() or "research" in str(row.get("title") or "").lower():
-                    lesson = row
-                    break
+        for row in self.lessons(limit=20).get("lessons") or []:
+            mt = str(row.get("memory_type") or "").lower()
+            if "strategy_discovery" in mt or "backtest" in mt or "research" in str(row.get("title") or "").lower():
+                lesson = row
+                break
+        discovery = discovery_latest(self.session)
+        verdict = strategy_verdict(self.session, self.config)
+        selection = discovery.get("symbol_selection") or {}
+        per = discovery.get("per_symbol_results") or []
+        tested = sorted({r.get("symbol") for r in per if r.get("status") == "ok"})
         return {
             "backtest_run_count": len(ResearchBacktestEngine(self.session, self.config).list_runs(500)),
             "latest_run": latest,
             "metrics": (latest or {}).get("metrics"),
             "result_label": (latest or {}).get("result_label"),
             "ai_lesson": lesson,
+            "universe_discovery": {
+                "title": "Universe Discovery Backtest",
+                "status": discovery_status(self.session),
+                "available_usd_pairs": selection.get("available_usd_pairs"),
+                "eligible_for_backtest": selection.get("eligible_for_backtest"),
+                "selected_symbols": selection.get("selected_symbols"),
+                "tested_symbols": tested,
+                "skipped_symbols": discovery.get("skipped", [])[:12],
+                "top_performers": verdict.get("best_symbols", [])[:5],
+                "weak_performers": verdict.get("worst_symbols", [])[:5],
+                "strategy_verdict": verdict.get("current_status"),
+                "funnel_answer": verdict.get("funnel_answer"),
+                "next_test_plan": verdict.get("next_experiment"),
+                "should_paper_trade_now": verdict.get("should_paper_trade_now"),
+            },
         }
 
     def gemini_advisor_panel(self) -> dict[str, Any]:

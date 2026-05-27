@@ -110,6 +110,7 @@ RESEARCH_MEMORY_TYPES = frozenset(
         "do_not_promote_recommendation",
         "sample_size_warning",
         "repeated_losing_parameter_family",
+        "strategy_discovery_verdict",
     }
 )
 

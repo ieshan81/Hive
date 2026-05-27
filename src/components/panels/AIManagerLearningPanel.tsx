@@ -7,7 +7,27 @@ import { apiGet } from "@/lib/apiClient";
 import { onHiveNukeComplete } from "@/lib/hiveRefresh";
 
 type StrategyLab = Record<string, unknown>;
-type BacktestLab = { backtest_run_count?: number; latest_run?: Record<string, unknown>; result_label?: string; ai_lesson?: Record<string, unknown> };
+type UniverseDiscovery = {
+  title?: string;
+  available_usd_pairs?: number;
+  eligible_for_backtest?: number;
+  selected_symbols?: string[];
+  tested_symbols?: string[];
+  skipped_symbols?: Record<string, unknown>[];
+  top_performers?: Record<string, unknown>[];
+  weak_performers?: Record<string, unknown>[];
+  strategy_verdict?: string;
+  funnel_answer?: string;
+  next_test_plan?: string;
+  should_paper_trade_now?: boolean;
+};
+type BacktestLab = {
+  backtest_run_count?: number;
+  latest_run?: Record<string, unknown>;
+  result_label?: string;
+  ai_lesson?: Record<string, unknown>;
+  universe_discovery?: UniverseDiscovery;
+};
 type AdvisorPanel = Record<string, unknown>;
 type MemoryGraph = { validated_memories?: Record<string, unknown>[]; latest_useful_lesson?: Record<string, unknown> };
 
@@ -43,6 +63,7 @@ export function AIManagerLearningPanel() {
   const advisor = (status?.gemini_advisor as AdvisorPanel) || {};
   const graph = (status?.memory_graph as MemoryGraph) || {};
   const latestRun = bt.latest_run || {};
+  const udisc = bt.universe_discovery || {};
 
   return (
     <section className="space-y-4 max-w-5xl">
@@ -107,6 +128,23 @@ export function AIManagerLearningPanel() {
               AI lesson: {String((bt.ai_lesson as Record<string, unknown>).title ?? (bt.ai_lesson as Record<string, unknown>).summary)}
             </p>
           )}
+          <div className="mt-4 border-t border-white/10 pt-3">
+            <p className="text-xs font-semibold text-hive-cyan">{String(udisc.title ?? "Universe Discovery Backtest")}</p>
+            <ul className="mt-2 text-[11px] text-slate-400 space-y-1">
+              <li>USD pairs available: {String(udisc.available_usd_pairs ?? "—")}</li>
+              <li>Eligible for backtest: {String(udisc.eligible_for_backtest ?? "—")}</li>
+              <li>Selected: {JSON.stringify(udisc.selected_symbols ?? [])}</li>
+              <li>Tested: {JSON.stringify(udisc.tested_symbols ?? [])}</li>
+              <li>Verdict: <span className="text-amber-300 capitalize">{String(udisc.strategy_verdict ?? "not run")}</span></li>
+              <li>Paper now: {udisc.should_paper_trade_now ? "yes" : "no"}</li>
+            </ul>
+            {udisc.funnel_answer && (
+              <p className="text-[10px] text-slate-500 mt-2">{String(udisc.funnel_answer).slice(0, 280)}</p>
+            )}
+            {udisc.next_test_plan && (
+              <p className="text-[10px] text-slate-500 mt-1">Next: {String(udisc.next_test_plan)}</p>
+            )}
+          </div>
         </GlassPanel>
 
         <GlassPanel title="Gemini Advisor" icon={<Sparkles className="h-4 w-4" />}>

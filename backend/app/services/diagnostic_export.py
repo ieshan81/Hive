@@ -1293,6 +1293,71 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
                 ).no_trade_reason_breakdown_export(session, cfg_brain),
                 export_errors,
             ),
+            "universe_discovery_backtest.json": safe_export_section(
+                "universe_discovery_backtest.json",
+                lambda: __import__(
+                    "app.services.universe_strategy_discovery_service", fromlist=["discovery_latest"]
+                ).discovery_latest(session),
+                export_errors,
+            ),
+            "per_symbol_backtest_results.json": safe_export_section(
+                "per_symbol_backtest_results.json",
+                lambda: {
+                    "results": (
+                        __import__(
+                            "app.services.universe_strategy_discovery_service", fromlist=["discovery_latest"]
+                        ).discovery_latest(session).get("per_symbol_results")
+                        or []
+                    )
+                },
+                export_errors,
+            ),
+            "strategy_verdict.json": safe_export_section(
+                "strategy_verdict.json",
+                lambda: __import__(
+                    "app.services.universe_strategy_discovery_service", fromlist=["strategy_verdict"]
+                ).strategy_verdict(session, cfg_brain),
+                export_errors,
+            ),
+            "backtest_skip_reasons.json": safe_export_section(
+                "backtest_skip_reasons.json",
+                lambda: {
+                    "skipped": (
+                        __import__(
+                            "app.services.universe_strategy_discovery_service", fromlist=["discovery_latest"]
+                        ).discovery_latest(session).get("skipped")
+                        or []
+                    ),
+                    "selection": (
+                        __import__(
+                            "app.services.universe_strategy_discovery_service", fromlist=["discovery_latest"]
+                        ).discovery_latest(session).get("symbol_selection")
+                        or {}
+                    ),
+                },
+                export_errors,
+            ),
+            "best_symbols.json": safe_export_section(
+                "best_symbols.json",
+                lambda: __import__(
+                    "app.services.universe_strategy_discovery_service", fromlist=["export_bundle_sections"]
+                ).export_bundle_sections(session, cfg_brain)["best_symbols.json"],
+                export_errors,
+            ),
+            "worst_symbols.json": safe_export_section(
+                "worst_symbols.json",
+                lambda: __import__(
+                    "app.services.universe_strategy_discovery_service", fromlist=["export_bundle_sections"]
+                ).export_bundle_sections(session, cfg_brain)["worst_symbols.json"],
+                export_errors,
+            ),
+            "parameter_sweep_results.json": safe_export_section(
+                "parameter_sweep_results.json",
+                lambda: __import__(
+                    "app.services.universe_strategy_discovery_service", fromlist=["export_bundle_sections"]
+                ).export_bundle_sections(session, cfg_brain)["parameter_sweep_results.json"],
+                export_errors,
+            ),
             "ai_advisor_status.json": safe_export_section(
                 "ai_advisor_status.json",
                 lambda: __import__(

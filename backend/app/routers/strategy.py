@@ -42,8 +42,23 @@ def pp_candidates(session: Session = Depends(get_session)):
 @router.get("/push-pull/no-trade-reasons")
 def pp_reasons(session: Session = Depends(get_session)):
     from app.routers.push_pull import no_trade_reasons
+    from app.services.universe_strategy_discovery_service import build_funnel_breakdown
 
-    return no_trade_reasons(session)
+    live = no_trade_reasons(session)
+    funnel = build_funnel_breakdown(session, max_evaluate=36, fetch_quotes=True)
+    return {
+        "status": "ok",
+        "generated_at_utc": funnel.get("generated_at_utc"),
+        "universe_funnel_answer": funnel.get("answer"),
+        "universe_block_breakdown": funnel.get("block_breakdown"),
+        "universe_funnel": funnel.get("funnel"),
+        "available_symbols": funnel.get("available_symbols"),
+        "evaluated_symbols": funnel.get("evaluated_symbols"),
+        "eligible_count": funnel.get("eligible_count"),
+        "live_scoring": live,
+        "reason_breakdown": live.get("reason_breakdown"),
+        "by_symbol": live.get("by_symbol"),
+    }
 
 
 @router.get("/push-pull/latest")
@@ -51,3 +66,10 @@ def pp_latest(session: Session = Depends(get_session)):
     from app.services.push_pull_engine_service import PushPullEngineService
 
     return PushPullEngineService(session).latest_tick()
+
+
+@router.get("/push-pull/verdict")
+def push_pull_verdict(session: Session = Depends(get_session)):
+    from app.services.universe_strategy_discovery_service import strategy_verdict
+
+    return strategy_verdict(session)
