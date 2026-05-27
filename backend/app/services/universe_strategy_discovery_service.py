@@ -89,9 +89,16 @@ def evaluate_symbol_blocks(
 
     quote = {}
     if fetch_quote:
-        quote = quote_svc.check(symbol, asset_class="crypto")
-        if not quote.get("fresh"):
-            blocks.append("stale_quote")
+        try:
+            quote = quote_svc.check(symbol, asset_class="crypto")
+            if not quote.get("fresh"):
+                blocks.append("stale_quote")
+            q = quote.get("quote") or {}
+            if q.get("bid") is None and q.get("ask") is None:
+                blocks.append("stale_or_missing_quote")
+        except Exception:
+            blocks.append("stale_or_missing_quote")
+            quote = {"fresh": False, "quote": {}}
 
     bars_5m, bar_meta = hist.get_bars(symbol, timeframe="5Min", min_rows=14, lookback_days=14)
     if bar_meta.get("error") or len(bars_5m) < 14:
@@ -101,7 +108,18 @@ def evaluate_symbol_blocks(
     if not bar_meta.get("error"):
         bars_1m, _ = hist.get_bars(symbol, timeframe="1Min", min_rows=30, lookback_days=7)
 
-    metrics = urs.extract_symbol_metrics(symbol, bars_5m or [], quote if fetch_quote else {})
+    metrics = {}
+    try:
+        metrics = urs.extract_symbol_metrics(
+            symbol, bars_5m or [], quote.get("quote") if fetch_quote and isinstance(quote, dict) else (quote if fetch_quote else {})
+        )
+    except Exception:
+        metrics = {
+            "symbol": symbol,
+            "eligible": False,
+            "ineligible_reason": "stale_or_missing_quote",
+        }
+        blocks.append("stale_or_missing_quote")
     if metrics.get("ineligible_reason") == "spread_too_wide":
         blocks.append("spread_too_wide")
     if metrics.get("ineligible_reason") == "bar_stale":
@@ -169,27 +187,53 @@ def build_funnel_breakdown(
     cfg = config or ConfigManager(session).get_current()
     available, assets = _load_usd_universe()
     adapter = AlpacaAdapter(session)
+    rate_limited = bool(getattr(adapter, "broker_sync_rate_limited", False))
+    if rate_limited:
+        fetch_quotes = False
     if not adapter.configured:
         return {
             "status": "degraded",
             "generated_at_utc": _now(),
+            "reason": "alpaca_not_configured",
             "answer": "Alpaca not configured — cannot evaluate universe.",
             "available_symbols": len(available),
             "evaluated_symbols": 0,
             "block_breakdown": {},
+            "degraded": True,
         }
 
     eval_syms = available[:max_evaluate]
     per_symbol: list[dict] = []
     block_counter: Counter[str] = Counter()
+    stale_symbols: list[str] = []
+    unavailable_symbols: list[str] = []
 
     for sym in eval_syms:
-        row = evaluate_symbol_blocks(
-            session, cfg, sym, assets_meta=assets, fetch_quote=fetch_quotes
-        )
+        try:
+            row = evaluate_symbol_blocks(
+                session, cfg, sym, assets_meta=assets, fetch_quote=fetch_quotes
+            )
+        except Exception as exc:
+            row = {
+                "symbol": sym,
+                "blocks": ["evaluation_error"],
+                "eligible": False,
+                "primary_block": "evaluation_error",
+                "metrics": {
+                    "symbol": sym,
+                    "eligible": False,
+                    "ineligible_reason": "stale_or_missing_quote",
+                },
+                "error": type(exc).__name__,
+            }
+            unavailable_symbols.append(sym)
         per_symbol.append(row)
         for b in row.get("blocks") or []:
             block_counter[b] += 1
+        if "stale_or_missing_quote" in (row.get("blocks") or []):
+            stale_symbols.append(sym)
+        if row.get("error"):
+            unavailable_symbols.append(sym)
 
     metrics = [r["metrics"] for r in per_symbol if r.get("metrics")]
     ranked = urs.rank_universe(metrics)
@@ -224,8 +268,14 @@ def build_funnel_breakdown(
         )
 
     return {
-        "status": "ok",
+        "status": "degraded" if rate_limited else "ok",
         "generated_at_utc": _now(),
+        "reason": "alpaca_rate_limited" if rate_limited else None,
+        "degraded": rate_limited,
+        "cached_data_used": rate_limited,
+        "retry_after_seconds": 90 if rate_limited else None,
+        "stale_symbols": stale_symbols[:20],
+        "unavailable_symbols": list(dict.fromkeys(unavailable_symbols))[:20],
         "answer": ". ".join(answer_parts),
         "funnel": snapshot.get("funnel"),
         "available_symbols": n_avail,

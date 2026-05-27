@@ -84,8 +84,10 @@ def block_reasons(session: Session = Depends(get_session)):
 def radar(session: Session = Depends(get_session)):
     """Hybrid radar snapshot — full funnel, tiers, ranked, shortlist."""
     from app.services.hybrid_radar_service import hybrid_radar_snapshot
+    from app.services.config_manager import ConfigManager
 
-    return hybrid_radar_snapshot(session)
+    cfg = ConfigManager(session).get_current()
+    return hybrid_radar_snapshot(session, cfg, fetch_quotes=False)
 
 
 @router.get("/tiers")

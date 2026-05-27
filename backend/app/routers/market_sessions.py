@@ -114,21 +114,38 @@ def run_market_open_check(session: Session = Depends(get_session)):
 def crypto_readiness(session: Session = Depends(get_session)):
     from app.services.broker_safety import is_paper_broker_url, live_lock_status
     from app.services.alpaca_crypto_assets import fetch_crypto_assets
+    from app.services.radar_resilience import last_successful_scan
 
     cfg = ConfigManager(session).get_current()
     sess = SessionEngine().detect()
     assets = fetch_crypto_assets(force=False) or {}
     usd = [s for s in assets if s.endswith("/USD")]
     radar = hybrid_radar_snapshot(session, cfg, fetch_quotes=False)
+    status = radar.get("status", "ok")
+    shortlist_count = radar.get("counts", {}).get("execution_shortlist", 0)
+    paper_allowed = bool(
+        status == "ok"
+        and radar.get("paper_trade_allowed")
+        and shortlist_count > 0
+        and sess.crypto_trading_allowed
+    )
     return {
-        "status": "ok",
+        "status": status if status in ("ok", "degraded") else "degraded",
         "generated_at_utc": _now(),
+        "reason": radar.get("reason"),
+        "cached_data_used": bool(radar.get("cached_data_used")),
+        "retry_after_seconds": radar.get("retry_after_seconds"),
+        **last_successful_scan(),
+        "stale_symbols": radar.get("stale_symbols") or [],
+        "unavailable_symbols": radar.get("unavailable_symbols") or [],
         "crypto_24_7_active": bool(sess.crypto_trading_allowed),
         "crypto_24_7_label": "Crypto 24/7: Active" if sess.crypto_trading_allowed else "Crypto 24/7: Inactive",
         "available_usd_pairs": len(usd),
         "evaluated": radar.get("counts", {}).get("evaluated"),
         "eligible": radar.get("counts", {}).get("eligible"),
-        "execution_shortlist": radar.get("counts", {}).get("execution_shortlist"),
+        "execution_shortlist": shortlist_count,
+        "execution_shortlist_items": radar.get("execution_shortlist") or [],
+        "paper_trade_allowed": paper_allowed,
         "paper_broker": is_paper_broker_url(),
         "live_lock": live_lock_status(cfg),
         "lesser_known_highlights": radar.get("lesser_known_highlights", []),
@@ -137,7 +154,8 @@ def crypto_readiness(session: Session = Depends(get_session)):
 
 @router.get("/api/crypto/radar")
 def crypto_radar(session: Session = Depends(get_session)):
-    return hybrid_radar_snapshot(session)
+    cfg = ConfigManager(session).get_current()
+    return hybrid_radar_snapshot(session, cfg, fetch_quotes=False)
 
 
 @router.post("/api/crypto/run-cycle")

@@ -88,9 +88,12 @@ def extract_symbol_metrics(
     # Dollar volume (latest bar)
     dollar_volume = vol_latest * price
 
-    # Spread in bps
-    bid_raw = quote.get("bid")
-    ask_raw = quote.get("ask")
+    # Spread in bps — missing live quote must not crash or permit execution
+    bid_raw = quote.get("bid") if quote else None
+    ask_raw = quote.get("ask") if quote else None
+    missing_quote = quote is not None and quote.get("bid") is None and quote.get("ask") is None
+    if not quote:
+        missing_quote = True
     bid = float(bid_raw) if bid_raw is not None else price * 0.998
     ask = float(ask_raw) if ask_raw is not None else price * 1.002
     mid = (bid + ask) / 2.0 or price
@@ -132,7 +135,10 @@ def extract_symbol_metrics(
     # Eligibility pre-screen
     eligible = True
     ineligible_reason = None
-    if spread_bps > DEFAULT_SPREAD_MAX_BPS:
+    if missing_quote:
+        eligible = False
+        ineligible_reason = "stale_or_missing_quote"
+    elif spread_bps > DEFAULT_SPREAD_MAX_BPS:
         eligible = False
         ineligible_reason = "spread_too_wide"
     elif freshness < 0.1:
