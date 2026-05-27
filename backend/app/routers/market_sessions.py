@@ -119,7 +119,7 @@ def crypto_readiness(session: Session = Depends(get_session)):
     sess = SessionEngine().detect()
     assets = fetch_crypto_assets(force=False) or {}
     usd = [s for s in assets if s.endswith("/USD")]
-    radar = hybrid_radar_snapshot(session, cfg)
+    radar = hybrid_radar_snapshot(session, cfg, fetch_quotes=False)
     return {
         "status": "ok",
         "generated_at_utc": _now(),

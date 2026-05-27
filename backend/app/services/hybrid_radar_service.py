@@ -73,7 +73,9 @@ def hybrid_radar_status(session: Session, config: Optional[dict] = None) -> dict
     }
 
 
-def hybrid_radar_snapshot(session: Session, config: Optional[dict] = None) -> dict[str, Any]:
+def hybrid_radar_snapshot(
+    session: Session, config: Optional[dict] = None, *, fetch_quotes: bool = True
+) -> dict[str, Any]:
     """Full radar payload for UI — cache, tiers, ranked, shortlist."""
     cfg = config or ConfigManager(session).get_current()
     max_eval = int(cfg_get(cfg, "universe.max_scanned_symbols_per_cycle", 36) or 36)
@@ -84,7 +86,7 @@ def hybrid_radar_snapshot(session: Session, config: Optional[dict] = None) -> di
     usd_pairs = sorted(s for s in assets.keys() if s.endswith("/USD"))
     tier_svc = SymbolTierService(cfg, broker_supported_symbols=set(usd_pairs))
 
-    funnel = build_funnel_breakdown(session, cfg, max_evaluate=max_eval, fetch_quotes=True)
+    funnel = build_funnel_breakdown(session, cfg, max_evaluate=max_eval, fetch_quotes=fetch_quotes)
     pipe = funnel.get("pipeline") or {}
     all_ranked = pipe.get("all_ranked") or []
     ranked = rank_universe(all_ranked)[:max_ranked]

@@ -89,8 +89,10 @@ def extract_symbol_metrics(
     dollar_volume = vol_latest * price
 
     # Spread in bps
-    bid = quote.get("bid", price * 0.998)
-    ask = quote.get("ask", price * 1.002)
+    bid_raw = quote.get("bid")
+    ask_raw = quote.get("ask")
+    bid = float(bid_raw) if bid_raw is not None else price * 0.998
+    ask = float(ask_raw) if ask_raw is not None else price * 1.002
     mid = (bid + ask) / 2.0 or price
     spread_bps = ((ask - bid) / mid) * 10_000 if mid > 0 else 9999.0
 
