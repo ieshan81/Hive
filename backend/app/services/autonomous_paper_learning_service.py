@@ -60,7 +60,7 @@ class AutonomousPaperLearningService:
             "paper_trade_frequency": "opportunity_based",
             "daily_paper_trade_cap": None if _unlimited(max_trades) else max_trades,
             "max_open_paper_positions": None if _unlimited(max_pos) else max_pos,
-            "position_control": "allocator_exposure",
+            "position_control": "formula_allocator",
             "max_paper_trades_per_day": None if _unlimited(max_trades) else max_trades,
             "max_open_paper_positions_legacy": None if _unlimited(max_pos) else max_pos,
         }
@@ -250,6 +250,12 @@ class AutonomousPaperLearningService:
                 runs: list[dict[str, Any]] = []
                 runs.append(refresher.refresh_bars(
                     asset_type="crypto",
+                    timeframe="1Min",
+                    lookback_hours=max(2, min(lookback_hours, 6)),
+                    operator=operator,
+                ))
+                runs.append(refresher.refresh_bars(
+                    asset_type="crypto",
                     timeframe="5Min",
                     lookback_hours=lookback_hours,
                     operator=operator,
@@ -257,6 +263,12 @@ class AutonomousPaperLearningService:
                 if market_mode == "US_STOCK_OPEN" and bool(
                     cfg_get(self.config, "autonomous_paper_learning.refresh_stocks_during_market_hours", True)
                 ):
+                    runs.append(refresher.refresh_bars(
+                        asset_type="stock",
+                        timeframe="1Min",
+                        lookback_hours=max(2, min(lookback_hours, 6)),
+                        operator=operator,
+                    ))
                     runs.append(refresher.refresh_bars(
                         asset_type="stock",
                         timeframe="5Min",

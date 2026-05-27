@@ -393,6 +393,27 @@ def execute_nuke_reset(session: Session, operator: str = "operator") -> dict[str
             else:
                 headline = "Fresh brain. No memories yet. Use Start Fresh Paper Learning on Mission Control."
 
+            broker_resync: dict[str, Any] = {"status": "skipped", "reason": "alpaca_not_configured"}
+            try:
+                from app.services.alpaca_adapter import AlpacaAdapter
+
+                adapter = AlpacaAdapter(session)
+                if adapter.configured:
+                    account_snap = adapter.sync_account_cached(force=True)
+                    positions = adapter.sync_positions_cached(force=True)
+                    broker_resync = {
+                        "status": "ok",
+                        "account_synced": bool(account_snap),
+                        "positions_synced": len(positions),
+                        "paper_broker": True,
+                    }
+            except Exception as exc:
+                broker_resync = {
+                    "status": "error",
+                    "reason": type(exc).__name__,
+                    "message": str(exc)[:200],
+                }
+
             return {
                 "status": "ok",
                 "fresh_brain": True,
@@ -410,6 +431,7 @@ def execute_nuke_reset(session: Session, operator: str = "operator") -> dict[str
                 "runtime_caches_cleared": caches_cleared,
                 "warnings": warnings,
                 "env_pause": env,
+                "broker_resync_after_reset": broker_resync,
                 "desired_learning_enabled": desired_learning,
                 "desired_scheduler_enabled": desired_scheduler,
                 "config_pause_flags_changed": False,

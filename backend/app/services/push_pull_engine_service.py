@@ -42,8 +42,15 @@ class PushPullEngineService:
         env = env_pause_status()
         mode = plan.get("current_market_mode", "CRYPTO_NIGHT")
 
-        stock_active = mode in ("US_STOCK_OPEN", "US_STOCK_NEAR_CLOSE", "US_STOCK_AFTER_HOURS")
-        crypto_active = mode in ("CRYPTO_NIGHT", "WEEKEND_CRYPTO", "HOLIDAY_CRYPTO_ONLY", "US_STOCK_OPEN")
+        stock_active = mode in ("US_STOCK_OPEN", "US_STOCK_NEAR_CLOSE")
+        crypto_active = mode in (
+            "CRYPTO_NIGHT",
+            "WEEKEND_CRYPTO",
+            "HOLIDAY_CRYPTO_ONLY",
+            "US_STOCK_OPEN",
+            "US_STOCK_NEAR_CLOSE",
+            "US_STOCK_AFTER_HOURS",
+        )
 
         return {
             "status": "ok",

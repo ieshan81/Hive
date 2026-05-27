@@ -187,6 +187,7 @@ class FastCryptoTrainingLoop:
 
         self.pl.update_config(
             {
+                "max_experiment_notional_per_trade_usd": 0,
                 "max_experiment_trades_per_day": 0,
                 "max_experiment_trades_per_strategy_per_day": 0,
                 "max_open_experiment_positions": 0,
@@ -203,7 +204,7 @@ class FastCryptoTrainingLoop:
                     **(cur.get("fast_training") or {}),
                     "fast_training_loop_enabled": True,
                     "fast_training_execute_orders": True,
-                    "fast_training_max_notional_usd": 10,
+                    "fast_training_max_notional_usd": 0,
                     "fast_training_default_notional_usd": 5,
                     "fast_training_max_trades_per_day": 0,
                     "fast_training_max_open_positions": 0,
@@ -214,6 +215,9 @@ class FastCryptoTrainingLoop:
                     **(cur.get("execution") or {}),
                     "live_orders_enabled": False,
                     "paper_orders_enabled": True,
+                    "max_orders_per_cycle": 0,
+                    "max_orders_per_hour": 0,
+                    "max_orders_per_day": 0,
                 },
             },
         )
@@ -229,8 +233,8 @@ class FastCryptoTrainingLoop:
                 "mode_enabled": True,
                 "fast_training_loop_enabled": True,
                 "fast_training_execute_orders": True,
-                "max_notional_usd": 10,
-                "max_trades_per_day": 1,
+                "position_control": "formula_allocator",
+                "max_trades_per_day": "no_fixed_cap",
             },
         )
         self.session.flush()
@@ -326,8 +330,14 @@ class FastCryptoTrainingLoop:
         if stale_reviews:
             blockers.append("stale_open_position_blocks_entry")
         open_positions = reviews.get("reviews") or []
-        if open_positions and (self._can_submit_orders() or exit_only):
-            blockers.append("open_position_blocks_duplicate_entry")
+        open_position_warnings = [
+            {
+                "symbol": r.get("symbol"),
+                "action": r.get("action"),
+                "reason": r.get("reason"),
+            }
+            for r in open_positions
+        ]
 
         entries_skipped = True
         entry_result: dict[str, Any] = {"status": "skipped", "reason": "entries_blocked"}
@@ -344,6 +354,8 @@ class FastCryptoTrainingLoop:
                 f"{score_only.get('plain_summary', '')} Entries blocked: {plain_block}."
             ).strip()
             score_only["entry_blockers"] = blockers
+            if open_position_warnings:
+                score_only["open_position_warnings"] = open_position_warnings
             entry_result = {
                 **entry_result,
                 "tick_summary": score_only,
@@ -357,6 +369,7 @@ class FastCryptoTrainingLoop:
                     "actor": actor,
                     "phases": phases,
                     "stale_count": len(stale_reviews),
+                    "open_positions_reviewed": len(open_position_warnings),
                     "exit_only": exit_only,
                 },
             )

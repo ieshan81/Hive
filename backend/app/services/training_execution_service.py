@@ -132,8 +132,9 @@ class TrainingExecutionService:
 
     def _submit_training_order(self, dec: PaperExperimentDecision, spike: dict) -> dict[str, Any]:
         alpaca = AlpacaAdapter(self.session)
-        quote_sym = normalize_crypto_symbol(dec.symbol)
-        quote = alpaca.get_quote(quote_sym, "crypto") or {}
+        asset_class = "crypto" if "/" in (dec.symbol or "") else "stock"
+        quote_sym = normalize_crypto_symbol(dec.symbol) if asset_class == "crypto" else dec.symbol
+        quote = alpaca.get_quote(quote_sym, asset_class) or {}
         mid = float(quote.get("mid") or quote.get("ask") or 0)
         if mid <= 0:
             return {"status": "error", "message": "no_quote"}
@@ -142,39 +143,42 @@ class TrainingExecutionService:
 
         alpaca_min = float(cfg_get(self.config, "execution.alpaca_crypto_min_notional_usd", 10.0))
         buffer = float(cfg_get(self.config, "execution.alpaca_min_notional_buffer_usd", 0.5))
-        target_min = float(cfg_get(self.config, "allocator.paper_trade_notional_min_usd", 20.0))
+        broker_floor = alpaca_min + buffer if asset_class == "crypto" else float(
+            cfg_get(self.config, "min_order_notional_usd", 1.0)
+        )
         from app.services.engine_config import cfg_get
 
         exp = self.config.get("exploration") or {}
-        exp_max = float(cfg_get(self.config, "exploration.max_trade_notional_usd", 20.0))
+        exp_max = float(cfg_get(self.config, "exploration.max_trade_notional_usd", 0.0) or 0.0)
         default_notional = max(
-            float(dec.approved_notional or self.pl.cfg.get("default_experiment_notional_usd", target_min)),
-            alpaca_min + buffer,
-            target_min,
+            float(dec.approved_notional or self.pl.cfg.get("default_experiment_notional_usd", broker_floor)),
+            broker_floor,
         )
         notional = default_notional
-        if exp.get("enabled", True):
+        dynamic_formula_mode = bool(exp.get("dynamic_formula_mode", True))
+        if exp.get("enabled", True) and exp_max > 0 and not dynamic_formula_mode:
             notional = min(notional, exp_max)
         tier_info = self.tiers.classify(dec.symbol)
         if getattr(tier_info, "tier", "") in ("TIER_WATCH", "TIER_MEME_SUPPORTED"):
-            notional = min(notional, exp_max * 0.75)
+            notional = min(notional, exp_max * 0.75) if exp_max > 0 and not dynamic_formula_mode else notional
         qty = round(notional / mid, 8)
         tier = getattr(tier_info, "tier", str(tier_info))
         cpp = self.config.get("crypto_push_pull") or {}
         stop_pct = float(cpp.get("stop_loss_pct", 0.02))
         take_pct = float(cpp.get("take_profit_pct", 0.03))
         expected_move = float(cpp.get("momentum_threshold_1h", 0.004))
-        expected_move_pct = max(take_pct, expected_move) * 100.0
+        signal_meta = (dec.risk_snapshot_json or {}).get("signal_meta") or {}
+        expected_move_pct = float(signal_meta.get("expected_move_pct") or (max(take_pct, expected_move) * 100.0))
         stop_loss = mid * (1 - stop_pct) if dec.side == "buy" else mid * (1 + stop_pct)
-        max_hold_h = float(self.pl.cfg.get("meme_coin_max_hold_minutes", 240)) / 60.0
-        if spike.get("tier") == "MAJOR_CRYPTO":
+        max_hold_h = 6.5 if asset_class == "stock" else float(self.pl.cfg.get("meme_coin_max_hold_minutes", 240)) / 60.0
+        if asset_class == "crypto" and spike.get("tier") == "MAJOR_CRYPTO":
             max_hold_h = float(self.pl.cfg.get("major_crypto_max_hold_hours", 48))
 
         cycle_run_id = f"training-{uuid.uuid4().hex[:12]}"
         sig = StrategySignal(
             strategy=dec.strategy_id,
             symbol=dec.symbol,
-            asset_class="crypto",
+            asset_class=asset_class,
             signal="buy" if dec.side == "buy" else "sell",
             side=dec.side,
             strength=0.7,
@@ -198,6 +202,7 @@ class TrainingExecutionService:
                 "expected_move_pct": expected_move_pct,
                 "edge_over_cost": float(cpp.get("edge_min_over_cost", 1.2)),
                 "paper_experiment_decision_id": dec.id,
+                "push_pull_score": signal_meta,
                 "broker_mode": "paper",
                 "live_trading_locked": True,
             },

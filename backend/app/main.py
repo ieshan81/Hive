@@ -56,7 +56,7 @@ logger = logging.getLogger("hive")
 
 app = FastAPI(
     title="Caged Hive Quant API",
-    description="AI-managed quant trading under strict survival rules. Paper trading only.",
+    description="AI-managed quant trading with formula-sized paper learning. Live trading remains locked.",
     version="1.0.2",
 )
 

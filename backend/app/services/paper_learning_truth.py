@@ -52,7 +52,7 @@ def paper_learning_display_status(session: Session, config: Optional[dict] = Non
         plain = "Paper learning is OFF. Use Start Fresh Paper Learning on Mission Control."
     elif can_place:
         plain = (
-            "Push-pull paper learning is ON. The bot may place small paper trades under strict limits. "
+            "Push-pull paper learning is ON. The bot may place formula-sized paper trades through the cage. "
             "Live trading remains locked."
         )
     elif mode_on:
@@ -86,7 +86,7 @@ def paper_learning_display_status(session: Session, config: Optional[dict] = Non
         "learning_capacity": {
             "paper_trade_frequency": "opportunity_based",
             "daily_paper_trade_cap": "no_fixed_cap",
-            "position_control": "allocator_exposure",
+            "position_control": "formula_allocator",
         },
         "capital_allocator": allocator,
     }

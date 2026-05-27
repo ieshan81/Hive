@@ -39,6 +39,76 @@ def _apply_locked_caps(proposed: dict) -> dict:
     return result
 
 
+def _dynamic_formula_paper_patch() -> dict:
+    """Migrate existing DB configs away from legacy fixed paper caps.
+
+    This intentionally does not enable paper orders or the scheduler. It only
+    changes caps and cached-universe behavior when the operator already enables
+    paper learning.
+    """
+    return {
+        "max_position_size_pct": 1.0,
+        "max_open_positions": 0,
+        "portfolio": {
+            "max_concurrent_positions": 0,
+            "max_total_exposure_pct": 100.0,
+            "reserve_cash_pct": 5.0,
+        },
+        "execution": {
+            "max_orders_per_cycle": 0,
+            "max_orders_per_hour": 0,
+            "max_orders_per_day": 0,
+        },
+        "risk": {
+            "max_exposure_per_symbol_pct": 100.0,
+            "max_total_crypto_exposure_pct": 100.0,
+            "emergency_cash_floor_pct": 5.0,
+        },
+        "universe": {
+            "mode": "hybrid_radar",
+            "max_execution_shortlist": 0,
+            "require_1m_fresh_for_shortlist": False,
+            "allow_zero_volume_cached_bars_for_paper": True,
+            "speculative_paper_exploration": True,
+        },
+        "exploration": {
+            "enabled": True,
+            "max_trade_notional_usd": 0.0,
+            "max_positions": 0,
+            "dynamic_formula_mode": True,
+        },
+        "aggressive_paper_learning": {
+            "max_experiment_notional_per_trade_usd": 0,
+            "max_experiment_positions_total": 0,
+            "max_experiment_trades_per_day": 0,
+            "max_experiment_trades_per_strategy_per_day": 0,
+            "max_open_experiment_positions": 0,
+            "use_capital_allocator": True,
+        },
+        "autonomous_paper_learning": {
+            "max_paper_trades_per_day": 0,
+            "max_paper_notional_per_trade_usd": 0,
+            "max_open_paper_positions": 0,
+            "max_rejected_orders_per_day": 0,
+            "use_capital_allocator": True,
+        },
+        "capital_allocator": {
+            "cash_reserve_weight": 0.05,
+            "min_cash_reserve": 1,
+            "crypto_night_reserve_weight": 0.35,
+            "max_single_stock_exposure_weight": 0.95,
+            "max_single_crypto_exposure_weight": 0.95,
+            "max_asset_class_exposure_weight": 1.0,
+            "operator_emergency_max_open_positions": 0,
+            "min_trade_notional_usd": 1,
+        },
+        "fast_training": {
+            "fast_training_max_trades_per_day": 0,
+            "fast_training_max_open_positions": 0,
+        },
+    }
+
+
 class ConfigManager:
     def __init__(self, session: Session):
         self.session = session
@@ -50,10 +120,14 @@ class ConfigManager:
             row = self.session.get(ConfigCurrent, 1)
         if row is None:
             return DEFAULT_CONFIG
-        merged = _deep_merge(DEFAULT_CONFIG, row.config_json)
-        if merged.get("config_version", 0) < DEFAULT_CONFIG.get("config_version", 1):
+        row_config = row.config_json or {}
+        row_version = int(row_config.get("config_version", 0) or 0)
+        merged = _deep_merge(DEFAULT_CONFIG, row_config)
+        if row_version < DEFAULT_CONFIG.get("config_version", 1):
+            if row_version < 4:
+                merged = _deep_merge(merged, _dynamic_formula_paper_patch())
             merged["config_version"] = DEFAULT_CONFIG["config_version"]
-            self._activate(merged, changed_by="system", reason="Merged default config v2")
+            self._activate(merged, changed_by="system", reason="Migrate config to dynamic formula paper profile")
             merged = self.get_current()
         # Migrate legacy curated default → hybrid radar (production safety: debug mode still available).
         uni = merged.get("universe") or {}

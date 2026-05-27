@@ -5,9 +5,12 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from sqlmodel import Session
+from sqlmodel import select
 
+from app.database import SymbolCandidate
 from app.services.config_manager import ConfigManager
 from app.services.env_pause_service import env_pause_status
+from app.services.engine_config import cfg_get
 from app.services.live_lock_tripwire import live_lock_tripwire_status
 from app.services.mission_control_snapshot_service import _CACHE, _data_freshness_label, _snapshot_age_seconds
 from app.services.radar_resilience import last_successful_scan
@@ -26,6 +29,10 @@ def entry_safety_status(session: Session, config: Optional[dict] = None) -> dict
 
     if lock.get("live_lock_status") != "locked":
         blockers.append("live_trading_not_locked")
+    if not bool(cfg_get(cfg, "autonomous_paper_learning.mode_enabled", False)):
+        blockers.append("paper_learning_off")
+    if not bool(cfg_get(cfg, "execution.paper_orders_enabled", False)):
+        blockers.append("paper_orders_disabled")
     if env.get("any_env_pause"):
         blockers.append("env_pause_active")
 
@@ -36,12 +43,22 @@ def entry_safety_status(session: Session, config: Optional[dict] = None) -> dict
     age = _snapshot_age_seconds()
     freshness = _data_freshness_label(age)
     if freshness in ("stale", "very_stale", "unknown") or not _CACHE.get("cockpit"):
-        blockers.append("system_snapshot_degraded")
         warnings.append("Mission Control snapshot stale or not yet built")
+        if not bool((cfg.get("exploration") or {}).get("dynamic_formula_mode", True)):
+            blockers.append("system_snapshot_degraded")
+
+    cached_symbols = 0
+    try:
+        cached_symbols = len(list(session.exec(select(SymbolCandidate).limit(1)).all()))
+    except Exception:
+        cached_symbols = 0
 
     if not radar.get("cached_snapshot_available"):
-        blockers.append("universe_snapshot_stale")
-        warnings.append("Universe radar cache empty")
+        if cached_symbols:
+            warnings.append("In-memory radar snapshot cold; database universe cache is available.")
+        else:
+            blockers.append("universe_snapshot_stale")
+            warnings.append("Universe radar cache empty")
 
     new_entries_allowed = len(blockers) == 0
     return {
@@ -57,6 +74,6 @@ def entry_safety_status(session: Session, config: Optional[dict] = None) -> dict
         "operator_message": (
             "Push-pull paper learning active; new entries allowed when data is fresh."
             if new_entries_allowed
-            else "New paper entries paused because system state is degraded. Exit monitoring remains active."
+            else "New paper entries paused until operator controls and data freshness are ready. Exit monitoring remains active."
         ),
     }

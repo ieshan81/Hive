@@ -14,6 +14,7 @@ from app.services.alpaca_adapter import AlpacaAdapter
 from app.services.alpaca_crypto_assets import fetch_crypto_assets
 from app.services.bar_freshness_service import BarFreshnessService
 from app.services.config_manager import ConfigManager
+from app.services.engine_config import cfg_get
 from app.services.historical_data_service import HistoricalDataService
 from app.services.quote_freshness_service import QuoteFreshnessService
 from app.services.research_backtest_engine import ResearchBacktestEngine
@@ -107,7 +108,8 @@ def evaluate_symbol_blocks(
     if not bar_5m.get("fresh"):
         blocks.append("stale_bar")
     bar_1m = bar_svc.check_db_only(symbol, timeframe="1Min")
-    if not bar_1m.get("fresh"):
+    require_1m = bool(cfg_get(config, "universe.require_1m_fresh_for_shortlist", False))
+    if require_1m and not bar_1m.get("fresh"):
         blocks.append("stale_bar_1m")
 
     quote = {}
@@ -170,7 +172,8 @@ def evaluate_symbol_blocks(
     if metrics.get("ineligible_reason") == "bar_stale":
         if "stale_bar" not in blocks:
             blocks.append("stale_bar")
-    if metrics.get("dollar_volume", 0) <= 0 and bars_5m:
+    allow_zero_volume = bool(cfg_get(config, "universe.allow_zero_volume_cached_bars_for_paper", True))
+    if metrics.get("dollar_volume", 0) <= 0 and bars_5m and not allow_zero_volume:
         blocks.append("liquidity_too_low")
 
     edge_note = None

@@ -2203,14 +2203,25 @@ def _collect_new_spec_files(session: Session) -> dict[str, Any]:
     # Universe pipeline
     try:
         from app.services.universe_sources_service import universe_scan_summary
+        from app.services.universe_strategy_discovery_service import build_funnel_breakdown
+
+        funnel = build_funnel_breakdown(session, max_evaluate=36, fetch_quotes=False)
+        pipe = (funnel or {}).get("pipeline") or {}
         out["universe_pipeline.json"] = {
             **base,
             "scan_summary": universe_scan_summary(session),
+            "funnel": pipe.get("funnel"),
+            "block_breakdown": funnel.get("block_breakdown"),
+            "ranked_candidates": (funnel.get("ranked_candidates") or [])[:25],
             "live_rankings_endpoint": "/api/universe/rankings",
         }
         out["universe_execution_shortlist.json"] = {
             **base,
             "live_endpoint": "/api/universe/execution-shortlist",
+            "shortlist": pipe.get("shortlist", []),
+            "execution_shortlist_count": (pipe.get("funnel") or {}).get("execution_shortlist", 0),
+            "eligible_count": funnel.get("eligible_count", 0),
+            "block_breakdown": funnel.get("block_breakdown"),
             "note": "Top symbols that survived the full Available→Cached→Fresh→Eligible→Ranked funnel.",
         }
     except Exception as exc:

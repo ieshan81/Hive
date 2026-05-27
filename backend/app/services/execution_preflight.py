@@ -99,6 +99,15 @@ def _signal_already_submitted(session: Session, signal_id: int) -> bool:
     return row is not None
 
 
+def _unlimited_int(value: Any) -> bool:
+    if value is None:
+        return True
+    try:
+        return int(value) <= 0
+    except (TypeError, ValueError):
+        return False
+
+
 def _has_exit_plan(sig: StrategySignal, meta: dict) -> bool:
     if meta.get("expected_hold_time") or meta.get("exit_strategy"):
         return True
@@ -198,16 +207,23 @@ def run_preflight(
     if _signal_already_submitted(session, cand.signal_id):
         return PreflightResult(False, "DUPLICATE_CLIENT_ORDER_ID", "Signal already submitted", evidence)
 
-    max_cycle = int(cfg_get(config, "execution.max_orders_per_cycle", 1))
-    if _cycle_orders(session, cycle_run_id) >= max_cycle:
+    formula_paper_mode = bool(cfg_get(config, "autonomous_paper_learning.mode_enabled", False)) and bool(
+        cfg_get(config, "autonomous_paper_learning.use_capital_allocator", True)
+    )
+
+    max_cycle_raw = 0 if formula_paper_mode else cfg_get(config, "execution.max_orders_per_cycle", 1)
+    max_cycle = int(max_cycle_raw or 0)
+    if not _unlimited_int(max_cycle_raw) and _cycle_orders(session, cycle_run_id) >= max_cycle:
         return PreflightResult(False, "ORDER_RATE_LIMIT_REACHED", "max_orders_per_cycle", evidence)
 
-    max_hour = int(cfg_get(config, "execution.max_orders_per_hour", 5))
-    if _orders_in_window(session, hours=1) >= max_hour:
+    max_hour_raw = 0 if formula_paper_mode else cfg_get(config, "execution.max_orders_per_hour", 5)
+    max_hour = int(max_hour_raw or 0)
+    if not _unlimited_int(max_hour_raw) and _orders_in_window(session, hours=1) >= max_hour:
         return PreflightResult(False, "ORDER_RATE_LIMIT_REACHED", "max_orders_per_hour", evidence)
 
-    max_day = int(cfg_get(config, "execution.max_orders_per_day", 20))
-    if _orders_in_window(session, days=1) >= max_day:
+    max_day_raw = 0 if formula_paper_mode else cfg_get(config, "execution.max_orders_per_day", 20)
+    max_day = int(max_day_raw or 0)
+    if not _unlimited_int(max_day_raw) and _orders_in_window(session, days=1) >= max_day:
         return PreflightResult(False, "ORDER_RATE_LIMIT_REACHED", "max_orders_per_day", evidence)
 
     if not quote or quote.get("bid") is None or quote.get("ask") is None:
@@ -245,7 +261,12 @@ def run_preflight(
     equity = account.equity if account else 0
     reserve_pct = _stage_portfolio_value(config, "reserve_cash_pct", 60.0)
     buckets = compute_buckets(equity, config)
-    if account and account.cash < equity * (reserve_pct / 100.0) and cand.signal_type == "entry":
+    if (
+        account
+        and account.cash < equity * (reserve_pct / 100.0)
+        and cand.signal_type == "entry"
+        and not formula_paper_mode
+    ):
         return PreflightResult(False, "RESERVE_CASH_REQUIRED", "Reserve cash not met", evidence)
 
     if cand.position_qty <= 0:

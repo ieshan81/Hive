@@ -197,4 +197,84 @@
     }
   }
 
+  .hive-neural-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+    background:
+      radial-gradient(circle at 18% 18%, rgba(0, 240, 255, 0.07), transparent 28%),
+      radial-gradient(circle at 80% 22%, rgba(238, 206, 255, 0.08), transparent 26%),
+      radial-gradient(circle at 68% 82%, rgba(0, 255, 102, 0.035), transparent 22%);
+  }
+
+  .hive-neural-backdrop::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(circle at 50% 35%, black, transparent 76%);
+  }
+
+  .hive-neural-glow {
+    position: absolute;
+    width: 420px;
+    height: 420px;
+    border-radius: 9999px;
+    filter: blur(90px);
+    opacity: 0.28;
+  }
+
+  .hive-neural-glow-cyan {
+    left: 20%;
+    top: 12%;
+    background: rgba(0, 219, 233, 0.32);
+  }
+
+  .hive-neural-glow-violet {
+    right: 8%;
+    bottom: 10%;
+    background: rgba(145, 0, 223, 0.34);
+  }
+
+  .hive-neural-lines {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0.42;
+  }
+
+  .hive-neural-lines path {
+    fill: none;
+    stroke: rgba(0, 219, 233, 0.24);
+    stroke-width: 0.11;
+    stroke-dasharray: 1.2 1.4;
+    animation: hive-feed-flow 8s linear infinite;
+  }
+
+  .hive-neural-node {
+    position: absolute;
+    border-radius: 9999px;
+    background: #00f0ff;
+    box-shadow: 0 0 16px rgba(0, 240, 255, 0.9);
+    animation: hive-node-fire 3.8s ease-in-out infinite;
+  }
+
+  @keyframes hive-node-fire {
+    0%,
+    100% {
+      transform: scale(0.85);
+      opacity: 0.35;
+    }
+    50% {
+      transform: scale(1.6);
+      opacity: 1;
+    }
+  }
+
 }

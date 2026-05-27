@@ -26,12 +26,12 @@ from app.services.strategy_stages import EXPORT_ACTIVE_STAGES
 
 DEFAULT_AGGRESSIVE_CONFIG = {
     "mode_enabled": False,
-    "max_experiment_notional_per_trade_usd": 20,
+    "max_experiment_notional_per_trade_usd": 0,
     "default_experiment_notional_usd": 10,
-    "max_open_experiment_positions": 1,
-    "max_experiment_positions_total": 2,
-    "max_experiment_trades_per_day": 5,
-    "max_experiment_trades_per_strategy_per_day": 2,
+    "max_open_experiment_positions": 0,
+    "max_experiment_positions_total": 0,
+    "max_experiment_trades_per_day": 0,
+    "max_experiment_trades_per_strategy_per_day": 0,
     "max_daily_experiment_loss_pct": 5.0,
     "max_weekly_experiment_loss_pct": 10.0,
     "meme_coin_max_hold_minutes": 240,
@@ -44,7 +44,7 @@ DEFAULT_AGGRESSIVE_CONFIG = {
     "require_position_monitor": True,
     "allow_live": False,
     "block_pump_dump_risk": True,
-    "max_rejected_orders_per_day": 10,
+    "max_rejected_orders_per_day": 0,
     "rejection_cooldown_minutes": 15,
     "no_duplicate_symbol_buy": True,
     "no_averaging_down": True,
@@ -171,11 +171,14 @@ class AggressivePaperLearningService:
         s = symbol.upper()
         if "/" not in s and s.isalnum():
             return "STOCK_SUPPORTED"
+        quote = s.split("/")[-1] if "/" in s else ("USD" if s.endswith("USD") else "")
+        if quote and quote != "USD":
+            return "UNFUNDED_QUOTE_WATCH_ONLY"
         if "DOGE" in s or "SHIB" in s or "PEPE" in s:
             return "MEME_SUPPORTED"
         if symbol in MAJOR_SYMBOLS or "BTC" in s or "ETH" in s or "SOL" in s:
             return "MAJOR_CRYPTO"
-        return "UNSUPPORTED_WATCH_ONLY"
+        return "ALT_CRYPTO_SUPPORTED"
 
     def scan_experiment_eligibility(self) -> dict[str, Any]:
         eligible, blocked = [], []
@@ -233,14 +236,21 @@ class AggressivePaperLearningService:
             return False, "; ".join(codes), codes
         return True, "safe_mechanics_weak_performance_ok", []
 
-    def evaluate(self, strategy_id: str, symbol: str, side: str = "buy", signal_id: int | None = None) -> dict:
+    def evaluate(
+        self,
+        strategy_id: str,
+        symbol: str,
+        side: str = "buy",
+        signal_id: int | None = None,
+        signal_meta: Optional[dict[str, Any]] = None,
+    ) -> dict:
         reg = self.session.exec(
             select(StrategyRegistry).where(StrategyRegistry.strategy_id == strategy_id)
         ).first()
         if not reg:
             return {"status": "error", "message": "unknown strategy"}
         ok, reason, codes = self._eligibility_for(reg)
-        requested = float(self.cfg.get("default_experiment_notional_usd", 10))
+        requested = self._dynamic_requested_notional(symbol, strategy_id, signal_meta or {})
         approved = 0.0
         decision = "blocked"
         reason_code = "not_eligible"
@@ -250,15 +260,24 @@ class AggressivePaperLearningService:
         elif not ok:
             reason_code = codes[0] if codes else "not_eligible"
         else:
-            block = self._preflight_block(symbol, requested, strategy_id=strategy_id, side=side)
+            block = self._preflight_block(
+                symbol,
+                requested,
+                strategy_id=strategy_id,
+                side=side,
+                signal_meta=signal_meta or {},
+            )
             if block:
                 reason_code, reason = block[0], block[1]
             else:
-                cap = float(self.cfg.get("max_experiment_notional_per_trade_usd", 20))
-                approved = min(requested, cap)
+                cap = self.cfg.get("max_experiment_notional_per_trade_usd", 0)
+                approved = requested if self._unlimited_cap("max_experiment_notional_per_trade_usd", 0) else min(
+                    requested,
+                    float(cap or requested),
+                )
                 decision = "approved"
                 reason_code = "approved"
-                reason = f"Tiny paper experiment approved ${approved:.2f}"
+                reason = f"Formula paper experiment approved ${approved:.2f}"
 
         row = PaperExperimentDecision(
             strategy_id=strategy_id,
@@ -270,7 +289,12 @@ class AggressivePaperLearningService:
             decision=decision,
             reason_code=reason_code,
             reason_text=reason[:300],
-            risk_snapshot_json={"codes": codes, "tier": self.symbol_tier(symbol)},
+            risk_snapshot_json={
+                "codes": codes,
+                "tier": self.symbol_tier(symbol),
+                "signal_meta": signal_meta or {},
+                "dynamic_requested_notional": requested,
+            },
         )
         self.session.add(row)
         self.session.flush()
@@ -304,6 +328,51 @@ class AggressivePaperLearningService:
         apl = dict(self.config.get("autonomous_paper_learning") or {})
         return bool(apl.get("mode_enabled")) and bool(apl.get("use_capital_allocator", True))
 
+    def _dynamic_requested_notional(self, symbol: str, strategy_id: str, signal_meta: dict[str, Any]) -> float:
+        """Formula sizing for paper learning. No open-position cap; bounded by broker buying power downstream."""
+        from app.services.engine_config import cfg_get
+
+        floor = float(cfg_get(self.config, "min_order_notional_usd", 1.0))
+        if "/" in symbol:
+            floor = max(
+                floor,
+                float(cfg_get(self.config, "execution.alpaca_crypto_min_notional_usd", 10.0))
+                + float(cfg_get(self.config, "execution.alpaca_min_notional_buffer_usd", 0.5)),
+            )
+        quality = max(0.0, min(1.0, float(signal_meta.get("trade_quality_score") or 0.5)))
+        push = max(0.0, min(1.0, float(signal_meta.get("push_score") or quality)))
+        edge_bps = max(0.0, float(signal_meta.get("edge_after_cost_bps") or 0.0))
+        requested = max(float(self.cfg.get("default_experiment_notional_usd", 10)), floor)
+
+        try:
+            from app.services.capital_allocator import CapitalAllocatorService
+
+            plan = CapitalAllocatorService(self.session, self.config).build_plan(
+                signals=[
+                    {
+                        "symbol": symbol,
+                        "strategy_id": strategy_id,
+                        "confidence": quality * 100,
+                        "strength": push * 100,
+                        "spread_pct": ((signal_meta.get("score_components") or {}).get("spread_bps") or 0) / 10000,
+                    }
+                ]
+            )
+            deployable = float(plan.get("deployable_capital") or 0.0)
+            per_symbol = next(
+                (row for row in (plan.get("per_symbol_budget") or []) if row.get("symbol") == symbol),
+                None,
+            )
+            formula_share = min(0.95, 0.05 + quality * 0.20 + push * 0.15 + min(edge_bps / 5000.0, 0.35))
+            if per_symbol and float(per_symbol.get("approved_notional") or 0) > 0:
+                requested = max(floor, float(per_symbol["approved_notional"]) * formula_share)
+            elif deployable > 0:
+                requested = max(floor, deployable * formula_share)
+        except Exception:
+            pass
+
+        return round(max(floor, requested), 2)
+
     def _unlimited_cap(self, key: str, default: int = 0) -> bool:
         if self._allocator_active():
             return True
@@ -315,7 +384,14 @@ class AggressivePaperLearningService:
         except (TypeError, ValueError):
             return False
 
-    def _preflight_block(self, symbol: str, notional: float, strategy_id: str = "", side: str = "buy") -> Optional[tuple[str, str]]:
+    def _preflight_block(
+        self,
+        symbol: str,
+        notional: float,
+        strategy_id: str = "",
+        side: str = "buy",
+        signal_meta: Optional[dict[str, Any]] = None,
+    ) -> Optional[tuple[str, str]]:
         if not is_paper_broker_url():
             return "broker_not_paper", "Broker must be paper"
         if cfg_get(self.config, "live_trading_enabled", False):
@@ -324,8 +400,9 @@ class AggressivePaperLearningService:
         if not allocator_on and not self._unlimited_cap("max_experiment_trades_per_day", 5):
             if self._decisions_today() >= int(self.cfg.get("max_experiment_trades_per_day", 5)):
                 return "daily_trade_cap", "Max experiment trades per day"
-        if self._rejects_today() >= int(self.cfg.get("max_rejected_orders_per_day", 10)):
-            return "rejection_cap", "Max rejected orders per day — cooldown"
+        reject_cap = self.cfg.get("max_rejected_orders_per_day", 0)
+        if not self._unlimited_cap("max_rejected_orders_per_day", 0) and self._rejects_today() >= int(reject_cap):
+            return "rejection_cap", "Max rejected orders per day - cooldown"
         if self._in_rejection_cooldown():
             return "rejection_cooldown", "Cooldown after broker rejection"
         from app.services.capital_allocator import _cfg as alloc_cfg_fn
@@ -347,7 +424,7 @@ class AggressivePaperLearningService:
         if side.lower() == "buy" and self.cfg.get("no_averaging_down", True) and self._averaging_down_blocked(symbol):
             return "averaging_down", "Averaging down not allowed without research approval"
         tier = self.symbol_tier(symbol)
-        if tier == "UNSUPPORTED_WATCH_ONLY":
+        if tier in ("UNSUPPORTED_WATCH_ONLY", "UNFUNDED_QUOTE_WATCH_ONLY"):
             return "symbol_tier", "Symbol tier not supported for experiments"
         if not allocator_on and not self._unlimited_cap("max_experiment_notional_per_trade_usd", 20):
             if notional > float(self.cfg.get("max_experiment_notional_per_trade_usd", 20)):
@@ -381,7 +458,7 @@ class AggressivePaperLearningService:
             from app.services.capital_allocator import CapitalAllocatorService
 
             approval = CapitalAllocatorService(self.session, self.config).approve_trade(
-                symbol, side, strategy_id, notional
+                symbol, side, strategy_id, notional, signal_meta=signal_meta or {}
             )
             if not approval.get("approved"):
                 return (

@@ -616,7 +616,7 @@ def build_dashboard(session: Session) -> dict[str, Any]:
             },
             {
                 "label": "Risk Mode",
-                "value": "SURVIVAL",
+                "value": "FORMULA CAGE",
                 "variant": "info",
             },
         ],

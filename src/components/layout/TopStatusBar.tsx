@@ -30,7 +30,7 @@ export function TopStatusBar({ lastSync, lastSyncAt, statusChips, systemStatus }
     <header className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-white">Caged Hive Quant</h1>
-        <p className="text-sm text-slate-500 mt-0.5">AI-managed trading under strict survival rules · Paper only</p>
+        <p className="text-sm text-slate-500 mt-0.5">AI-managed formula paper learning · Live locked</p>
         {!systemStatus.alpacaConnected && (
           <p className="text-xs text-amber-400 mt-1">Not connected — configure Alpaca credentials</p>
         )}

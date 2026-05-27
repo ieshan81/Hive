@@ -433,10 +433,6 @@ class BrokerReconciliationService:
                 blockers.append(f"reconciliation:activity_mismatch:{sym}")
             elif cls and "BROKER_FLAT" not in cls:
                 blockers.append(f"reconciliation:{cls}:{sym}")
-        for pos in self.session.exec(select(PositionSnapshot).where(PositionSnapshot.qty > 0)).all():
-            audit = self.classify_symbol(pos.symbol)
-            if audit.get("broker_position_open"):
-                blockers.append(f"open_position_blocks_duplicate_entry:{audit.get('symbol', pos.symbol)}")
         return list(dict.fromkeys(blockers))
 
     def build_diagnostic_exports(self) -> dict[str, Any]:

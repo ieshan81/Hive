@@ -8,11 +8,19 @@ import { apiGet } from "@/lib/apiClient";
 import { PushPullCandleCard, PaperOrderProofPanel } from "@/components/panels/PushPullCandleCard";
 
 function humanize(key: string): string {
+  const normalized = key.toLowerCase();
   const known: Record<string, string> = {
     data_stale: "Stale candle or quote data",
     stale_quote_after_refresh: "Quote still stale after refresh",
     quote_currency_unfunded: "Quote currency not funded",
     no_push_signal: "No push signal",
+    push_below_threshold: "Push below adaptive threshold",
+    ema_confirmation: "Trend confirmation weak",
+    quality_below_min: "Trade quality below adaptive minimum",
+    candle_quality: "Candle body too weak",
+    volume_spike: "Volume impulse too weak",
+    quote_fresh: "Quote too old",
+    bar_fresh: "Candle data too old",
     no_eligible_strategy: "No eligible paper strategy",
     no_edge_after_cost: "No edge after cost",
     negative_edge_after_cost: "Negative edge after cost",
@@ -20,7 +28,7 @@ function humanize(key: string): string {
     duplicate_buy: "Duplicate buy blocked",
     stock_market_closed: "Stock market closed",
   };
-  return known[key] ?? key.replace(/_/g, " ");
+  return known[normalized] ?? normalized.replace(/_/g, " ");
 }
 
 function numeric(value: unknown): number {
@@ -213,6 +221,21 @@ export function PushPullTraderPanel() {
               <span className="text-slate-500">Decision: </span>
               <span className="text-white">{humanize(String(topCandidate.no_trade_reason ?? "waiting"))}</span>
             </div>
+            {(() => {
+              const components = (topCandidate.score_components as Record<string, unknown>) ?? {};
+              return (
+                <>
+                  <div>
+                    <span className="text-slate-500">Adaptive entry: </span>
+                    <span className="text-white">{(numeric(components.adaptive_enter_threshold) * 100).toFixed(0)}%</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">Paper exploration: </span>
+                    <span className="text-white">{components.paper_exploration ? "On" : "Off"}</span>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         ) : (
           <p className="text-sm text-slate-500">No scored candidate from the latest tick.</p>

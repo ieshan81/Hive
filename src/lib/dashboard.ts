@@ -16,7 +16,7 @@ function emptyDashboard(message: string): DashboardData {
       { label: "U.S. Stocks", value: "Calendar unavailable", variant: "neutral" },
       { label: "Crypto", value: "OPEN", variant: "success" },
       { label: "AI Mode", value: "OFFLINE", variant: "neutral" },
-      { label: "Risk Mode", value: "SURVIVAL", variant: "info" },
+      { label: "Risk Mode", value: "FORMULA CAGE", variant: "info" },
     ],
     accountSurvival: {
       status: "not_connected",

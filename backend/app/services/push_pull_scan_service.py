@@ -143,7 +143,7 @@ class PushPullScanService:
                 skipped_count += 1
                 continue
 
-            ev = self.pl.evaluate(strategy_id, sym, side="buy")
+            ev = self.pl.evaluate(strategy_id, sym, side="buy", signal_meta=row_score)
             ev = {**ev, "live_score": row_score}
             decisions_out.append(ev)
             rc = ev.get("reason_code") or "unknown"
@@ -171,7 +171,6 @@ class PushPullScanService:
                     elif ex.get("reject_reason"):
                         reason_counts[str(ex.get("reject_reason")).lower()] += 1
                     decisions_out.append({"execute": ex, "score": row_score})
-                break
             else:
                 skipped_count += 1
                 if rc in ("spread_check",):
