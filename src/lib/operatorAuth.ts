@@ -11,12 +11,13 @@ export const MUTATING_API_PATHS = [
   "/api/fast-training/exit-only/disable",
   "/api/fast-training/exit-only/run",
   "/api/cycle/run",
+  "/api/positions/",
   "/api/settings/clear-ghost-rows",
   "/api/strategies/import",
 ] as const;
 
 export function isMutatingPath(path: string): boolean {
-  return MUTATING_API_PATHS.some((p) => path === p || path.startsWith(`${p}/`));
+  return MUTATING_API_PATHS.some((p) => path === p || path.startsWith(p.endsWith("/") ? p : `${p}/`));
 }
 
 export function getSessionOperatorToken(): string | null {

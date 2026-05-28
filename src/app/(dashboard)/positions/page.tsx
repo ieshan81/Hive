@@ -5,7 +5,7 @@ import { Wallet, RefreshCw } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PanelError } from "@/components/ui/PanelError";
-import { apiGet, apiPost } from "@/lib/apiClient";
+import { apiGet, apiPost, apiPostOperator } from "@/lib/apiClient";
 import {
   normalizeOrders,
   normalizePositions,
@@ -23,6 +23,8 @@ export default function PositionsPage() {
   const [trades, setTrades] = useState<TradeHistoryRecord[]>([]);
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [orderSummary, setOrderSummary] = useState<OrderSummaryCounts | undefined>();
+  const [exitStatus, setExitStatus] = useState<Record<string, string>>({});
+  const [armedExitSymbol, setArmedExitSymbol] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [meta, setMeta] = useState<Record<string, PanelLoadMeta>>({});
 
@@ -114,6 +116,28 @@ export default function PositionsPage() {
     await load();
   }
 
+  async function requestCagedSell(symbol: string) {
+    if (armedExitSymbol !== symbol) {
+      setArmedExitSymbol(symbol);
+      setExitStatus((s) => ({
+        ...s,
+        [symbol]: "Click Confirm Paper Sell to submit through the paper preflight.",
+      }));
+      return;
+    }
+    setArmedExitSymbol(null);
+    setExitStatus((s) => ({ ...s, [symbol]: "Submitting caged paper sell..." }));
+    const routeSymbol = symbol.replace("/", "");
+    const res = await apiPostOperator(`/api/positions/${encodeURIComponent(routeSymbol)}/manual-exit-request`, {
+      actor: "positions_ui",
+    });
+    const status = res.ok
+      ? `Result: ${String((res.data as Record<string, unknown> | null)?.status ?? "submitted")}`
+      : `Blocked: ${res.error || `HTTP ${res.status}`}`;
+    setExitStatus((s) => ({ ...s, [symbol]: status }));
+    await load();
+  }
+
   return (
     <section className="max-w-5xl space-y-4">
       <header className="flex items-center justify-between">
@@ -146,9 +170,22 @@ export default function PositionsPage() {
                     key={String(pos.symbol)}
                     className="rounded-lg border border-white/5 bg-white/2 p-3 text-sm"
                   >
-                    <div className="flex justify-between">
+                    <div className="flex items-center justify-between gap-3">
                       <span className="font-semibold text-white">{String(pos.symbol)}</span>
-                      <span className="text-emerald-400 text-xs">{String(pos.source ?? "broker")}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-emerald-400 text-xs">{String(pos.source ?? "broker")}</span>
+                        <button
+                          type="button"
+                          onClick={() => requestCagedSell(String(pos.symbol))}
+                          className={
+                            armedExitSymbol === String(pos.symbol)
+                              ? "rounded border border-amber-300/60 bg-amber-400/15 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-100 hover:bg-amber-400/25"
+                              : "rounded border border-rose-400/40 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-rose-200 hover:bg-rose-500/20"
+                          }
+                        >
+                          {armedExitSymbol === String(pos.symbol) ? "Confirm paper sell" : "Paper sell"}
+                        </button>
+                      </div>
                     </div>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2 text-xs text-slate-400">
                       <div>Qty: {Number(pos.qty).toFixed(4)}</div>
@@ -158,6 +195,9 @@ export default function PositionsPage() {
                         P/L: {pos.unrealized_pl} ({pos.unrealized_pl_pct}%)
                       </div>
                     </div>
+                    {exitStatus[String(pos.symbol)] && (
+                      <p className="mt-2 text-[11px] text-amber-200">{exitStatus[String(pos.symbol)]}</p>
+                    )}
                   </article>
                 ))}
               </div>

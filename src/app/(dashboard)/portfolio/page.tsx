@@ -5,7 +5,7 @@ import { Wallet, RefreshCw, AlertTriangle } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PanelError } from "@/components/ui/PanelError";
-import { apiGet, apiPost } from "@/lib/apiClient";
+import { apiGet, apiPost, apiPostOperator } from "@/lib/apiClient";
 import { normalizeOrders, normalizePositions } from "@/lib/apiNormalize";
 import { OrderMetricsBar } from "@/components/ui/OrderMetricsBar";
 import { ExecutionOrdersTable } from "@/components/ui/ExecutionOrdersTable";
@@ -33,6 +33,8 @@ export default function PortfolioPage() {
   const [orderSummary, setOrderSummary] = useState<OrderSummaryCounts | undefined>();
   const [recon, setRecon] = useState<Record<string, unknown> | null>(null);
   const [nextAction, setNextAction] = useState<string | null>(null);
+  const [exitStatus, setExitStatus] = useState<Record<string, string>>({});
+  const [armedExitSymbol, setArmedExitSymbol] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [meta, setMeta] = useState<Record<string, PanelLoadMeta>>({});
 
@@ -97,6 +99,28 @@ export default function PortfolioPage() {
     await load();
   }
 
+  async function requestPaperSell(symbol: string) {
+    if (armedExitSymbol !== symbol) {
+      setArmedExitSymbol(symbol);
+      setExitStatus((s) => ({
+        ...s,
+        [symbol]: "Click Confirm Paper Sell to submit through the paper preflight.",
+      }));
+      return;
+    }
+    setArmedExitSymbol(null);
+    setExitStatus((s) => ({ ...s, [symbol]: "Submitting caged paper sell..." }));
+    const routeSymbol = symbol.replace("/", "");
+    const res = await apiPostOperator(`/api/positions/${encodeURIComponent(routeSymbol)}/manual-exit-request`, {
+      actor: "portfolio_ui",
+    });
+    const status = res.ok
+      ? `Result: ${String((res.data as Record<string, unknown> | null)?.status ?? "submitted")}`
+      : `Blocked: ${res.error || `HTTP ${res.status}`}`;
+    setExitStatus((s) => ({ ...s, [symbol]: status }));
+    await load();
+  }
+
   const brokerTruth = (recon?.broker_truth as Record<string, unknown>) || {};
   const brokerRows = (brokerTruth.positions as BrokerRow[]) || [];
   const warning = recon?.reconciliation_warning as string | undefined;
@@ -142,11 +166,24 @@ export default function PortfolioPage() {
               <div className="space-y-3">
                 {brokerRows.map((pos) => (
                   <article key={String(pos.symbol)} className="rounded-lg border border-white/5 bg-white/2 p-3 text-sm">
-                    <div className="flex justify-between mb-2">
+                    <div className="flex items-center justify-between gap-3 mb-2">
                       <span className="font-semibold text-white">{String(pos.symbol)}</span>
-                      {pos.local_history_incomplete && (
-                        <span className="text-[10px] text-amber-400">Local history incomplete</span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {pos.local_history_incomplete && (
+                          <span className="text-[10px] text-amber-400">Local history incomplete</span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => requestPaperSell(String(pos.symbol))}
+                          className={
+                            armedExitSymbol === String(pos.symbol)
+                              ? "rounded border border-amber-300/60 bg-amber-400/15 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-100 hover:bg-amber-400/25"
+                              : "rounded border border-rose-400/40 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-rose-200 hover:bg-rose-500/20"
+                          }
+                        >
+                          {armedExitSymbol === String(pos.symbol) ? "Confirm paper sell" : "Paper sell"}
+                        </button>
+                      </div>
                     </div>
                     <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
                       <dt className="text-slate-500">Qty</dt>
@@ -163,6 +200,9 @@ export default function PortfolioPage() {
                         {pos.unrealized_pl_pct != null ? ` (${pos.unrealized_pl_pct}%)` : ""}
                       </dd>
                     </dl>
+                    {exitStatus[String(pos.symbol)] && (
+                      <p className="mt-2 text-[11px] text-amber-200">{exitStatus[String(pos.symbol)]}</p>
+                    )}
                   </article>
                 ))}
               </div>
@@ -195,10 +235,26 @@ export default function PortfolioPage() {
               <div className="space-y-3">
                 {positions.map((pos) => (
                   <article key={String(pos.symbol)} className="rounded-lg border border-white/5 bg-white/2 p-3 text-sm">
-                    <div className="flex justify-between">
+                    <div className="flex items-center justify-between gap-3">
                       <span className="font-semibold text-white">{String(pos.symbol)}</span>
-                      <span className="text-emerald-400 text-xs">{String(pos.source ?? "broker")}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-emerald-400 text-xs">{String(pos.source ?? "broker")}</span>
+                        <button
+                          type="button"
+                          onClick={() => requestPaperSell(String(pos.symbol))}
+                          className={
+                            armedExitSymbol === String(pos.symbol)
+                              ? "rounded border border-amber-300/60 bg-amber-400/15 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-100 hover:bg-amber-400/25"
+                              : "rounded border border-rose-400/40 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-rose-200 hover:bg-rose-500/20"
+                          }
+                        >
+                          {armedExitSymbol === String(pos.symbol) ? "Confirm paper sell" : "Paper sell"}
+                        </button>
+                      </div>
                     </div>
+                    {exitStatus[String(pos.symbol)] && (
+                      <p className="mt-2 text-[11px] text-amber-200">{exitStatus[String(pos.symbol)]}</p>
+                    )}
                   </article>
                 ))}
               </div>

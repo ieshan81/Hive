@@ -800,17 +800,18 @@ def positions_monitor_run(session: Session = Depends(get_session)):
 
 
 @router.post("/positions/{symbol}/manual-exit-request")
-def positions_manual_exit(symbol: str, session: Session = Depends(get_session)):
-    from app.services.paper_execution_service import PaperExecutionService
+def positions_manual_exit(
+    symbol: str,
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
+    from app.services.training_execution_service import TrainingExecutionService
 
-    return {
-        "status": "pending",
-        "message": "Manual exit must pass paper preflight — use execution panel or POST /execution/paper/run-selected for exits when implemented",
-        "symbol": symbol,
-        "paper_only": True,
-        "live_locked": True,
-        **PaperExecutionService(session).status(),
-    }
+    actor = str(body.get("actor") or "operator")
+    out = TrainingExecutionService(session).request_manual_exit(symbol, actor=actor)
+    session.commit()
+    return out
 
 
 @router.post("/memory/backfill")

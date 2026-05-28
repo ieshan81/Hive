@@ -18,6 +18,7 @@ CLOSE_PURPOSES = frozenset(
         "exit_only",
         "max_hold_exit",
         "stale_position_exit",
+        "manual_operator_exit",
         "training_exit",
     }
 )

@@ -90,7 +90,7 @@ class AccountPairEligibilityService:
                 }
         bal = self._quote_balances()
         session = SessionEngine().detect()
-        if asset_class == "stock" or symbol.endswith("USD") and "/" not in symbol and len(symbol) < 8:
+        if asset_class == "stock":
             if not session.stock_trading_allowed:
                 reason = session.us_stock_close_reason or "U.S. stock market is closed"
                 return {

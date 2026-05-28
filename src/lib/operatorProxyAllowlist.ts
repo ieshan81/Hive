@@ -22,6 +22,7 @@ export const ALLOWED_POST_PREFIXES = [
   "/api/fast-training/",
   "/api/autonomous-paper-learning/",
   "/api/paper-learning/",
+  "/api/positions/",
   "/api/strategy-proposals/",
   "/api/live-promotion/",
   "/api/cycle/run",

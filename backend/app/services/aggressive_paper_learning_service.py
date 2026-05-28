@@ -22,6 +22,7 @@ from app.services.config_manager import ConfigManager
 from app.services.engine_config import cfg_get
 from app.services.lesson_memory_service import LessonMemoryService
 from app.services.strategy_stages import EXPORT_ACTIVE_STAGES
+from app.services.symbol_normalize import display_symbol
 
 
 DEFAULT_AGGRESSIVE_CONFIG = {
@@ -168,7 +169,7 @@ class AggressivePaperLearningService:
         return {"status": "ok", "config": merged}
 
     def symbol_tier(self, symbol: str) -> str:
-        s = symbol.upper()
+        s = display_symbol(symbol.upper())
         if "/" not in s and s.isalnum():
             return "STOCK_SUPPORTED"
         quote = s.split("/")[-1] if "/" in s else ("USD" if s.endswith("USD") else "")

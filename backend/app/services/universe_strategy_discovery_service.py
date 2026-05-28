@@ -20,6 +20,7 @@ from app.services.quote_freshness_service import QuoteFreshnessService
 from app.services.research_backtest_engine import ResearchBacktestEngine
 from app.services.research_memory_service import ResearchMemoryService
 from app.services.research_performance import evaluate_metrics
+from app.services.symbol_normalize import symbol_variants
 from app.services import universe_ranking_service as urs
 
 ANCHOR_SYMBOLS = ["BTC/USD", "ETH/USD"]
@@ -51,10 +52,11 @@ def _load_usd_universe() -> tuple[list[str], dict[str, dict]]:
 
 
 def _db_bars_only(session: Session, symbol: str, timeframe: str, limit: int) -> list[dict[str, Any]]:
+    variants = symbol_variants(symbol)
     rows = list(
         session.exec(
             select(HistoricalBar)
-            .where(HistoricalBar.symbol == symbol, HistoricalBar.timeframe == timeframe)
+            .where(HistoricalBar.symbol.in_(variants), HistoricalBar.timeframe == timeframe)
             .order_by(HistoricalBar.timestamp.desc())
             .limit(limit)
         ).all()

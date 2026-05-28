@@ -10,6 +10,7 @@ from sqlmodel import Session, select
 from app.database import HistoricalBar
 from app.services.config_manager import ConfigManager
 from app.services.historical_data_service import HistoricalDataService, _parse_ts
+from app.services.symbol_normalize import symbol_variants
 
 
 # Push-pull entries require recent 5Min bars (not months-old research data).
@@ -24,9 +25,10 @@ class BarFreshnessService:
 
     def check_db_only(self, symbol: str, timeframe: str = "5Min") -> dict[str, Any]:
         """Read latest stored bar timestamp only — no provider fetch (fast for universe/freshness APIs)."""
+        variants = symbol_variants(symbol)
         row = self.session.exec(
             select(HistoricalBar)
-            .where(HistoricalBar.symbol == symbol, HistoricalBar.timeframe == timeframe)
+            .where(HistoricalBar.symbol.in_(variants), HistoricalBar.timeframe == timeframe)
             .order_by(HistoricalBar.timestamp.desc())
             .limit(1)
         ).first()
@@ -54,7 +56,7 @@ class BarFreshnessService:
             "staleness_hours": round(age_h, 1),
             "reason": None if fresh else "data_stale",
             "plain": "Bars fresh" if fresh else f"Data stale — last bar {round(age_h, 0)}h ago",
-            "meta": {"source": "database", "rows": 1},
+            "meta": {"source": "database", "rows": 1, "matched_symbol": row.symbol},
         }
 
     def check(self, symbol: str, timeframe: str = "5Min", *, allow_fetch: bool = True) -> dict[str, Any]:

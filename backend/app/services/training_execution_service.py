@@ -379,23 +379,27 @@ class TrainingExecutionService:
         strategy: Optional[str],
         *,
         review: Optional[dict] = None,
+        operator_requested: bool = False,
     ) -> dict[str, Any]:
-        if not self.pl.cfg.get("mode_enabled"):
+        if not self.pl.cfg.get("mode_enabled") and not operator_requested:
             return {"status": "skipped", "reason": "training_disabled"}
         review = review or {}
         reason = str(review.get("reason") or "")
         purpose = "stale_position_exit"
-        if "max_hold" in reason:
+        if "manual_operator_exit" in reason:
+            purpose = "manual_operator_exit"
+        elif "max_hold" in reason:
             purpose = "max_hold_exit"
         elif review.get("action") == "exit_recommended":
             purpose = "max_hold_exit" if review.get("stale") else "stale_position_exit"
 
         cycle_run_id = f"training-exit-{uuid.uuid4().hex[:10]}"
         px = float(review.get("current_price") or 0)
+        asset_class = "crypto" if "/" in normalize_crypto_symbol(symbol) else "stock"
         sig = StrategySignal(
             strategy=strategy or "training_exit",
             symbol=symbol,
-            asset_class="crypto",
+            asset_class=asset_class,
             signal="sell",
             side="sell",
             strength=0.9,
@@ -408,12 +412,14 @@ class TrainingExecutionService:
                 "training_exit": True,
                 "close_existing_position": True,
                 "purpose": purpose,
-                "asset_class": "crypto",
+                "asset_class": asset_class,
                 "position_qty": qty,
                 "broker_confirmed_qty": qty,
                 "current_price": px,
                 "broker_mode": "paper",
                 "exit_only": True,
+                "operator_requested": operator_requested,
+                "live_trading_locked": True,
             },
         )
         self.session.add(sig)
@@ -426,7 +432,11 @@ class TrainingExecutionService:
             signal_type="exit",
             portfolio_status="approved",
             portfolio_reason_code="training_exit",
-            human_reason="Training exit monitor (stale/time-stop)",
+            human_reason=(
+                "Operator requested caged paper exit"
+                if operator_requested
+                else "Training exit monitor (stale/time-stop)"
+            ),
             portfolio_rank=1,
             selected_for_execution=True,
         )
@@ -470,6 +480,61 @@ class TrainingExecutionService:
             "preflight_stage": stage,
             "gates_failed": log.gates_failed_json,
             "gates_passed": log.gates_passed_json,
+        }
+
+    def request_manual_exit(self, symbol: str, *, actor: str = "operator") -> dict[str, Any]:
+        """Operator-triggered caged paper exit for an existing broker position."""
+        from app.services.position_hold_time_service import build_position_truth
+        from app.services.symbol_normalize import symbols_match
+
+        positions = list(self.session.exec(select(PositionSnapshot).where(PositionSnapshot.qty > 0)).all())
+        pos = next((p for p in positions if symbols_match(p.symbol, symbol)), None)
+        if not pos:
+            return {
+                "status": "blocked",
+                "reason": "no_broker_position",
+                "symbol": symbol,
+                "paper_only": True,
+                "live_trading_locked": True,
+            }
+
+        truth = build_position_truth(self.session, pos.symbol, pos)
+        review = {
+            **truth,
+            "symbol": pos.symbol,
+            "action": "exit_recommended",
+            "reason": "manual_operator_exit",
+            "current_price": pos.current_price or pos.avg_entry_price,
+            "stale": False,
+            "operator_actor": actor,
+            "broker_mode": "paper",
+            "live_trading_locked": True,
+        }
+        out = self._submit_exit(
+            pos.symbol,
+            float(pos.qty),
+            truth.get("strategy_name") or "manual_operator_exit",
+            review=review,
+            operator_requested=True,
+        )
+        self._audit_truth(
+            "manual_position_exit_request",
+            str(out.get("status") or "unknown"),
+            {
+                "symbol": pos.symbol,
+                "requested_qty": float(pos.qty),
+                "actor": actor,
+                "execution_path": "TrainingExecutionService→PaperExecutionService",
+                "broker_mode": "paper",
+                "message": "Operator requested caged paper exit.",
+            },
+        )
+        return {
+            **out,
+            "requested_by": actor,
+            "manual_exit": True,
+            "paper_only": True,
+            "live_trading_locked": True,
         }
 
     def run_training_cycle(self) -> dict[str, Any]:

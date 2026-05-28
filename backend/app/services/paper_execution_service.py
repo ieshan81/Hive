@@ -127,8 +127,9 @@ class PaperExecutionService:
             strategy_id = str(signal_row.strategy)
         elif cand.meta.get("strategy_id"):
             strategy_id = str(cand.meta["strategy_id"])
+        preflight_side = cand.side or ("sell" if cand.signal_type == "exit" else "buy")
         elig = AccountPairEligibilityService(self.session, self.config).preflight_block(
-            cand.symbol, "buy", strategy_id
+            cand.symbol, preflight_side, strategy_id
         )
         if elig:
             return self._log(

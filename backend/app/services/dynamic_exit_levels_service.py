@@ -317,8 +317,6 @@ def exit_trigger_for_long(
     target = _positive(levels.get("take_profit"), 0.0)
     trail = _positive(levels.get("trailing_stop"), 0.0)
     invalidation = _positive(levels.get("invalidation_price"), 0.0)
-    active_floor = max(stop, trail, invalidation)
-
     if target and price >= target:
         return {
             "action": "exit_recommended",
@@ -326,14 +324,25 @@ def exit_trigger_for_long(
             "trigger_price": target,
             "current_price": price,
         }
-    if active_floor and price <= active_floor:
-        reason = "dynamic_trailing_stop_hit" if trail and active_floor == trail else "dynamic_stop_loss_hit"
-        if invalidation and active_floor == invalidation:
-            reason = "dynamic_invalidation_hit"
+    if stop and price <= stop:
         return {
             "action": "exit_recommended",
-            "reason": reason,
-            "trigger_price": active_floor,
+            "reason": "dynamic_stop_loss_hit",
+            "trigger_price": stop,
+            "current_price": price,
+        }
+    if trail and price <= trail:
+        return {
+            "action": "exit_recommended",
+            "reason": "dynamic_trailing_stop_hit",
+            "trigger_price": trail,
+            "current_price": price,
+        }
+    if invalidation and price <= invalidation:
+        return {
+            "action": "exit_recommended",
+            "reason": "dynamic_invalidation_hit",
+            "trigger_price": invalidation,
             "current_price": price,
         }
     return None

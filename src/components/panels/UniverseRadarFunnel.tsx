@@ -52,6 +52,17 @@ type Payload = {
   };
 };
 
+type UniverseStatusPayload = {
+  sources_summary?: {
+    status?: string;
+    source_counts?: Record<string, number>;
+  };
+  groups?: {
+    crypto_universe?: Array<{ bar_freshness?: string; status?: string }>;
+    active_push_pull_candidates?: Array<{ bar_freshness?: string; status?: string }>;
+  };
+};
+
 const STAGE_DEFS = [
   { key: "available" as const, label: "Available", color: "#849495" },
   { key: "cached" as const, label: "Cached", color: "#b9cacb" },
@@ -81,15 +92,38 @@ export function UniverseRadarFunnel() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const r = await apiGet<Record<string, unknown>>("/api/page-state/universe");
-    if (r.ok && r.data) {
-      const ps = r.data;
+    const statusRes = await apiGet<UniverseStatusPayload>("/api/universe/status", { timeoutMs: 10000 });
+    const statusData = statusRes.ok ? statusRes.data : null;
+    const sourceCounts = statusData?.sources_summary?.source_counts ?? {};
+    const activeCrypto = statusData?.groups?.active_push_pull_candidates ?? statusData?.groups?.crypto_universe ?? [];
+    const activeFresh = activeCrypto.filter((s) => s.bar_freshness === "fresh").length;
+
+    if (statusData) {
+      const usdPairs = Number(sourceCounts.alpaca_crypto_usd_pairs ?? sourceCounts.display_universe_total ?? 0);
       setData({
-        status: String(ps.status ?? "ok"),
-        answer: ps.answer ? String(ps.answer) : ps.reason ? String(ps.reason) : undefined,
-        block_breakdown: (ps.block_breakdown as Record<string, number>) ?? {},
-        counts: ps.counts as Payload["counts"],
-        pipeline: { cycle_id: "cached", funnel: ps.funnel as Funnel, shortlist: [] },
+        status: String(statusData.sources_summary?.status ?? "ok"),
+        answer: `${usdPairs} USD crypto pairs available; ${activeFresh} active symbols have fresh cached candles. Shortlist remains 0 until push-pull, quote refresh, and preflight approve.`,
+        block_breakdown: {},
+        counts: {
+          available_usd_pairs: usdPairs,
+          cached_usd_pairs: usdPairs,
+          fresh: activeFresh,
+          eligible: activeCrypto.length,
+          ranked: 0,
+          execution_shortlist: 0,
+        },
+        pipeline: {
+          cycle_id: "status",
+          funnel: {
+            available: usdPairs,
+            cached: usdPairs,
+            fresh: activeFresh,
+            eligible: activeCrypto.length,
+            ranked: 0,
+            execution_shortlist: 0,
+          },
+          shortlist: [],
+        },
       });
     }
     setLoading(false);
