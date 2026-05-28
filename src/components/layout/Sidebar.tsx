@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Brain,
-  TrendingUp,
   Globe,
   Wallet,
   FileText,
@@ -20,7 +19,6 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { href: "/cockpit", label: "AI Cockpit", icon: Brain },
   { href: "/universe", label: "Universe Radar", icon: Globe },
-  { href: "/push-pull", label: "Push-Pull Trader", icon: TrendingUp },
   { href: "/ai-manager", label: "AI Manager", icon: Brain },
   { href: "/portfolio", label: "Portfolio", icon: Wallet },
   { href: "/reports", label: "Reports", icon: FileText },

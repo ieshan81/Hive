@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Brain, RefreshCw, Shield } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
+import { TickerSymbol } from "@/components/ui/TickerSymbol";
 import { CandleChartPanel } from "@/components/panels/CandleChartPanel";
 import { CockpitFunnelBrain } from "@/components/cockpit/CockpitFunnelBrain";
 import { apiGet } from "@/lib/apiClient";
@@ -182,7 +183,7 @@ export function CockpitDashboard() {
                   : ((row.trade_quality_score ?? row.quality_score ?? 0) * 100).toFixed(0);
               return (
               <li key={row.symbol} className="text-[11px] flex justify-between gap-2 text-white border-b border-white/5 py-1">
-                <span>{row.symbol}</span>
+                <TickerSymbol symbol={row.symbol} size="sm" labelClassName="text-[11px] text-white" />
                 <span className="text-hive-cyan shrink-0">
                   Q{q}
                   {row.stop_loss != null ? ` · SL ${Number(row.stop_loss).toFixed(2)}` : ""}
@@ -201,8 +202,11 @@ export function CockpitDashboard() {
         ) : (
           <ul className="space-y-1">
             {data?.recent_trades?.map((t, i) => (
-              <li key={i} className="text-[10px] text-slate-300">
-                {t.symbol} {t.side} - {t.status}
+              <li key={i} className="text-[10px] text-slate-300 flex items-center gap-2">
+                <TickerSymbol symbol={t.symbol} size="sm" labelClassName="text-[10px] text-slate-300" />
+                <span>
+                  {t.side} - {t.status}
+                </span>
               </li>
             ))}
           </ul>

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ShieldAlert } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
+import { TickerSymbol } from "@/components/ui/TickerSymbol";
 import { apiGet } from "@/lib/apiClient";
 
 export function WhyNoTradeCard() {
@@ -54,8 +55,10 @@ export function WhyNoTradeCard() {
         </li>
         <li>Last tick: {String(payload?.last_tick_reason ?? "—").replace(/_/g, " ")}</li>
         {top?.symbol ? (
-          <li>
-            Top scored: {String(top.symbol)} (quality {String(top.trade_quality_score ?? "—")})
+          <li className="flex items-center gap-2 flex-wrap">
+            <span>Top scored:</span>
+            <TickerSymbol symbol={String(top.symbol)} size="sm" labelClassName="text-amber-200" />
+            <span>(quality {String(top.trade_quality_score ?? "—")})</span>
           </li>
         ) : null}
         {survival && Number(survival.open_positions_value ?? 0) > 0 ? (

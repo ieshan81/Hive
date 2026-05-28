@@ -12,7 +12,7 @@ import {
   TrendingUp,
   Zap,
 } from "lucide-react";
-import { AssetIcon } from "@/components/ui/AssetIcon";
+import { TickerSymbol } from "@/components/ui/TickerSymbol";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { apiGet, apiPostOperator } from "@/lib/apiClient";
 
@@ -278,10 +278,9 @@ export function TraderConsolePanel() {
                   <div key={sym} className="rounded-md border border-white/[0.06] bg-white/[0.025] p-3">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-center gap-3 min-w-0">
-                        <AssetIcon symbol={sym} />
                         <div className="min-w-0">
-                          <p className="text-sm font-semibold text-white">{sym}</p>
-                          <p className="text-xs text-slate-500">
+                          <TickerSymbol symbol={sym} size="sm" labelClassName="text-sm font-semibold text-white" />
+                          <p className="text-xs text-slate-500 mt-1">
                             Qty {n(p.qty)?.toPrecision(6) ?? "--"} · Avg {money(p.avg_entry_price, 4)} · Now {money(p.current_price, 4)}
                           </p>
                         </div>
@@ -362,10 +361,9 @@ export function TraderConsolePanel() {
             <div className="space-y-2">
               {(data?.shortlist ?? []).map((s) => (
                 <div key={s.symbol} className="flex items-center gap-3 rounded-md border border-white/[0.06] bg-white/[0.025] px-3 py-2">
-                  <AssetIcon symbol={String(s.symbol || "")} assetClass={s.asset_class} />
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-white">{s.symbol}</p>
-                    <p className="text-xs text-slate-500">
+                    <TickerSymbol symbol={String(s.symbol || "")} assetClass={s.asset_class} size="sm" labelClassName="text-sm font-semibold text-white" />
+                    <p className="text-xs text-slate-500 mt-1">
                       {label(s.pattern_name || "push pull")} · Edge {n(s.edge_after_cost_bps)?.toFixed(1) ?? "--"} bps
                     </p>
                   </div>

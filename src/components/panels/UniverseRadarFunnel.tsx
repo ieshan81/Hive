@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Radar, ChevronRight } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
+import { TickerSymbol } from "@/components/ui/TickerSymbol";
 import { apiGet } from "@/lib/apiClient";
 
 type EligibleRow = {
@@ -132,8 +133,8 @@ export function UniverseRadarFunnel() {
       ) : (
         <ul className="space-y-1 max-h-[180px] overflow-y-auto">
           {eligible.slice(0, 12).map((s) => (
-            <li key={s.symbol} className="text-[11px] flex justify-between text-white border-b border-white/5 py-1">
-              <span>{s.symbol}</span>
+            <li key={s.symbol} className="text-[11px] flex justify-between gap-2 text-white border-b border-white/5 py-1">
+              <TickerSymbol symbol={s.symbol} size="sm" labelClassName="text-[11px] text-white" />
               <span className="text-hive-cyan mono-metric">
                 Q{(((s.trade_quality_score ?? s.universe_rank_score ?? 0) as number) * 100).toFixed(0)}
               </span>

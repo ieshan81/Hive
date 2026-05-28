@@ -1,11 +1,17 @@
+/** Normalize broker/raw tickers to display form (BTCUSD → BTC/USD). */
+export function formatDisplaySymbol(symbol: string): string {
+  const s = symbol.trim().toUpperCase();
+  if (!s) return "—";
+  if (s.includes("/")) return s;
+  if (s.endsWith("USD") && s.length > 3) return `${s.slice(0, -3)}/USD`;
+  if (s.endsWith("USDC") && s.length > 4) return `${s.slice(0, -4)}/USDC`;
+  if (s.endsWith("USDT") && s.length > 4) return `${s.slice(0, -4)}/USDT`;
+  return s;
+}
+
 /** Extract base ticker for icon lookup (ETH/USD → ETH, AAPL → AAPL). */
 export function baseSymbol(symbol: string): string {
-  const s = symbol.trim().toUpperCase();
-  if (s.includes("/")) return s.split("/")[0];
-  if (s.endsWith("USD") && s.length > 3) return s.slice(0, -3);
-  if (s.endsWith("USDC") && s.length > 4) return s.slice(0, -4);
-  if (s.endsWith("USDT") && s.length > 4) return s.slice(0, -4);
-  return s;
+  return formatDisplaySymbol(symbol).split("/")[0] || symbol.trim().toUpperCase();
 }
 
 /** Primary: spothq/cryptocurrency-icons (jsdelivr). Fallback: CoinCap asset icons. */

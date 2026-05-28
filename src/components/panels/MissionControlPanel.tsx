@@ -16,7 +16,7 @@ import { GlassPanel } from "@/components/ui/GlassPanel";
 import { WhyNoTradeCard } from "@/components/panels/WhyNoTradeCard";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { apiGet } from "@/lib/apiClient";
-import { symbolIdentity } from "@/lib/symbolIdentity";
+import { TickerSymbol } from "@/components/ui/TickerSymbol";
 
 type Cockpit = {
   status?: string;
@@ -358,20 +358,12 @@ export function MissionControlPanel() {
           <p className="text-sm text-slate-500">No active candidates right now. {data?.universe_mode?.stocks_session_note}</p>
         ) : (
           <ul className="space-y-2">
-            {radar.map((c) => {
-              const id = symbolIdentity(c.symbol ?? "");
-              return (
+            {radar.map((c) => (
                 <li key={c.symbol} className="flex items-center gap-3 text-sm border-b border-white/5 pb-2">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-hive-cyan/10 text-hive-cyan font-bold text-xs">
-                    {id.glyph || id.name.slice(0, 2)}
-                  </span>
-                  <div>
-                    <p className="text-white font-medium">{c.symbol}</p>
-                    <p className="text-[10px] text-slate-500">{id.name} · {c.status}</p>
-                  </div>
+                  <TickerSymbol symbol={String(c.symbol ?? "")} size="md" labelClassName="text-sm font-medium text-white" />
+                  <p className="text-[10px] text-slate-500">{c.status}</p>
                 </li>
-              );
-            })}
+              ))}
           </ul>
         )}
       </GlassPanel>

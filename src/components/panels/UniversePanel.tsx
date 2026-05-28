@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Globe } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { AssetIcon } from "@/components/ui/AssetIcon";
+import { TickerSymbol } from "@/components/ui/TickerSymbol";
 import { apiGet } from "@/lib/apiClient";
 
 type SymbolRow = {
@@ -238,16 +238,13 @@ export function UniversePanel() {
                 key={s.symbol}
                 className="flex items-center justify-between gap-3 rounded-md border border-emerald-500/20 bg-emerald-500/5 px-3 py-2"
               >
-                <div className="flex items-center gap-2 min-w-0">
-                  <AssetIcon symbol={s.symbol} assetClass={s.asset_type} size="sm" />
-                  <div className="min-w-0">
-                  <p className="text-[12px] font-semibold text-white">{s.symbol}</p>
-                  <p className="text-[10px] text-slate-400">
+                <div className="flex-1 min-w-0">
+                  <TickerSymbol symbol={s.symbol} assetClass={s.asset_type} size="sm" labelClassName="text-[12px] font-semibold text-white" />
+                  <p className="text-[10px] text-slate-400 mt-0.5">
                     {s.pattern_name ? humanize(String(s.pattern_name)) : "Pattern setup"}
                     {s.stop_loss != null ? ` · SL ${Number(s.stop_loss).toFixed(4)}` : ""}
                     {s.take_profit != null ? ` · TP ${Number(s.take_profit).toFixed(4)}` : ""}
                   </p>
-                  </div>
                 </div>
                 <span className="text-hive-cyan mono-metric text-sm font-bold shrink-0">
                   Q{(((s.trade_quality_score ?? s.universe_rank_score ?? 0) as number) * 100).toFixed(0)}
@@ -314,10 +311,7 @@ export function UniversePanel() {
                 return (
                   <tr key={r.symbol} className="border-t border-white/5 text-slate-300">
                     <td className="py-1.5 pr-2 font-medium text-white">
-                      <span className="inline-flex items-center gap-2">
-                        <AssetIcon symbol={r.symbol} assetClass={r.asset_type} size="sm" />
-                        {r.symbol}
-                      </span>
+                      <TickerSymbol symbol={r.symbol} assetClass={r.asset_type} size="sm" labelClassName="text-[11px] text-white" />
                     </td>
                     <td className="py-1.5 pr-2">{r.asset_type ?? (r.symbol.includes("/") ? "Crypto" : "Stock")}</td>
                     <td className="py-1.5 pr-2">

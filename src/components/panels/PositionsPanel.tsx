@@ -1,4 +1,5 @@
 import { GlassPanel } from "@/components/ui/GlassPanel";
+import { TickerSymbol } from "@/components/ui/TickerSymbol";
 import type { DashboardData } from "@/types/dashboard";
 
 export function PositionsPanel({
@@ -13,8 +14,8 @@ export function PositionsPanel({
       ) : (
         <ul className="space-y-2 text-xs">
           {data.items.map((p) => (
-            <li key={p.symbol} className="flex justify-between">
-              <span>{p.symbol}</span>
+            <li key={p.symbol} className="flex justify-between items-center gap-2">
+              <TickerSymbol symbol={p.symbol} size="sm" labelClassName="text-xs text-zinc-200" />
               <span>
                 {p.qty} @ {p.avgEntryPrice?.toFixed(4)}
                 {p.unrealizedPl != null && (

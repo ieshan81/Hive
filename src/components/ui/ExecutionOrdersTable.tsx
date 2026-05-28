@@ -1,6 +1,7 @@
 "use client";
 
 import { enrichExecutionRow, enrichOrderRecord } from "@/lib/orderDisplay";
+import { TickerSymbol } from "@/components/ui/TickerSymbol";
 
 type Row = Record<string, unknown>;
 
@@ -46,7 +47,10 @@ function RowLine({
         </>
       )}
       <td className="py-1.5 pr-2 text-slate-200">
-        {side} {symbol}
+        <span className="inline-flex items-center gap-2">
+          <span className="uppercase text-[10px] text-slate-500">{side}</span>
+          <TickerSymbol symbol={symbol} size="sm" labelClassName="text-[11px] text-slate-200" />
+        </span>
       </td>
       <td className={`py-1.5 pr-2 ${rejected ? "text-red-400 font-medium" : "text-slate-300"}`}>{outcome}</td>
       <td className="py-1.5 pr-2 text-slate-400">{brokerStatus}</td>

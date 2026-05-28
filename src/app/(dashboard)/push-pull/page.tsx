@@ -1,15 +1,6 @@
-import { PushPullLiveScoresPanel } from "@/components/panels/PushPullLiveScoresPanel";
-import { PushPullTraderPanel } from "@/components/panels/PushPullTraderPanel";
-import { CandleChartPanel } from "@/components/panels/CandleChartPanel";
-import { RecentPaperTradesPanel } from "@/components/panels/RecentPaperTradesPanel";
+import { redirect } from "next/navigation";
 
+/** Push-pull strategy UI merged into Cockpit; backend logic unchanged. */
 export default function PushPullPage() {
-  return (
-    <section className="space-y-4">
-      <PushPullLiveScoresPanel />
-      <CandleChartPanel defaultSymbol="DOGE/USD" />
-      <RecentPaperTradesPanel />
-      <PushPullTraderPanel />
-    </section>
-  );
+  redirect("/cockpit");
 }

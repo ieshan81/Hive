@@ -10,6 +10,8 @@ import { OrderMetricsBar } from "@/components/ui/OrderMetricsBar";
 import { ExecutionOrdersTable } from "@/components/ui/ExecutionOrdersTable";
 import { PortfolioExecutionPanel } from "@/components/panels/PortfolioExecutionPanel";
 import { CandleChartPanel } from "@/components/panels/CandleChartPanel";
+import { TickerSymbol } from "@/components/ui/TickerSymbol";
+import { formatDisplaySymbol } from "@/lib/assetIcons";
 import type { OrderSummaryCounts } from "@/lib/orderDisplay";
 import type { OrderRecord } from "@/types/api";
 
@@ -26,9 +28,7 @@ type BrokerRow = {
 };
 
 function displaySymbol(raw: string): string {
-  if (raw.includes("/")) return raw;
-  if (raw.endsWith("USD") && raw.length > 3) return `${raw.slice(0, -3)}/USD`;
-  return raw;
+  return formatDisplaySymbol(raw);
 }
 
 export default function PortfolioPage() {
@@ -148,7 +148,7 @@ export default function PortfolioPage() {
                     <article key={sym} className="rounded-lg border border-white/5 bg-white/[0.02] p-3">
                       <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
                         <div>
-                          <span className="font-semibold text-white">{sym}</span>
+                          <TickerSymbol symbol={sym} size="sm" labelClassName="font-semibold text-white" />
                           <p className="text-[10px] text-slate-500 mt-0.5">
                             Qty {String(pos.qty)} · entry {String(pos.avg_entry ?? "—")} · P/L{" "}
                             <span className={(pos.unrealized_pl ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}>

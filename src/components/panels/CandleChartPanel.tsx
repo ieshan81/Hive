@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CandlestickChart } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
+import { TickerSymbol } from "@/components/ui/TickerSymbol";
 import { apiGet } from "@/lib/apiClient";
 
 type Candle = { time: number; open: number; high: number; low: number; close: number };
@@ -267,7 +268,7 @@ export function CandleChartPanel({
       )}
       <div className="flex flex-wrap gap-2 mb-2 items-center">
         {lockSymbol ? (
-          <span className="text-[11px] font-semibold text-white">{symbol}</span>
+          <TickerSymbol symbol={symbol} size="sm" labelClassName="text-[11px] font-semibold text-white" />
         ) : (
           <select
             value={symbol}

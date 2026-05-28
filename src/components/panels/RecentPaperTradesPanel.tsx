@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Zap } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
+import { TickerSymbol } from "@/components/ui/TickerSymbol";
 import { apiGet } from "@/lib/apiClient";
 
 type LogRow = {
@@ -53,10 +54,9 @@ export function RecentPaperTradesPanel() {
               key={`${row.symbol}-${row.submitted_at}-${i}`}
               className="text-[10px] border border-white/5 rounded px-2 py-1.5 bg-white/[0.02]"
             >
-              <div className="flex justify-between gap-2">
-                <span className="font-semibold text-white">
-                  {row.symbol} · {row.side}
-                </span>
+              <div className="flex justify-between gap-2 items-center">
+                <TickerSymbol symbol={String(row.symbol ?? "—")} size="sm" labelClassName="text-[10px] font-semibold text-white" />
+                <span className="text-slate-400 text-[10px]">{row.side}</span>
                 <span
                   className={
                     String(row.broker_status ?? row.status).includes("submit") ||
