@@ -1,11 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Activity, Brain, Clock, Download, FileText, Shield } from "lucide-react";
-import { SystemLogModal } from "@/components/panels/SystemLogModal";
+import { Activity, Brain, Clock, Shield } from "lucide-react";
 import { apiGet } from "@/lib/apiClient";
 import { fetchAlpacaConnected } from "@/lib/brokerStatus";
-import { getDiagnosticBundleUrl } from "@/lib/dashboard";
 import { formatSyncTime } from "@/lib/datetime";
 import type { StatusChip, SystemStatus } from "@/types/dashboard";
 
@@ -25,7 +23,6 @@ function ChipIcon({ label }: { label: string }) {
 }
 
 export function TopStatusBar({ lastSync, lastSyncAt, statusChips, systemStatus }: TopStatusBarProps) {
-  const [logOpen, setLogOpen] = useState(false);
   const [brokerProof, setBrokerProof] = useState<{
     alpacaConnected?: boolean;
     aiLearning?: boolean;
@@ -86,19 +83,6 @@ export function TopStatusBar({ lastSync, lastSyncAt, statusChips, systemStatus }
           <span className="text-slate-500">Last Sync</span>
           <span className="font-medium text-slate-300">{syncLabel}</span>
         </div>
-        <a href={getDiagnosticBundleUrl()} className="flex items-center gap-2 rounded-lg border border-hive-cyan/30 bg-hive-cyan/5 px-3 py-1.5 text-xs font-medium text-hive-cyan transition hover:bg-hive-cyan/10">
-          <Download className="h-3.5 w-3.5" />
-          Diagnostic Bundle
-        </a>
-        <button
-          type="button"
-          onClick={() => setLogOpen(true)}
-          className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/3 px-3 py-1.5 text-xs font-medium text-slate-300"
-        >
-          <FileText className="h-3.5 w-3.5" />
-          System Log
-        </button>
-        <SystemLogModal open={logOpen} onClose={() => setLogOpen(false)} />
       </div>
     </header>
   );

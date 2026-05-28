@@ -14,10 +14,10 @@ function emptyDashboard(message: string): DashboardData {
       liveTradingEnabled: false,
     },
     statusChips: [
-      { label: "U.S. Stocks", value: "Calendar unavailable", variant: "neutral" },
+      { label: "U.S. Stocks", value: "Session aware", variant: "neutral" },
       { label: "Crypto", value: "OPEN", variant: "success" },
-      { label: "AI Mode", value: "OFFLINE", variant: "neutral" },
-      { label: "Risk Mode", value: "FORMULA CAGE", variant: "info" },
+      { label: "AI Mode", value: "WATCHING", variant: "neutral" },
+      { label: "Risk Mode", value: "PAPER ONLY", variant: "info" },
     ],
     accountSurvival: {
       status: "not_connected",
@@ -68,7 +68,7 @@ function emptyDashboard(message: string): DashboardData {
     marketRadarMeta: {
       status: "empty",
       message,
-      refreshedAt: "—",
+      refreshedAt: "-",
       opportunitiesScanned: 0,
     },
     backtest: { status: "not_run", message: "Backtest not run yet" },
@@ -76,31 +76,55 @@ function emptyDashboard(message: string): DashboardData {
 }
 
 export async function getDashboardData(): Promise<DashboardData> {
-  const [result, alpacaConnected] = await Promise.all([
-    apiGet<DashboardData>("/api/dashboard", {
+  const [cockpit, health, alpacaConnected] = await Promise.all([
+    apiGet<Record<string, unknown>>("/api/cockpit", {
       forServer: true,
-      timeoutMs: 28000,
+      timeoutMs: 3500,
     }),
-    fetchAlpacaConnected({ forServer: true, timeoutMs: 6000 }),
+    apiGet<Record<string, unknown>>("/api/health", {
+      forServer: true,
+      timeoutMs: 2500,
+    }),
+    fetchAlpacaConnected({ forServer: true, timeoutMs: 2500 }),
   ]);
-  if (!result.ok || !result.data) {
-    const fallback = emptyDashboard(
-      result.error || `API unavailable (${result.status}) — ${result.url}`
-    );
-    if (alpacaConnected) {
-      fallback.systemStatus.alpacaConnected = true;
-      if (fallback.accountSurvival.status === "not_connected") {
-        fallback.accountSurvival.status = "waiting";
-        fallback.accountSurvival.message = "Dashboard loading — Alpaca connected";
-        fallback.accountSurvival.riskStatusMessage = "Account details loading";
-      }
-    }
-    return fallback;
-  }
-  if (alpacaConnected && !result.data.systemStatus.alpacaConnected) {
-    result.data.systemStatus.alpacaConnected = true;
-  }
-  return result.data;
+
+  const fallback = emptyDashboard(
+    cockpit.error || health.error || `API unavailable (${cockpit.status || health.status})`
+  );
+  const cockpitData = cockpit.data || {};
+  const control = (cockpitData.control as Record<string, unknown> | undefined) || {};
+  const account = (cockpitData.account as Record<string, unknown> | undefined) || {};
+  const watchlist = (cockpitData.watchlist as Record<string, unknown> | undefined) || {};
+  const crypto = (watchlist.crypto as Record<string, unknown> | undefined) || {};
+
+  fallback.lastSyncAt = String(cockpitData.generated_at_utc || new Date().toISOString());
+  fallback.lastSync = fallback.lastSyncAt;
+  fallback.systemStatus.alpacaConnected = Boolean(
+    alpacaConnected || cockpitData.alpaca_connected || account.connected || health.data?.alpaca_configured
+  );
+  fallback.systemStatus.databaseConnected = health.ok || cockpit.ok;
+  fallback.systemStatus.geminiConfigured = Boolean(health.data?.gemini_configured);
+  fallback.statusChips = [
+    { label: "U.S. Stocks", value: "Session aware", variant: "neutral" },
+    { label: "Crypto", value: "OPEN", variant: "success" },
+    {
+      label: "AI Mode",
+      value: control.paper_learning_on ? "LEARNING" : "WATCHING",
+      variant: control.paper_learning_on ? "info" : "neutral",
+    },
+    { label: "Risk Mode", value: "PAPER ONLY", variant: "info" },
+  ];
+  fallback.accountSurvival.status = fallback.systemStatus.alpacaConnected ? "waiting" : "not_connected";
+  fallback.accountSurvival.capital = typeof account.equity === "number" ? account.equity : null;
+  fallback.accountSurvival.message = fallback.systemStatus.alpacaConnected
+    ? "Shell loaded from lightweight broker truth."
+    : fallback.accountSurvival.message;
+  fallback.marketRadarMeta.opportunitiesScanned =
+    typeof crypto.usd_pairs === "number" ? crypto.usd_pairs : fallback.marketRadarMeta.opportunitiesScanned;
+  fallback.marketRadarMeta.message = cockpit.ok
+    ? "Open the cockpit for scanner and shortlist truth."
+    : fallback.marketRadarMeta.message;
+  return fallback;
 }
 
 export function getDiagnosticBundleUrl(): string {

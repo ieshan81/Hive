@@ -2,24 +2,16 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
 import {
-  LayoutDashboard,
   Brain,
   TrendingUp,
   Globe,
   Wallet,
-  BarChart3,
-  Activity,
   FileText,
-  Settings,
   Shield,
   Hexagon,
-  Terminal,
-  ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { fetchAlpacaConnected } from "@/lib/brokerStatus";
 
 // Stitch design system — Caged Hive cockpit nav
 // Surface: surface-container-lowest (#0d0e12) with backdrop-blur
@@ -27,20 +19,11 @@ import { fetchAlpacaConnected } from "@/lib/brokerStatus";
 
 const navItems = [
   { href: "/cockpit", label: "AI Cockpit", icon: Brain },
-  { href: "/", label: "Mission Control", icon: LayoutDashboard },
   { href: "/universe", label: "Universe Radar", icon: Globe },
   { href: "/push-pull", label: "Push-Pull Trader", icon: TrendingUp },
   { href: "/ai-manager", label: "AI Manager", icon: Brain },
   { href: "/portfolio", label: "Portfolio", icon: Wallet },
-  { href: "/performance", label: "Performance", icon: BarChart3 },
-  { href: "/activity", label: "Activity", icon: Activity },
   { href: "/reports", label: "Reports", icon: FileText },
-  { href: "/control-center", label: "Control Center", icon: Settings },
-];
-
-const utilityItems = [
-  { href: "/control-center#security", label: "Security", icon: ShieldCheck },
-  { href: "/control-center#system-log", label: "System Log", icon: Terminal },
 ];
 
 interface SidebarProps {
@@ -49,22 +32,7 @@ interface SidebarProps {
 
 export function Sidebar({ systemStatus }: SidebarProps) {
   const pathname = usePathname();
-  const [alpacaProof, setAlpacaProof] = useState<boolean | null>(null);
-  const alpacaConnected = Boolean(systemStatus?.alpacaConnected || alpacaProof);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadBrokerProof() {
-      const connected = await fetchAlpacaConnected({ timeoutMs: 6000 });
-      if (!cancelled) setAlpacaProof(connected);
-    }
-    loadBrokerProof();
-    const t = setInterval(loadBrokerProof, 30000);
-    return () => {
-      cancelled = true;
-      clearInterval(t);
-    };
-  }, []);
+  const alpacaConnected = Boolean(systemStatus?.alpacaConnected);
 
   return (
     <aside
@@ -127,22 +95,8 @@ export function Sidebar({ systemStatus }: SidebarProps) {
         })}
       </nav>
 
-      {/* Utility */}
-      <div className="px-2 py-3 border-t border-white/[0.06] space-y-0.5">
-        {utilityItems.map(({ href, label, icon: Icon }) => (
-          <Link
-            key={href}
-            href={href}
-            className="flex items-center gap-3 rounded-lg px-3 py-2 text-[#b9cacb] hover:text-[#dbfcff] hover:bg-white/[0.04] transition-all"
-          >
-            <Icon className="h-[18px] w-[18px] flex-shrink-0" strokeWidth={1.75} />
-            <span className="label-caps">{label}</span>
-          </Link>
-        ))}
-      </div>
-
       {/* System integrity card */}
-      <div className="mx-3 mb-4 mt-2 rounded-xl border p-3"
+      <div className="mx-3 mb-4 mt-2 rounded-xl border p-3 border-t border-white/[0.06]"
            style={{
              borderColor: alpacaConnected ? "rgba(0, 255, 102, 0.25)" : "rgba(245, 158, 11, 0.25)",
              backgroundColor: alpacaConnected ? "rgba(0, 255, 102, 0.04)" : "rgba(245, 158, 11, 0.04)",

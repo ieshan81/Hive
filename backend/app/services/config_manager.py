@@ -109,6 +109,32 @@ def _dynamic_formula_paper_patch() -> dict:
     }
 
 
+def _quick_scalp_structure_patch() -> dict:
+    """V7 paper profile: faster dynamic exits and no bearish long probes."""
+
+    return {
+        "push_pull": {
+            "dynamic_exits": {
+                "quick_scalp_enabled": True,
+                "base_target_r_multiple": 0.9,
+                "max_target_r_multiple": 1.8,
+                "profit_target_bps": 120.0,
+                "min_target_bps_major": 55.0,
+                "min_target_bps_alt": 80.0,
+                "min_target_bps_meme": 100.0,
+                "target_spread_multiplier": 4.0,
+                "max_quick_target_bps": 180.0,
+                "trailing_giveback_bps": 45.0,
+            },
+            "long_structure": {
+                "enabled": True,
+                "min_bullish_pattern_confidence": 0.45,
+                "max_negative_momentum_without_pattern": -0.0005,
+            },
+        },
+    }
+
+
 class ConfigManager:
     def __init__(self, session: Session):
         self.session = session
@@ -126,6 +152,8 @@ class ConfigManager:
         if row_version < DEFAULT_CONFIG.get("config_version", 1):
             if row_version < 4:
                 merged = _deep_merge(merged, _dynamic_formula_paper_patch())
+            if row_version < 7:
+                merged = _deep_merge(merged, _quick_scalp_structure_patch())
             merged["config_version"] = DEFAULT_CONFIG["config_version"]
             self._activate(merged, changed_by="system", reason="Migrate config to dynamic formula paper profile")
             merged = self.get_current()

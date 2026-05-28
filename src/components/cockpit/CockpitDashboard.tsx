@@ -51,12 +51,13 @@ export function CockpitDashboard() {
 
   const load = useCallback(async () => {
     setErr(null);
-    const r = await apiGet<Cockpit>("/api/cockpit", { timeoutMs: 20000 });
+    const r = await apiGet<Cockpit>("/api/cockpit", { timeoutMs: 9000 });
     if (r.ok && r.data) {
       setData(r.data);
       dispatchCockpitRefresh(r.data as Record<string, unknown>);
+      setLoading(false);
       setDetailsLoading(true);
-      const full = await apiGet<Cockpit>("/api/cockpit?details=1", { timeoutMs: 120000 });
+      const full = await apiGet<Cockpit>("/api/cockpit?details=1", { timeoutMs: 12000 });
       if (full.ok && full.data) {
         setData((prev) => ({ ...prev, ...full.data, control: full.data?.control ?? prev?.control }));
         dispatchCockpitRefresh(full.data as Record<string, unknown>);
@@ -64,8 +65,8 @@ export function CockpitDashboard() {
       setDetailsLoading(false);
     } else {
       setErr(r.error || "Cockpit unavailable - check API_URL on Railway frontend");
+      setLoading(false);
     }
-    setLoading(false);
   }, []);
 
   useEffect(() => {

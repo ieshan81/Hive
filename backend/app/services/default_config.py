@@ -1,7 +1,7 @@
 """Default risk/config — all thresholds in DB, versioned via ConfigManager."""
 
 DEFAULT_CONFIG = {
-    "config_version": 6,
+    "config_version": 7,
     "max_risk_per_trade": 0.005,
     "max_position_size_pct": 1.0,
     "max_open_positions": 0,
@@ -71,10 +71,21 @@ DEFAULT_CONFIG = {
             "min_stop_bps": 35.0,
             "max_stop_bps": 500.0,
             "spread_cushion_multiplier": 3.0,
-            "base_target_r_multiple": 1.35,
-            "max_target_r_multiple": 2.75,
-            "profit_target_bps": 300.0,
-            "trailing_giveback_bps": 100.0,
+            "quick_scalp_enabled": True,
+            "base_target_r_multiple": 0.9,
+            "max_target_r_multiple": 1.8,
+            "profit_target_bps": 120.0,
+            "min_target_bps_major": 55.0,
+            "min_target_bps_alt": 80.0,
+            "min_target_bps_meme": 100.0,
+            "target_spread_multiplier": 4.0,
+            "max_quick_target_bps": 180.0,
+            "trailing_giveback_bps": 45.0,
+        },
+        "long_structure": {
+            "enabled": True,
+            "min_bullish_pattern_confidence": 0.45,
+            "max_negative_momentum_without_pattern": -0.0005,
         },
     },
     "allocator": {

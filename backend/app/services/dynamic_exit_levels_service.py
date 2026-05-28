@@ -178,19 +178,33 @@ def compute_dynamic_exit_levels(
     stop_distance = raw_stop_distance * _clamp(quality_stop_factor, 0.75, 1.25)
     stop_distance = _clamp(stop_distance, min_stop_distance, entry * (max_stop_bps / 10000.0))
 
-    base_r = float(dyn.get("base_target_r_multiple", 1.35))
-    max_r = float(dyn.get("max_target_r_multiple", 2.75))
+    quick_scalp = bool(dyn.get("quick_scalp_enabled", True))
+    base_r_default = 0.9 if quick_scalp else 1.35
+    max_r_default = 1.8 if quick_scalp else 2.75
+    base_r = float(dyn.get("base_target_r_multiple", base_r_default))
+    max_r = float(dyn.get("max_target_r_multiple", max_r_default))
     r_multiple = base_r + (quality * 0.65) + (push * 0.35) + min(edge_bps / 1000.0, 0.35)
     r_multiple += _clamp(sentiment_adj / 100.0, -0.10, 0.10)
     if pump_risk:
         r_multiple = min(r_multiple, base_r)
     r_multiple = _clamp(r_multiple, base_r, max_r)
 
-    profit_target_bps = float(dyn.get("profit_target_bps") or pp.get("profit_target_bps", 300.0))
+    profit_target_bps = float(dyn.get("profit_target_bps") or pp.get("profit_target_bps", 120.0 if quick_scalp else 300.0))
+    if quick_scalp:
+        tier_name = str(tier or "").upper()
+        if "MAJOR" in tier_name:
+            tier_floor = float(dyn.get("min_target_bps_major", 55.0))
+        elif "MEME" in tier_name:
+            tier_floor = float(dyn.get("min_target_bps_meme", 100.0))
+        else:
+            tier_floor = float(dyn.get("min_target_bps_alt", 80.0))
+        spread_floor = (spread_bps * float(dyn.get("target_spread_multiplier", 4.0))) + 15.0
+        max_quick_target = float(dyn.get("max_quick_target_bps", 180.0))
+        profit_target_bps = min(max_quick_target, max(profit_target_bps, tier_floor, spread_floor))
     target_floor = entry * (profit_target_bps / 10000.0)
     target_distance = max(stop_distance * r_multiple, target_floor, atr_value * (1.0 + push))
 
-    trailing_bps = float(dyn.get("trailing_giveback_bps") or pp.get("trailing_giveback_bps", 100.0))
+    trailing_bps = float(dyn.get("trailing_giveback_bps") or pp.get("trailing_giveback_bps", 45.0 if quick_scalp else 100.0))
     trailing_distance = max(entry * (trailing_bps / 10000.0), atr_value * 0.75, spread_abs * 2.0)
 
     stop_loss = entry - (direction * stop_distance)
@@ -275,8 +289,10 @@ def compute_dynamic_exit_levels(
         "edge_after_cost_bps": round(edge_bps, 2),
         "sentiment_adjustment_pct": sentiment_adj,
         "pump_dump_risk": pump_risk,
+        "quick_scalp_enabled": quick_scalp,
         "r_multiple": round(r_multiple, 4),
         "stop_bps": round(stop_bps, 2),
+        "profit_target_floor_bps": round(profit_target_bps, 2),
         "target_bps": round(target_bps, 2),
         "trailing_bps": round(trail_bps, 2),
         "bars_count": len(bars),

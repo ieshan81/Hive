@@ -63,6 +63,8 @@ def _paper_probe_eligible(row: dict[str, Any]) -> bool:
     gates = row.get("gate_results") or {}
     required_levels = ("stop_loss", "take_profit", "trailing_stop", "invalidation_price")
     has_exit_truth = all(levels.get(k) is not None for k in required_levels)
+    if gates.get("long_structure_ok") is False:
+        return False
     data_ready = (
         row.get("quote_freshness") == "fresh"
         and row.get("bar_freshness") == "fresh"
@@ -80,6 +82,7 @@ def _metrics_from_bars(bars: list[dict], quote: dict) -> dict[str, Any]:
     prev = bars[-2]
     c0 = float(last.get("close") or 0)
     c1 = float(prev.get("close") or 0)
+    o0 = float(last.get("open") or c0)
     hi = float(last.get("high") or c0)
     lo = float(last.get("low") or c0)
     vols = [float(b.get("volume") or 0) for b in bars[-20:]]
@@ -87,6 +90,11 @@ def _metrics_from_bars(bars: list[dict], quote: dict) -> dict[str, Any]:
     last_vol = vols[-1] if vols else 0.0
     body_pct = abs(c0 - float(last.get("open") or c0)) / max(hi - lo, 1e-9) if hi > lo else 0.0
     mom_1h = (c0 - c1) / c1 if c1 > 0 else 0.0
+    three_bar_return = 0.0
+    if len(bars) >= 4:
+        c3 = float(bars[-4].get("close") or 0)
+        if c3 > 0:
+            three_bar_return = (c0 - c3) / c3
     if len(bars) >= 13:
         c12 = float(bars[-13].get("close") or 0)
         if c12 > 0:
@@ -97,11 +105,70 @@ def _metrics_from_bars(bars: list[dict], quote: dict) -> dict[str, Any]:
         spread_pct = (float(quote["ask"]) - float(quote["bid"])) / float(mid)
     return {
         "momentum_1h": mom_1h,
+        "last_candle_return": (c0 - o0) / o0 if o0 > 0 else 0.0,
+        "three_bar_return": three_bar_return,
+        "last_candle_green": c0 >= o0,
         "body_pct": min(1.0, body_pct),
         "volume_spike": last_vol / max(avg_vol, 1e-9),
         "spread_pct": spread_pct,
         "expected_move_pct": abs(mom_1h) * 100.0,
         "current_price": mid or c0,
+    }
+
+
+def _long_structure_decision(config: dict, pattern: dict[str, Any], metrics: dict[str, Any]) -> dict[str, Any]:
+    """Require a real bullish/reversal structure before a long paper entry.
+
+    Paper mode is allowed to explore weak volume, weak trend confirmation, and
+    other soft concerns. It should not treat a large red candle as a long setup
+    just because absolute movement creates a high expected-move estimate.
+    """
+
+    pp = config.get("push_pull") or {}
+    structure_cfg = pp.get("long_structure") or {}
+    if structure_cfg.get("enabled", True) is False:
+        return {"long_structure_ok": True, "reason": "structure_filter_disabled"}
+
+    pattern_name = str(pattern.get("pattern") or "none")
+    pattern_direction = str(pattern.get("direction") or "neutral")
+    pattern_conf = float(pattern.get("confidence") or 0.0)
+    min_pattern_conf = float(structure_cfg.get("min_bullish_pattern_confidence", 0.45))
+    max_negative_momentum = float(structure_cfg.get("max_negative_momentum_without_pattern", -0.0005))
+
+    bullish_pattern = pattern_direction == "long" and pattern_name != "none" and pattern_conf >= min_pattern_conf
+    bearish_pattern = pattern_direction == "short" and pattern_conf >= min_pattern_conf
+
+    last_green = bool(metrics.get("last_candle_green"))
+    momentum = float(metrics.get("momentum_1h") or 0.0)
+    three_bar = float(metrics.get("three_bar_return") or 0.0)
+    last_return = float(metrics.get("last_candle_return") or 0.0)
+
+    bullish_continuation = last_green and (momentum >= max_negative_momentum or three_bar >= 0)
+    bearish_tape = bearish_pattern or ((not last_green) and momentum < 0 and three_bar <= 0)
+
+    if bullish_pattern or bullish_continuation:
+        return {
+            "long_structure_ok": True,
+            "reason": "bullish_pattern" if bullish_pattern else "bullish_continuation",
+            "pattern": pattern_name,
+            "pattern_direction": pattern_direction,
+            "pattern_confidence": round(pattern_conf, 4),
+            "last_candle_green": last_green,
+            "last_candle_return": round(last_return, 6),
+            "momentum_1h": round(momentum, 6),
+            "three_bar_return": round(three_bar, 6),
+        }
+
+    return {
+        "long_structure_ok": False,
+        "reason": "BEARISH_STRUCTURE_NO_LONG_ENTRY" if bearish_tape else "NO_BULLISH_LONG_STRUCTURE",
+        "pattern": pattern_name,
+        "pattern_direction": pattern_direction,
+        "pattern_confidence": round(pattern_conf, 4),
+        "last_candle_green": last_green,
+        "last_candle_return": round(last_return, 6),
+        "momentum_1h": round(momentum, 6),
+        "three_bar_return": round(three_bar, 6),
     }
 
 
@@ -159,6 +226,18 @@ def score_symbol(
         reversal_risk_score=float(pattern.get("reversal_risk_score") or 0.35),
         continuation_score=float(pattern.get("continuation_score") or 0.45),
     )
+    structure = _long_structure_decision(config, pattern, metrics)
+    gate_results = dict(scored.gate_results)
+    gate_results["long_structure_ok"] = bool(structure.get("long_structure_ok"))
+    score_components = dict(scored.evidence)
+    score_components["long_structure"] = structure
+    entry_allowed = bool(scored.entry_allowed) and bool(structure.get("long_structure_ok"))
+    no_trade_reason = scored.no_trade_reason
+    trade_quality = scored.trade_quality_score
+    if scored.entry_allowed and not structure.get("long_structure_ok"):
+        no_trade_reason = str(structure.get("reason") or "NO_BULLISH_LONG_STRUCTURE")
+        trade_quality = min(float(trade_quality or 0.0), 0.34)
+        score_components["bearish_structure_filter"] = True
     pull_exit = scored.pull_exit_score if has_position else None
     version = _strategy_version(session)
     th = _thresholds(config)
@@ -194,12 +273,12 @@ def score_symbol(
         "scoring_model": SCORING_MODEL,
         "push_score": scored.push_score,
         "pull_exit_score": pull_exit,
-        "trade_quality_score": scored.trade_quality_score,
+        "trade_quality_score": round(float(trade_quality or 0.0), 4),
         "edge_after_cost_bps": scored.edge_after_cost_bps,
-        "entry_allowed": scored.entry_allowed,
-        "no_trade_reason": scored.no_trade_reason,
-        "gate_results": scored.gate_results,
-        "score_components": scored.evidence,
+        "entry_allowed": entry_allowed,
+        "no_trade_reason": no_trade_reason,
+        "gate_results": gate_results,
+        "score_components": score_components,
         "pattern": pattern,
         "pattern_name": pattern.get("pattern"),
         "pattern_confidence": pattern.get("confidence"),
@@ -220,7 +299,7 @@ def score_symbol(
         "bars_count": len(bars),
         "universe_status": (universe_row or {}).get("status"),
         "blocked_reason": (universe_row or {}).get("blocked_reason"),
-        "thesis": _thesis_for(pattern, scored.entry_allowed, scored.no_trade_reason, pattern_direction),
+        "thesis": _thesis_for(pattern, entry_allowed, no_trade_reason, pattern_direction),
     }
 
 
