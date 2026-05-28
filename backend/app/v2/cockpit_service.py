@@ -95,7 +95,7 @@ def build_cockpit_summary(session: Session) -> dict[str, Any]:
         "positions": [
             {
                 "symbol": p.symbol,
-                "qty": p.quantity,
+                "qty": p.qty,
                 "side": p.side,
                 "market_value": p.market_value,
                 "unrealized_pl": p.unrealized_pl,
@@ -174,7 +174,7 @@ def build_cockpit(session: Session) -> dict[str, Any]:
         "positions": [
             {
                 "symbol": p.symbol,
-                "qty": p.quantity,
+                "qty": p.qty,
                 "side": p.side,
                 "market_value": p.market_value,
                 "unrealized_pl": p.unrealized_pl,

@@ -38,8 +38,7 @@ export function ControlCenterPanel() {
           },
           strategy_parameters: (w.universe_ranking as Record<string, number>) || {},
           operator_actions: [
-            { label: "Hard rebuild", endpoint: "/api/rebuild" },
-            { label: "Agent cycle", endpoint: "/api/agent/cycle" },
+            { label: "Scheduler managed automatically", endpoint: "/api/autonomous-paper-learning/status" },
           ],
         });
       }

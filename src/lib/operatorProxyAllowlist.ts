@@ -8,8 +8,6 @@ export const ALLOWED_POST_EXACT_PATHS = [
   "/api/danger-zone/ready-for-live-cleanup",
   "/api/admin/repair-database-bootstrap",
   "/api/diagnostics/export/run",
-  "/api/rebuild",
-  "/api/agent/cycle",
 ] as const;
 
 export const ALLOWED_POST_PREFIXES = [

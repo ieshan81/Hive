@@ -1,11 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Brain, RefreshCw, Zap, Shield, TrendingUp, Skull } from "lucide-react";
+import { Brain, RefreshCw, Shield } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { CandleChartPanel } from "@/components/panels/CandleChartPanel";
 import { CockpitFunnelBrain } from "@/components/cockpit/CockpitFunnelBrain";
-import { apiGet, apiPostOperator } from "@/lib/apiClient";
+import { apiGet } from "@/lib/apiClient";
 import { dispatchCockpitRefresh } from "@/lib/cockpitEvents";
 
 type Cockpit = {
@@ -18,13 +18,14 @@ type Cockpit = {
     stocks?: { count?: number; symbols?: string[] };
   };
   funnel?: Record<string, number>;
-  shortlist?: Array<{ symbol: string; universe_rank_score?: number }>;
+  shortlist?: Array<{ symbol: string; universe_rank_score?: number; trade_quality_score?: number }>;
   why_zero_shortlist?: string;
   scores?: Array<{
     symbol: string;
     pass?: boolean;
     entry_allowed?: boolean;
     quality_score?: number;
+    trade_quality_score?: number;
     push_score?: number;
   }>;
   passed_count?: number;
@@ -42,14 +43,9 @@ type Cockpit = {
   weights?: { universe_ranking?: Record<string, number>; min_rank_score?: number };
 };
 
-const REBUILD_TIMEOUT_MS = 180000;
-
 export function CockpitDashboard() {
   const [data, setData] = useState<Cockpit | null>(null);
   const [loading, setLoading] = useState(true);
-  const [cycleBusy, setCycleBusy] = useState(false);
-  const [rebuildBusy, setRebuildBusy] = useState(false);
-  const [rebuildLog, setRebuildLog] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
 
@@ -67,7 +63,7 @@ export function CockpitDashboard() {
       }
       setDetailsLoading(false);
     } else {
-      setErr(r.error || "Cockpit unavailable — check API_URL on Railway frontend");
+      setErr(r.error || "Cockpit unavailable - check API_URL on Railway frontend");
     }
     setLoading(false);
   }, []);
@@ -77,42 +73,6 @@ export function CockpitDashboard() {
     const t = setInterval(load, 25000);
     return () => clearInterval(t);
   }, [load]);
-
-  const runCycle = async () => {
-    setCycleBusy(true);
-    setErr(null);
-    const r = await apiPostOperator("/api/agent/cycle", { operator: "cockpit" }, { timeoutMs: 120000 });
-    if (!r.ok) setErr(r.error || "Cycle failed");
-    await load();
-    setCycleBusy(false);
-  };
-
-  const hardRebuild = async () => {
-    if (
-      !confirm(
-        "HARD NUKE + REBUILD: Deletes all trades, bars, memories, and brain data. Rebuilds aggressive V2 agent on Alpaca paper. Continue?"
-      )
-    )
-      return;
-    setRebuildBusy(true);
-    setRebuildLog("Nuking database and clearing caches…");
-    setErr(null);
-    const r = await apiPostOperator(
-      "/api/rebuild",
-      { operator: "cockpit" },
-      { timeoutMs: REBUILD_TIMEOUT_MS }
-    );
-    if (!r.ok) {
-      setErr(r.error || "Rebuild failed or timed out — check Railway logs");
-      setRebuildLog(null);
-    } else {
-      const msg = (r.data as { message?: string })?.message || "Rebuild complete";
-      const can = (r.data as { can_trade?: boolean })?.can_trade;
-      setRebuildLog(`${msg} · Bot can trade: ${can ? "YES" : "NO"}`);
-    }
-    await load();
-    setRebuildBusy(false);
-  };
 
   const f = data?.funnel ?? {};
   const ctrl = data?.control ?? {};
@@ -129,57 +89,34 @@ export function CockpitDashboard() {
           AI Trading Cockpit
         </h1>
         <p className="text-sm text-slate-400 mt-1">
-          Research v2 — live Alpaca crypto + stocks, dynamic SL/TP, aggressive paper cycles. No snapshot cache.
+          Research v2 - live Alpaca crypto + stocks, dynamic SL/TP, aggressive paper cycles. No snapshot cache.
         </p>
         {data?.ai_cockpit_message && (
           <p className="text-xs text-hive-cyan/90 mt-2 border border-hive-cyan/20 rounded-lg px-3 py-2 bg-hive-cyan/5">
             {data.ai_cockpit_message}
           </p>
         )}
-        {rebuildLog && (
-          <p className="text-xs text-[#00FF66]/90 mt-2 border border-[#00FF66]/20 rounded-lg px-3 py-2">
-            {rebuildLog}
-          </p>
-        )}
         {err && (
           <p className="text-xs text-amber-400 mt-2">
             {err}
             <span className="block text-slate-500 mt-1">
-              Top banner and cards use the same /api/cockpit source. If you see &quot;Not Found&quot;, redeploy backend +
-              frontend from latest main.
+              Top banner and cards use the same /api/cockpit source. If this fails, redeploy backend and frontend from
+              latest main.
             </span>
           </p>
         )}
-        {detailsLoading && <p className="text-[10px] text-slate-500 mt-1">Loading live scores…</p>}
+        {detailsLoading && <p className="text-[10px] text-slate-500 mt-1">Loading live scores...</p>}
       </header>
 
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
           onClick={load}
-          disabled={loading || rebuildBusy}
+          disabled={loading}
           className="flex items-center gap-1.5 text-xs px-3 py-2 rounded border border-white/10 text-slate-300 hover:bg-white/5"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
           Refresh live
-        </button>
-        <button
-          type="button"
-          onClick={hardRebuild}
-          disabled={rebuildBusy}
-          className="flex items-center gap-1.5 text-xs px-3 py-2 rounded border border-red-500/50 text-red-300 hover:bg-red-500/10"
-        >
-          <Skull className="h-3.5 w-3.5" />
-          {rebuildBusy ? "Rebuilding… (up to 3 min)" : "Hard nuke + rebuild"}
-        </button>
-        <button
-          type="button"
-          onClick={runCycle}
-          disabled={cycleBusy || rebuildBusy}
-          className="flex items-center gap-1.5 text-xs px-3 py-2 rounded border border-[#00FF66]/40 text-[#00FF66] hover:bg-[#00FF66]/10"
-        >
-          <Zap className="h-3.5 w-3.5" />
-          {cycleBusy ? "Agent cycle…" : "Run agent cycle"}
         </button>
       </div>
 
@@ -187,7 +124,7 @@ export function CockpitDashboard() {
         {[
           ["Paper learning", ctrl.paper_learning_on ? "ON" : "OFF", ctrl.paper_learning_on ? "#00FF66" : "#F59E0B"],
           ["Bot can trade", ctrl.bot_can_place ? "YES" : "NO", ctrl.bot_can_place ? "#00FF66" : "#F59E0B"],
-          ["Equity", data?.account?.equity != null ? `$${data.account.equity.toFixed(2)}` : "—", "#fff"],
+          ["Equity", data?.account?.equity != null ? `$${data.account.equity.toFixed(2)}` : "-", "#fff"],
           [
             "Crypto pairs",
             String(data?.watchlist?.crypto?.usd_pairs ?? data?.watchlist?.crypto?.symbols?.length ?? 0),
@@ -213,25 +150,25 @@ export function CockpitDashboard() {
         ))}
       </div>
 
-      <CockpitFunnelBrain
-        funnel={f}
-        blockers={data?.why_zero_shortlist}
-        aiNote={data?.ai_cockpit_message}
-      />
+      <CockpitFunnelBrain funnel={f} blockers={data?.why_zero_shortlist} aiNote={data?.ai_cockpit_message} />
 
       <CandleChartPanel defaultSymbol={chartSymbol} />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <GlassPanel title="Shortlist" icon={<Shield className="h-4 w-4" />}>
           {(data?.shortlist?.length ?? 0) === 0 ? (
-            <p className="text-[11px] text-slate-500">Empty — run agent cycle after rebuild.</p>
+            <p className="text-[11px] text-slate-500">
+              Empty - scheduler is watching; the next paper cycle will refresh candidates automatically.
+            </p>
           ) : (
             <ul className="space-y-1">
               {data?.shortlist?.map((s) => (
                 <li key={s.symbol} className="text-[11px] flex justify-between text-white">
                   <span>{s.symbol}</span>
                   <span className="text-hive-cyan">
-                    {((s.universe_rank_score ?? 0) * 100).toFixed(0)}
+                    {s.universe_rank_score != null
+                      ? (s.universe_rank_score * 100).toFixed(0)
+                      : ((s.trade_quality_score ?? 0) * 100).toFixed(0)}
                   </span>
                 </li>
               ))}
@@ -246,8 +183,9 @@ export function CockpitDashboard() {
               <li key={s.symbol} className="text-[10px] flex justify-between">
                 <span className="text-slate-300">{s.symbol}</span>
                 <span style={{ color: s.pass || s.entry_allowed ? "#00FF66" : "#849495" }}>
-                  Q{(s.quality_score ?? 0).toFixed(0)} · P{(s.push_score ?? 0).toFixed(0)}
-                  {s.entry_allowed ? " · GO" : ""}
+                  Q{((s.quality_score ?? s.trade_quality_score ?? 0) * 100).toFixed(0)} P
+                  {((s.push_score ?? 0) * 100).toFixed(0)}
+                  {s.entry_allowed ? " GO" : ""}
                 </span>
               </li>
             ))}
@@ -257,12 +195,12 @@ export function CockpitDashboard() {
 
       <GlassPanel title="Recent paper trades">
         {(data?.recent_trades?.length ?? 0) === 0 ? (
-          <p className="text-[11px] text-slate-500">No trades yet — hard rebuild then run agent cycle.</p>
+          <p className="text-[11px] text-slate-500">No trades yet - waiting for the next approved paper cycle.</p>
         ) : (
           <ul className="space-y-1">
             {data?.recent_trades?.map((t, i) => (
               <li key={i} className="text-[10px] text-slate-300">
-                {t.symbol} {t.side} — {t.status}
+                {t.symbol} {t.side} - {t.status}
               </li>
             ))}
           </ul>
@@ -270,7 +208,7 @@ export function CockpitDashboard() {
       </GlassPanel>
 
       <p className="text-[9px] text-slate-600">
-        Live @ {data?.generated_at_utc?.slice(0, 19) ?? "—"} · scheduler ~45s when paper learning ON
+        Live @ {data?.generated_at_utc?.slice(0, 19) ?? "-"} - scheduler ~45s when paper learning ON
       </p>
     </div>
   );
