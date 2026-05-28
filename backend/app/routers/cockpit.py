@@ -1,6 +1,6 @@
 """Caged Hive Quant — canonical live API (research v2 runtime). No page-state cache."""
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, Query
 from sqlmodel import Session
 
 from app.database import get_session
@@ -10,10 +10,19 @@ router = APIRouter(prefix="/api", tags=["cockpit"])
 
 
 @router.get("/cockpit")
-def get_cockpit(session: Session = Depends(get_session)):
-    from app.v2.cockpit_service import build_cockpit
+def get_cockpit(session: Session = Depends(get_session), details: bool = Query(False)):
+    from app.v2.cockpit_service import build_cockpit, build_cockpit_summary
 
-    return build_cockpit(session)
+    if details:
+        return build_cockpit(session)
+    return build_cockpit_summary(session)
+
+
+@router.get("/cockpit/summary")
+def get_cockpit_summary(session: Session = Depends(get_session)):
+    from app.v2.cockpit_service import build_cockpit_summary
+
+    return build_cockpit_summary(session)
 
 
 @router.get("/watchlist")

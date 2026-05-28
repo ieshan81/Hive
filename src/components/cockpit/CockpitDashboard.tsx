@@ -4,7 +4,9 @@ import { useCallback, useEffect, useState } from "react";
 import { Brain, RefreshCw, Zap, Shield, TrendingUp, Skull } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { CandleChartPanel } from "@/components/panels/CandleChartPanel";
+import { CockpitFunnelBrain } from "@/components/cockpit/CockpitFunnelBrain";
 import { apiGet, apiPostOperator } from "@/lib/apiClient";
+import { dispatchCockpitRefresh } from "@/lib/cockpitEvents";
 
 type Cockpit = {
   generated_at_utc?: string;
@@ -48,12 +50,24 @@ export function CockpitDashboard() {
   const [rebuildBusy, setRebuildBusy] = useState(false);
   const [rebuildLog, setRebuildLog] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
 
   const load = useCallback(async () => {
     setErr(null);
-    const r = await apiGet<Cockpit>("/api/cockpit", { timeoutMs: 90000 });
-    if (r.ok && r.data) setData(r.data);
-    else setErr(r.error || "Cockpit unavailable");
+    const r = await apiGet<Cockpit>("/api/cockpit", { timeoutMs: 20000 });
+    if (r.ok && r.data) {
+      setData(r.data);
+      dispatchCockpitRefresh(r.data as Record<string, unknown>);
+      setDetailsLoading(true);
+      const full = await apiGet<Cockpit>("/api/cockpit?details=1", { timeoutMs: 120000 });
+      if (full.ok && full.data) {
+        setData((prev) => ({ ...prev, ...full.data, control: full.data?.control ?? prev?.control }));
+        dispatchCockpitRefresh(full.data as Record<string, unknown>);
+      }
+      setDetailsLoading(false);
+    } else {
+      setErr(r.error || "Cockpit unavailable — check API_URL on Railway frontend");
+    }
     setLoading(false);
   }, []);
 
@@ -126,7 +140,16 @@ export function CockpitDashboard() {
             {rebuildLog}
           </p>
         )}
-        {err && <p className="text-xs text-amber-400 mt-2">{err}</p>}
+        {err && (
+          <p className="text-xs text-amber-400 mt-2">
+            {err}
+            <span className="block text-slate-500 mt-1">
+              Top banner and cards use the same /api/cockpit source. If you see &quot;Not Found&quot;, redeploy backend +
+              frontend from latest main.
+            </span>
+          </p>
+        )}
+        {detailsLoading && <p className="text-[10px] text-slate-500 mt-1">Loading live scores…</p>}
       </header>
 
       <div className="flex flex-wrap gap-2">
@@ -159,13 +182,26 @@ export function CockpitDashboard() {
         </button>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-5">
+      <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
         {[
           ["Paper learning", ctrl.paper_learning_on ? "ON" : "OFF", ctrl.paper_learning_on ? "#00FF66" : "#F59E0B"],
           ["Bot can trade", ctrl.bot_can_place ? "YES" : "NO", ctrl.bot_can_place ? "#00FF66" : "#F59E0B"],
           ["Equity", data?.account?.equity != null ? `$${data.account.equity.toFixed(2)}` : "—", "#fff"],
-          ["Crypto pairs", String(data?.watchlist?.crypto?.usd_pairs ?? 0), "#00dbe9"],
-          ["Stocks", String(data?.watchlist?.stocks?.count ?? 0), "#00dbe9"],
+          [
+            "Crypto pairs",
+            String(data?.watchlist?.crypto?.usd_pairs ?? data?.watchlist?.crypto?.symbols?.length ?? 0),
+            "#00dbe9",
+          ],
+          [
+            "Stocks",
+            String(data?.watchlist?.stocks?.count ?? data?.watchlist?.stocks?.symbols?.length ?? 0),
+            "#00dbe9",
+          ],
+          [
+            "Alpaca",
+            data?.account?.connected ? "CONNECTED" : "OFFLINE",
+            data?.account?.connected ? "#00FF66" : "#EF4444",
+          ],
         ].map(([label, val, color]) => (
           <div key={label} className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
             <p className="text-[10px] uppercase text-slate-500">{label}</p>
@@ -176,26 +212,11 @@ export function CockpitDashboard() {
         ))}
       </div>
 
-      <GlassPanel title="Live funnel" icon={<TrendingUp className="h-4 w-4" />}>
-        <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
-          {[
-            ["Available", f.available],
-            ["Cached", f.cached],
-            ["Fresh", f.fresh],
-            ["Eligible", f.eligible],
-            ["Ranked", f.ranked],
-            ["Shortlist", f.shortlist],
-          ].map(([label, v]) => (
-            <div key={String(label)} className="text-center p-2 rounded border border-white/5">
-              <p className="text-[9px] text-slate-500 uppercase">{label}</p>
-              <p className="text-lg font-bold text-white">{String(v ?? 0)}</p>
-            </div>
-          ))}
-        </div>
-        {data?.why_zero_shortlist && (
-          <p className="text-[10px] text-amber-300 mt-2">{data.why_zero_shortlist}</p>
-        )}
-      </GlassPanel>
+      <CockpitFunnelBrain
+        funnel={f}
+        blockers={data?.why_zero_shortlist}
+        aiNote={data?.ai_cockpit_message}
+      />
 
       <CandleChartPanel defaultSymbol={chartSymbol} />
 

@@ -14,7 +14,111 @@ from app.services.dynamic_weights_service import get_dynamic_weights
 from app.services.product_truth_service import product_truth
 from app.services.push_pull_scoring_service import score_active_universe
 from app.v2.live_pipeline import live_funnel
-from app.v2.watchlist import live_full_watchlist
+from app.v2.watchlist import live_crypto_watchlist, live_full_watchlist, live_stock_watchlist
+
+
+def _control_from_truth(truth: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "can_place_paper_orders": truth.get("effective_can_place_paper_orders"),
+        "paper_learning_on": bool(truth.get("operator_desired_paper_learning")),
+        "bot_can_place": truth.get("effective_can_place_paper_orders"),
+        "blockers": truth.get("blockers") or truth.get("blocker_codes") or [],
+        "mode": truth.get("current_mode"),
+        "mode_label": truth.get("current_mode_label"),
+    }
+
+
+def build_cockpit_summary(session: Session) -> dict[str, Any]:
+    """Fast cockpit (<5s) — single source of truth for UI cards + banner."""
+    cfg = ConfigManager(session).get_current()
+    generated = datetime.utcnow().isoformat() + "Z"
+    truth = product_truth(session, cfg)
+    alpaca = AlpacaAdapter(session)
+
+    if alpaca.configured:
+        try:
+            alpaca.sync_account_cached(force=False)
+        except Exception:
+            pass
+
+    account = session.exec(
+        select(AccountSnapshot).order_by(AccountSnapshot.synced_at.desc())
+    ).first()
+    crypto = live_crypto_watchlist(force=False)
+    stocks = live_stock_watchlist(session)
+
+    from app.services.trader_console_service import trader_console_status
+
+    tc = trader_console_status(session)
+    shortlist = tc.get("shortlist") or []
+    breakdown = tc.get("no_trade_reason_breakdown") or {}
+
+    positions = list(session.exec(select(PositionSnapshot)).all())
+    logs = list(
+        session.exec(select(ExecutionLog).order_by(ExecutionLog.submitted_at.desc()).limit(8)).all()
+    )
+
+    avail = int(crypto.get("usd_pairs") or len(crypto.get("symbols") or []))
+    short_n = len(shortlist)
+
+    funnel = {
+        "available": avail,
+        "cached": avail,
+        "fresh": max(0, avail - int(breakdown.get("stale_bar", 0))),
+        "eligible": int(tc.get("shortlist_count") or short_n),
+        "ranked": int(tc.get("scored_symbols") or 0),
+        "shortlist": short_n,
+    }
+
+    return {
+        "status": "ok",
+        "generated_at_utc": generated,
+        "live_truth": True,
+        "summary": True,
+        "alpaca_connected": alpaca.configured,
+        "account": {
+            "connected": alpaca.configured,
+            "equity": account.equity if account else None,
+            "cash": account.cash if account else None,
+            "daily_pl": account.daily_pl if account else None,
+        },
+        "watchlist": {
+            "total": len(crypto.get("symbols") or []) + len(stocks.get("symbols") or []),
+            "crypto": crypto,
+            "stocks": stocks,
+        },
+        "funnel": funnel,
+        "shortlist": shortlist[:10],
+        "why_zero_shortlist": tc.get("message") if not shortlist else None,
+        "block_breakdown": breakdown,
+        "control": _control_from_truth(truth),
+        "positions": [
+            {
+                "symbol": p.symbol,
+                "qty": p.quantity,
+                "side": p.side,
+                "market_value": p.market_value,
+                "unrealized_pl": p.unrealized_pl,
+            }
+            for p in positions
+        ],
+        "recent_trades": [
+            {
+                "symbol": r.symbol,
+                "side": r.side,
+                "status": r.status,
+                "quantity": r.requested_qty,
+                "submitted_at": r.submitted_at.isoformat() + "Z" if r.submitted_at else None,
+            }
+            for r in logs
+        ],
+        "ai_cockpit_message": _cockpit_narrative(
+            {"funnel": funnel, "why_zero_shortlist": tc.get("message")},
+            truth,
+            [],
+            {"universe_ranking": {}},
+        ),
+    }
 
 
 def build_cockpit(session: Session) -> dict[str, Any]:
@@ -64,14 +168,9 @@ def build_cockpit(session: Session) -> dict[str, Any]:
         "scores": score_rows[:12],
         "passed_count": len(passed),
         "weights": weights,
-        "control": {
-            "can_place_paper_orders": truth.get("effective_can_place_paper_orders"),
-            "paper_learning_on": bool(truth.get("operator_desired_paper_learning"))
-            and truth.get("current_mode") not in ("paper_learning_off", "off", "env_paused"),
-            "bot_can_place": truth.get("effective_can_place_paper_orders"),
-            "blockers": truth.get("blockers") or truth.get("blocker_codes") or [],
-            "mode": truth.get("current_mode"),
-        },
+        "control": _control_from_truth(truth),
+        "summary": False,
+        "alpaca_connected": alpaca.configured,
         "positions": [
             {
                 "symbol": p.symbol,

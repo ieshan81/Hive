@@ -16,6 +16,28 @@ type OhlcPayload = {
   message?: string;
 };
 
+type ChartMarker = {
+  time: number;
+  position: "aboveBar" | "belowBar";
+  color: string;
+  shape: "arrowUp" | "arrowDown" | "circle";
+  text?: string;
+};
+
+type PriceLine = {
+  price: number;
+  color: string;
+  title: string;
+  lineStyle?: number;
+};
+
+type ChartContextPayload = {
+  status: string;
+  markers?: ChartMarker[];
+  price_lines?: PriceLine[];
+  ai_narrative?: string;
+};
+
 const DEFAULT_SYMBOLS = ["BTC/USD", "ETH/USD", "SOL/USD", "DOGE/USD", "AVAX/USD", "LINK/USD"];
 
 export function CandleChartPanel({ defaultSymbol = "BTC/USD" }: { defaultSymbol?: string }) {
@@ -24,23 +46,71 @@ export function CandleChartPanel({ defaultSymbol = "BTC/USD" }: { defaultSymbol?
   const seriesRef = useRef<ReturnType<
     ReturnType<typeof import("lightweight-charts").createChart>["addCandlestickSeries"]
   > | null>(null);
+  const priceLinesRef = useRef<ReturnType<
+    NonNullable<ReturnType<typeof import("lightweight-charts").createChart>["addCandlestickSeries"]>["createPriceLine"]
+  >[]>([]);
   const [symbol, setSymbol] = useState(defaultSymbol);
   const [timeframe, setTimeframe] = useState("5Min");
   const [loading, setLoading] = useState(false);
   const [meta, setMeta] = useState<{ count: number; last?: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [brainNote, setBrainNote] = useState<string | null>(null);
+
+  const clearPriceLines = () => {
+    for (const line of priceLinesRef.current) {
+      try {
+        seriesRef.current?.removePriceLine(line);
+      } catch {
+        /* ignore */
+      }
+    }
+    priceLinesRef.current = [];
+  };
+
+  const applyOverlays = (ctx: ChartContextPayload | null) => {
+    if (!seriesRef.current || !ctx) return;
+    const markers = (ctx.markers ?? []).map((m) => ({
+      time: m.time as import("lightweight-charts").UTCTimestamp,
+      position: m.position,
+      color: m.color,
+      shape: m.shape,
+      text: m.text,
+    }));
+    seriesRef.current.setMarkers(markers);
+    clearPriceLines();
+    for (const pl of ctx.price_lines ?? []) {
+      const line = seriesRef.current.createPriceLine({
+        price: pl.price,
+        color: pl.color,
+        title: pl.title,
+        lineWidth: 1,
+        lineStyle: pl.lineStyle ?? 2,
+      });
+      priceLinesRef.current.push(line);
+    }
+    setBrainNote(ctx.ai_narrative ?? null);
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const r = await apiGet<OhlcPayload>(
-      `/api/market-data/ohlc?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}&limit=180`,
-      { timeoutMs: 25000 }
-    );
+    const [r, ctxRes] = await Promise.all([
+      apiGet<OhlcPayload>(
+        `/api/market-data/ohlc?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}&limit=180`,
+        { timeoutMs: 25000 }
+      ),
+      apiGet<ChartContextPayload>(
+        `/api/market-data/chart-context?symbol=${encodeURIComponent(symbol)}`,
+        { timeoutMs: 12000 }
+      ),
+    ]);
     if (!r.ok || !r.data || r.data.status !== "ok" || !r.data.candles?.length) {
       setError(r.data?.message || r.error || "No candle data");
       seriesRef.current?.setData([]);
+      seriesRef.current?.setMarkers([]);
+      clearPriceLines();
       setMeta(null);
+      setBrainNote(null);
       setLoading(false);
       return;
     }
@@ -54,8 +124,14 @@ export function CandleChartPanel({ defaultSymbol = "BTC/USD" }: { defaultSymbol?
     seriesRef.current?.setData(candles);
     chartRef.current?.timeScale().fitContent();
     setMeta({ count: candles.length, last: r.data.last_close });
+    if (ctxRes.ok && ctxRes.data) applyOverlays(ctxRes.data);
+    else setBrainNote("AI trade markers load when backend chart-context is available.");
     setLoading(false);
   }, [symbol, timeframe]);
+
+  useEffect(() => {
+    setSymbol(defaultSymbol);
+  }, [defaultSymbol]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -65,7 +141,7 @@ export function CandleChartPanel({ defaultSymbol = "BTC/USD" }: { defaultSymbol?
       if (disposed || !containerRef.current) return;
       const chart = createChart(containerRef.current, {
         width: containerRef.current.clientWidth,
-        height: 320,
+        height: 360,
         layout: {
           background: { type: ColorType.Solid, color: "#0a0b0f" },
           textColor: "#b9cacb",
@@ -99,6 +175,7 @@ export function CandleChartPanel({ defaultSymbol = "BTC/USD" }: { defaultSymbol?
     })();
     return () => {
       disposed = true;
+      clearPriceLines();
       chartRef.current?.remove();
       chartRef.current = null;
       seriesRef.current = null;
@@ -112,9 +189,9 @@ export function CandleChartPanel({ defaultSymbol = "BTC/USD" }: { defaultSymbol?
   }, [load]);
 
   return (
-    <GlassPanel title="Live Candles" icon={<CandlestickChart className="h-4 w-4 text-hive-cyan" />}>
+    <GlassPanel title="Live Candles + AI brain" icon={<CandlestickChart className="h-4 w-4 text-hive-cyan" />}>
       <p className="text-[10px] text-slate-500 mb-2">
-        TradingView Lightweight Charts · Alpaca/DB OHLC · updates every 45s
+        TradingView Lightweight Charts · green/red arrows = paper fills · purple = AI signal · lines = SL/TP cage
       </p>
       <div className="flex flex-wrap gap-2 mb-2 items-center">
         <select
@@ -147,6 +224,11 @@ export function CandleChartPanel({ defaultSymbol = "BTC/USD" }: { defaultSymbol?
           </span>
         )}
       </div>
+      {brainNote && (
+        <p className="text-[10px] text-violet-200/90 mb-2 border border-violet-500/20 rounded px-2 py-1 bg-violet-950/20">
+          {brainNote}
+        </p>
+      )}
       {loading && <p className="text-[10px] text-slate-500 mb-1">Loading candles…</p>}
       {error && <p className="text-[10px] text-amber-400 mb-1">{error}</p>}
       <div ref={containerRef} className="w-full rounded-lg border border-white/[0.06] overflow-hidden" />

@@ -22,33 +22,32 @@ export function SafetyBanner() {
   const [degraded, setDegraded] = useState<string | null>(null);
 
   const load = async () => {
-    const [apl, lock] = await Promise.all([
-      apiGet<Record<string, unknown>>("/api/autonomous-paper-learning/status"),
-      apiGet<Record<string, unknown>>("/api/settings/live-lock-tripwire"),
+    const [cockpit, lock] = await Promise.all([
+      apiGet<Record<string, unknown>>("/api/cockpit", { timeoutMs: 15000 }),
+      apiGet<Record<string, unknown>>("/api/settings/live-lock-tripwire", { timeoutMs: 8000 }),
     ]);
-    if (!apl.ok) {
-      setDegraded(apl.error || `Autonomous status unavailable (${apl.status})`);
+    if (!cockpit.ok) {
+      setDegraded(cockpit.error || `Cockpit unavailable (${cockpit.status})`);
     } else {
       setDegraded(null);
     }
-    const banner = (apl.data?.safety_banner || apl.data) as BannerData | undefined;
+    const ctrl = (cockpit.data?.control as Record<string, unknown>) || {};
+    const acct = (cockpit.data?.account as Record<string, unknown>) || {};
     setData({
-      liveTradingLocked:
-        lock.data?.live_lock_status === "locked" || Boolean(banner?.liveTradingLocked),
-      paperLearning: banner?.paperLearning ?? (apl.data?.paper_learning_on ? "ON" : "OFF"),
-      trainingMode: banner?.trainingMode ?? (apl.data?.paper_learning_on ? "ON" : "OFF"),
-      confidenceScore: banner?.confidenceScore ?? (apl.data as { confidenceScore?: number })?.confidenceScore,
-      confidenceLabel: banner?.confidenceLabel,
-      currentMode: banner?.currentMode ?? String(apl.data?.current_mode || "watching"),
-      botCanPlaceOrders:
-        banner?.botCanPlaceOrders ??
-        (apl.data?.bot_can_place_paper_orders ? "YES" : "NO"),
-      openPositions: banner?.openPositions ?? Number(apl.data?.open_paper_positions ?? 0),
-      brokerTruth: banner?.brokerTruth ?? "—",
-      paperBroker: Boolean(lock.data?.paper_broker ?? banner?.paperBroker),
-      plainMessage:
-        banner?.plainMessage ||
-        String(apl.data?.plain_message || "The bot is watching only. It cannot place paper orders."),
+      liveTradingLocked: lock.data?.live_lock_status === "locked" || cockpit.data?.live_locked !== false,
+      paperLearning: ctrl.paper_learning_on ? "ON" : "OFF",
+      trainingMode: ctrl.paper_learning_on ? "ON" : "OFF",
+      confidenceScore: Number(cockpit.data?.passed_count ?? 0) * 8 + 40,
+      confidenceLabel: ctrl.bot_can_place ? "Ready" : "Developing",
+      currentMode: String(ctrl.mode || "watching"),
+      botCanPlaceOrders: ctrl.bot_can_place ? "YES" : "NO",
+      openPositions: Array.isArray(cockpit.data?.positions) ? cockpit.data.positions.length : 0,
+      brokerTruth: acct.connected ? "Synced" : "Not connected",
+      paperBroker: Boolean(acct.connected),
+      plainMessage: String(
+        cockpit.data?.ai_cockpit_message ||
+          "Live cockpit — paper only, formula cage executes, Gemini advises."
+      ),
     });
   };
 
@@ -56,7 +55,11 @@ export function SafetyBanner() {
     load();
     const onRefresh = () => load();
     window.addEventListener("hive:paper-learning-refresh", onRefresh);
-    return () => window.removeEventListener("hive:paper-learning-refresh", onRefresh);
+    window.addEventListener("hive:cockpit-refresh", onRefresh);
+    return () => {
+      window.removeEventListener("hive:paper-learning-refresh", onRefresh);
+      window.removeEventListener("hive:cockpit-refresh", onRefresh);
+    };
   }, []);
 
   if (!data) return null;

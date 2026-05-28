@@ -58,6 +58,16 @@ def ohlc_chart(
     return ohlc_series(session, symbol, timeframe=timeframe, limit=min(500, max(20, limit)))
 
 
+@router.get("/chart-context")
+def chart_context(
+    symbol: str,
+    session: Session = Depends(get_session),
+):
+    from app.services.cockpit_chart_service import chart_context as build_chart_context
+
+    return build_chart_context(session, symbol)
+
+
 @router.post("/refresh-bars")
 def refresh_bars(
     body: dict = Body(default={}),
