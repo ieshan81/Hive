@@ -19,7 +19,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { apiGet } from "@/lib/apiClient";
+import { fetchAlpacaConnected } from "@/lib/brokerStatus";
 
 // Stitch design system — Caged Hive cockpit nav
 // Surface: surface-container-lowest (#0d0e12) with backdrop-blur
@@ -54,19 +54,8 @@ export function Sidebar({ systemStatus }: SidebarProps) {
   useEffect(() => {
     let cancelled = false;
     async function loadBrokerProof() {
-      const [apl, lock] = await Promise.all([
-        apiGet<Record<string, unknown>>("/api/autonomous-paper-learning/status", { timeoutMs: 4500 }),
-        apiGet<Record<string, unknown>>("/api/settings/live-lock-tripwire", { timeoutMs: 2500 }),
-      ]);
-      if (cancelled) return;
-      const banner = (apl.data?.safety_banner || {}) as Record<string, unknown>;
-      const paperBroker = Boolean(lock.data?.paper_broker ?? banner.paperBroker);
-      const brokerSynced =
-        banner.brokerTruth === "Synced" ||
-        Boolean(apl.data?.broker_truth_synced) ||
-        typeof banner.openPositions === "number" ||
-        typeof apl.data?.open_paper_positions === "number";
-      setAlpacaProof(paperBroker && brokerSynced);
+      const connected = await fetchAlpacaConnected({ timeoutMs: 6000 });
+      if (!cancelled) setAlpacaProof(connected);
     }
     loadBrokerProof();
     const t = setInterval(loadBrokerProof, 30000);

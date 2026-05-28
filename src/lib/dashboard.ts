@@ -1,5 +1,6 @@
 import type { DashboardData } from "@/types/dashboard";
 import { apiGet } from "@/lib/apiClient";
+import { fetchAlpacaConnected } from "@/lib/brokerStatus";
 
 function emptyDashboard(message: string): DashboardData {
   return {
@@ -75,14 +76,29 @@ function emptyDashboard(message: string): DashboardData {
 }
 
 export async function getDashboardData(): Promise<DashboardData> {
-  const result = await apiGet<DashboardData>("/api/dashboard", {
-    forServer: true,
-    timeoutMs: 9000,
-  });
+  const [result, alpacaConnected] = await Promise.all([
+    apiGet<DashboardData>("/api/dashboard", {
+      forServer: true,
+      timeoutMs: 28000,
+    }),
+    fetchAlpacaConnected({ forServer: true, timeoutMs: 6000 }),
+  ]);
   if (!result.ok || !result.data) {
-    return emptyDashboard(
+    const fallback = emptyDashboard(
       result.error || `API unavailable (${result.status}) — ${result.url}`
     );
+    if (alpacaConnected) {
+      fallback.systemStatus.alpacaConnected = true;
+      if (fallback.accountSurvival.status === "not_connected") {
+        fallback.accountSurvival.status = "waiting";
+        fallback.accountSurvival.message = "Dashboard loading — Alpaca connected";
+        fallback.accountSurvival.riskStatusMessage = "Account details loading";
+      }
+    }
+    return fallback;
+  }
+  if (alpacaConnected && !result.data.systemStatus.alpacaConnected) {
+    result.data.systemStatus.alpacaConnected = true;
   }
   return result.data;
 }
