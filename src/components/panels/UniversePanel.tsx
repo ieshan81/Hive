@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Globe } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { AssetIcon } from "@/components/ui/AssetIcon";
 import { apiGet } from "@/lib/apiClient";
-import { symbolIdentity } from "@/lib/symbolIdentity";
 
 type SymbolRow = {
   symbol: string;
@@ -238,13 +238,16 @@ export function UniversePanel() {
                 key={s.symbol}
                 className="flex items-center justify-between gap-3 rounded-md border border-emerald-500/20 bg-emerald-500/5 px-3 py-2"
               >
-                <div className="min-w-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <AssetIcon symbol={s.symbol} assetClass={s.asset_type} size="sm" />
+                  <div className="min-w-0">
                   <p className="text-[12px] font-semibold text-white">{s.symbol}</p>
                   <p className="text-[10px] text-slate-400">
                     {s.pattern_name ? humanize(String(s.pattern_name)) : "Pattern setup"}
                     {s.stop_loss != null ? ` · SL ${Number(s.stop_loss).toFixed(4)}` : ""}
                     {s.take_profit != null ? ` · TP ${Number(s.take_profit).toFixed(4)}` : ""}
                   </p>
+                  </div>
                 </div>
                 <span className="text-hive-cyan mono-metric text-sm font-bold shrink-0">
                   Q{(((s.trade_quality_score ?? s.universe_rank_score ?? 0) as number) * 100).toFixed(0)}
@@ -306,16 +309,13 @@ export function UniversePanel() {
             </thead>
             <tbody>
               {filtered.map((r) => {
-                const id = symbolIdentity(r.symbol);
                 const block = r.blocked_reason || r.block_reason || "";
                 const isEligible = eligibleSet.has(r.symbol.toUpperCase());
                 return (
                   <tr key={r.symbol} className="border-t border-white/5 text-slate-300">
                     <td className="py-1.5 pr-2 font-medium text-white">
                       <span className="inline-flex items-center gap-2">
-                        <span className="inline-flex h-6 w-6 items-center justify-center rounded bg-hive-cyan/10 text-[10px] text-hive-cyan">
-                          {id.glyph || id.name.slice(0, 2)}
-                        </span>
+                        <AssetIcon symbol={r.symbol} assetClass={r.asset_type} size="sm" />
                         {r.symbol}
                       </span>
                     </td>

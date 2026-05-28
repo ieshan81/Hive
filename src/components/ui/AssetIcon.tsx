@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import {
   baseSymbol,
-  cryptoIconUrl,
+  cryptoIconUrls,
   isLikelyCrypto,
+  stockIconUrl,
   tickerAccent,
 } from "@/lib/assetIcons";
 
@@ -17,13 +18,20 @@ interface AssetIconProps {
 }
 
 export function AssetIcon({ symbol, assetClass, size = "sm", className }: AssetIconProps) {
+  const [sourceIndex, setSourceIndex] = useState(0);
   const [failed, setFailed] = useState(false);
   const base = baseSymbol(symbol);
   const crypto = isLikelyCrypto(symbol, assetClass);
   const dim = size === "md" ? "h-9 w-9" : "h-8 w-8";
   const text = size === "md" ? "text-[11px]" : "text-[10px]";
 
-  if (crypto && !failed) {
+  const sources = useMemo(() => {
+    if (crypto) return cryptoIconUrls(symbol);
+    const stock = stockIconUrl(symbol);
+    return stock ? [stock] : [];
+  }, [crypto, symbol]);
+
+  if (!failed && sources.length > 0 && sourceIndex < sources.length) {
     return (
       <span
         className={cn(
@@ -33,12 +41,18 @@ export function AssetIcon({ symbol, assetClass, size = "sm", className }: AssetI
         )}
       >
         <img
-          src={cryptoIconUrl(symbol)}
-          alt=""
+          src={sources[sourceIndex]}
+          alt={base}
           width={size === "md" ? 36 : 32}
           height={size === "md" ? 36 : 32}
           className="h-full w-full object-cover"
-          onError={() => setFailed(true)}
+          onError={() => {
+            if (sourceIndex + 1 < sources.length) {
+              setSourceIndex((i) => i + 1);
+            } else {
+              setFailed(true);
+            }
+          }}
         />
       </span>
     );
@@ -55,6 +69,7 @@ export function AssetIcon({ symbol, assetClass, size = "sm", className }: AssetI
       )}
       style={{ backgroundColor: `${accent}33`, color: accent }}
       aria-hidden
+      title={symbol}
     >
       {base.slice(0, 3)}
     </span>

@@ -13,6 +13,7 @@ from app.services.bar_freshness_service import BarFreshnessService
 from app.services.candlestick_pattern_engine import top_pattern
 from app.services.config_manager import ConfigManager
 from app.services.dynamic_exit_levels_service import compute_dynamic_exit_levels
+from app.services.engine_config import cfg_get
 from app.services.historical_data_service import HistoricalDataService
 from app.services.quote_freshness_service import QuoteFreshnessService
 from app.trading_cage.push_pull_engine import score_push_pull_setup
@@ -58,21 +59,70 @@ def _paper_exploration_on(config: dict) -> bool:
     return promotion == "PAPER" and bool(exp.get("enabled", True)) and not live_orders
 
 
-def _paper_probe_eligible(row: dict[str, Any]) -> bool:
+def _trade_all_eligible_on(config: dict) -> bool:
+    explicit = cfg_get(config, "universe.trade_all_eligible", None)
+    if explicit is not None:
+        return bool(explicit)
+    from app.services.scan_limits import zero_means_unlimited
+
+    return zero_means_unlimited(cfg_get(config, "universe.max_execution_shortlist", 0))
+
+
+def _has_complete_exit_levels(row: dict[str, Any]) -> bool:
+    levels = row.get("dynamic_exit_levels") or {}
+    if levels.get("status") == "unavailable":
+        return False
+    required = ("stop_loss", "take_profit", "trailing_stop", "invalidation_price")
+    return all(levels.get(k) is not None for k in required)
+
+
+def _promote_paper_row(row: dict[str, Any]) -> dict[str, Any]:
+    original_reason = row.get("no_trade_reason") or "strict_gate_failed"
+    probe = dict(row)
+    probe["entry_allowed"] = True
+    probe["paper_exploration_probe"] = True
+    probe["paper_probe_original_reason"] = original_reason
+    probe["no_trade_reason"] = None
+    probe["soft_concerns"] = list(dict.fromkeys((probe.get("soft_concerns") or []) + [original_reason]))
+    evidence = dict(probe.get("score_components") or {})
+    evidence["paper_exploration_probe"] = True
+    evidence["paper_probe_original_reason"] = original_reason
+    probe["score_components"] = evidence
+    probe["thesis"] = (
+        f"Paper entry with pattern TP/SL bands despite {original_reason}; "
+        "dynamic stop, target, trailing, and invalidation define the experiment."
+    )
+    return probe
+
+
+def _paper_probe_eligible(row: dict[str, Any], config: Optional[dict] = None) -> bool:
+    cfg = config or {}
     levels = row.get("dynamic_exit_levels") or {}
     gates = row.get("gate_results") or {}
-    required_levels = ("stop_loss", "take_profit", "trailing_stop", "invalidation_price")
-    has_exit_truth = all(levels.get(k) is not None for k in required_levels)
+    if not _has_complete_exit_levels(row):
+        return False
+    if row.get("entry_allowed") is True:
+        return False
+    reason = str(row.get("no_trade_reason") or "").upper()
+    if "SCORE_ERROR" in reason or "INSUFFICIENT" in reason:
+        return False
+
+    bar_ok = row.get("bar_freshness") == "fresh" or bool(gates.get("bar_fresh"))
+    if not bar_ok:
+        return False
+
+    if _trade_all_eligible_on(cfg):
+        # Full-universe paper mode: pattern SL/TP bands define risk; structure/edge are soft.
+        return int(row.get("bars_count") or 0) >= 10
+
     if gates.get("long_structure_ok") is False:
         return False
     data_ready = (
         row.get("quote_freshness") == "fresh"
-        and row.get("bar_freshness") == "fresh"
         and bool(gates.get("quote_fresh", True))
-        and bool(gates.get("bar_fresh", True))
         and bool(gates.get("spread_ok", True))
     )
-    return bool(has_exit_truth and data_ready and row.get("entry_allowed") is not True)
+    return bool(data_ready)
 
 
 def _metrics_from_bars(bars: list[dict], quote: dict) -> dict[str, Any]:
@@ -126,7 +176,7 @@ def _long_structure_decision(config: dict, pattern: dict[str, Any], metrics: dic
 
     pp = config.get("push_pull") or {}
     structure_cfg = pp.get("long_structure") or {}
-    if structure_cfg.get("enabled", True) is False:
+    if structure_cfg.get("enabled", True) is False or _trade_all_eligible_on(config):
         return {"long_structure_ok": True, "reason": "structure_filter_disabled"}
 
     pattern_name = str(pattern.get("pattern") or "none")
@@ -387,31 +437,20 @@ def score_active_universe(
 
     ranked = sorted(scored_rows, key=lambda x: float(x.get("trade_quality_score") or 0), reverse=True)
     selected = next((r for r in ranked if r.get("entry_allowed")), None)
-    if selected is None and _paper_exploration_on(cfg):
-        for idx, row in enumerate(ranked):
-            if not _paper_probe_eligible(row):
-                continue
-            original_reason = row.get("no_trade_reason") or "strict_gate_failed"
-            probe = dict(row)
-            probe["entry_allowed"] = True
-            probe["paper_exploration_probe"] = True
-            probe["paper_probe_original_reason"] = original_reason
-            probe["no_trade_reason"] = None
-            probe["soft_concerns"] = list(dict.fromkeys((probe.get("soft_concerns") or []) + [original_reason]))
-            evidence = dict(probe.get("score_components") or {})
-            evidence["paper_exploration_probe"] = True
-            evidence["paper_probe_original_reason"] = original_reason
-            evidence["hard_to_soft_concerns"] = list(
-                dict.fromkeys((evidence.get("soft_concerns") or []) + [original_reason])
-            )
-            probe["score_components"] = evidence
-            probe["thesis"] = (
-                f"Paper probe selected despite {original_reason}; dynamic stop, target, trailing, "
-                "and invalidation bars define the experiment."
-            )
-            ranked[idx] = probe
-            selected = probe
-            break
+    if _paper_exploration_on(cfg):
+        if _trade_all_eligible_on(cfg):
+            for idx, row in enumerate(ranked):
+                if row.get("entry_allowed") or not _paper_probe_eligible(row, cfg):
+                    continue
+                ranked[idx] = _promote_paper_row(row)
+            selected = next((r for r in ranked if r.get("entry_allowed")), None)
+        elif selected is None:
+            for idx, row in enumerate(ranked):
+                if not _paper_probe_eligible(row, cfg):
+                    continue
+                ranked[idx] = _promote_paper_row(row)
+                selected = ranked[idx]
+                break
     rejected = [
         {
             "symbol": r.get("symbol"),

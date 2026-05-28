@@ -50,6 +50,7 @@ def aggressive_config_patch() -> dict[str, Any]:
             "max_quote_age_seconds": 90.0,
             "max_bar_age_minutes": 180.0,
             "push_strength_min": 0.002,
+            "long_structure": {"enabled": False},
         },
         "exploration": {
             "enabled": True,
