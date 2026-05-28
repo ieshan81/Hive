@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   LayoutDashboard,
   Brain,
@@ -18,6 +19,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { apiGet } from "@/lib/apiClient";
 
 // Stitch design system — Caged Hive cockpit nav
 // Surface: surface-container-lowest (#0d0e12) with backdrop-blur
@@ -46,6 +48,33 @@ interface SidebarProps {
 
 export function Sidebar({ systemStatus }: SidebarProps) {
   const pathname = usePathname();
+  const [alpacaProof, setAlpacaProof] = useState<boolean | null>(null);
+  const alpacaConnected = Boolean(systemStatus?.alpacaConnected || alpacaProof);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadBrokerProof() {
+      const [apl, lock] = await Promise.all([
+        apiGet<Record<string, unknown>>("/api/autonomous-paper-learning/status", { timeoutMs: 4500 }),
+        apiGet<Record<string, unknown>>("/api/settings/live-lock-tripwire", { timeoutMs: 2500 }),
+      ]);
+      if (cancelled) return;
+      const banner = (apl.data?.safety_banner || {}) as Record<string, unknown>;
+      const paperBroker = Boolean(lock.data?.paper_broker ?? banner.paperBroker);
+      const brokerSynced =
+        banner.brokerTruth === "Synced" ||
+        Boolean(apl.data?.broker_truth_synced) ||
+        typeof banner.openPositions === "number" ||
+        typeof apl.data?.open_paper_positions === "number";
+      setAlpacaProof(paperBroker && brokerSynced);
+    }
+    loadBrokerProof();
+    const t = setInterval(loadBrokerProof, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
 
   return (
     <aside
@@ -125,28 +154,28 @@ export function Sidebar({ systemStatus }: SidebarProps) {
       {/* System integrity card */}
       <div className="mx-3 mb-4 mt-2 rounded-xl border p-3"
            style={{
-             borderColor: systemStatus?.alpacaConnected ? "rgba(0, 255, 102, 0.25)" : "rgba(245, 158, 11, 0.25)",
-             backgroundColor: systemStatus?.alpacaConnected ? "rgba(0, 255, 102, 0.04)" : "rgba(245, 158, 11, 0.04)",
+             borderColor: alpacaConnected ? "rgba(0, 255, 102, 0.25)" : "rgba(245, 158, 11, 0.25)",
+             backgroundColor: alpacaConnected ? "rgba(0, 255, 102, 0.04)" : "rgba(245, 158, 11, 0.04)",
            }}
       >
         <div className="flex items-center gap-2 mb-1.5">
           <Shield
             className="h-3.5 w-3.5"
-            style={{ color: systemStatus?.alpacaConnected ? "#00FF66" : "#F59E0B" }}
+            style={{ color: alpacaConnected ? "#00FF66" : "#F59E0B" }}
           />
           <span className="label-caps text-[#b9cacb]">System Integrity</span>
         </div>
         <p
           className="text-xl font-bold mono-metric"
-          style={{ color: systemStatus?.alpacaConnected ? "#00FF66" : "#F59E0B" }}
+          style={{ color: alpacaConnected ? "#00FF66" : "#F59E0B" }}
         >
-          {systemStatus?.alpacaConnected ? "ONLINE" : "OFFLINE"}
+          {alpacaConnected ? "ONLINE" : "OFFLINE"}
         </p>
         <p
           className="text-[10px] mt-0.5"
-          style={{ color: systemStatus?.alpacaConnected ? "rgba(0, 255, 102, 0.75)" : "rgba(245, 158, 11, 0.75)" }}
+          style={{ color: alpacaConnected ? "rgba(0, 255, 102, 0.75)" : "rgba(245, 158, 11, 0.75)" }}
         >
-          {systemStatus?.alpacaConnected ? "Alpaca paper connected" : "Waiting for Alpaca sync"}
+          {alpacaConnected ? "Alpaca paper connected" : "Waiting for Alpaca sync"}
         </p>
         <p className="text-[9px] text-[#849495] mt-1">
           Paper trading only · Live locked

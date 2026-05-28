@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Activity, Brain, Clock, Download, FileText, Shield } from "lucide-react";
 import { SystemLogModal } from "@/components/panels/SystemLogModal";
+import { apiGet } from "@/lib/apiClient";
 import { getDiagnosticBundleUrl } from "@/lib/dashboard";
 import { formatSyncTime } from "@/lib/datetime";
 import type { StatusChip, SystemStatus } from "@/types/dashboard";
@@ -24,19 +25,62 @@ function ChipIcon({ label }: { label: string }) {
 
 export function TopStatusBar({ lastSync, lastSyncAt, statusChips, systemStatus }: TopStatusBarProps) {
   const [logOpen, setLogOpen] = useState(false);
+  const [brokerProof, setBrokerProof] = useState<{
+    alpacaConnected?: boolean;
+    aiLearning?: boolean;
+  }>({});
   const syncLabel = formatSyncTime(lastSyncAt ?? (lastSync !== "Not synced" ? lastSync : null));
+  const alpacaConnected = systemStatus.alpacaConnected || Boolean(brokerProof.alpacaConnected);
+  const displayedChips = statusChips.map((chip) => {
+    if (chip.label === "AI Mode" && brokerProof.aiLearning) {
+      return { ...chip, value: "LEARNING", variant: "info" as const };
+    }
+    return chip;
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadBrokerProof() {
+      const [apl, lock, advisor] = await Promise.all([
+        apiGet<Record<string, unknown>>("/api/autonomous-paper-learning/status", { timeoutMs: 4500 }),
+        apiGet<Record<string, unknown>>("/api/settings/live-lock-tripwire", { timeoutMs: 2500 }),
+        apiGet<Record<string, unknown>>("/api/ai-advisor/status", { timeoutMs: 2500 }),
+      ]);
+      if (cancelled) return;
+      const banner = (apl.data?.safety_banner || {}) as Record<string, unknown>;
+      const paperBroker = Boolean(lock.data?.paper_broker ?? banner.paperBroker);
+      const brokerSynced =
+        banner.brokerTruth === "Synced" ||
+        Boolean(apl.data?.broker_truth_synced) ||
+        typeof banner.openPositions === "number" ||
+        typeof apl.data?.open_paper_positions === "number";
+      setBrokerProof({
+        alpacaConnected: paperBroker && brokerSynced,
+        aiLearning:
+          Boolean(advisor.data?.advisor_active) ||
+          Boolean(advisor.data?.gemini_configured) ||
+          banner.currentMode === "push_pull_paper_learning",
+      });
+    }
+    loadBrokerProof();
+    const t = setInterval(loadBrokerProof, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
 
   return (
     <header className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-white">Caged Hive Quant</h1>
         <p className="text-sm text-slate-500 mt-0.5">AI-managed formula paper learning · Live locked</p>
-        {!systemStatus.alpacaConnected && (
+        {!alpacaConnected && (
           <p className="text-xs text-amber-400 mt-1">Not connected — configure Alpaca credentials</p>
         )}
       </div>
       <div className="flex flex-wrap items-center gap-2 lg:gap-3">
-        {statusChips.map((chip) => (
+        {displayedChips.map((chip) => (
           <div key={chip.label} className="flex items-center gap-2 rounded-full border border-white/8 bg-white/3 px-3 py-1.5 text-xs">
             <span className="text-slate-500">{chip.label}</span>
             <span className="flex items-center gap-1.5 font-semibold text-white">

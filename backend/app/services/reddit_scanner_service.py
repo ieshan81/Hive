@@ -125,11 +125,18 @@ def _extract_symbols(text: str) -> list[str]:
 def reddit_status() -> dict[str, Any]:
     mode = _detect_mode()
     latest = _CACHE.get("payload") or {}
+    posts = latest.get("posts") or []
+    errors = latest.get("errors") or []
+    public_ready = mode == "public_limited" and not (latest and errors and not posts)
+    source_active = mode == "oauth" or public_ready or bool(posts)
     return {
         "status": "ok",
         "generated_at_utc": datetime.utcnow().isoformat() + "Z",
         "mode": mode,
-        "active": mode in ("oauth", "public_limited") and bool(latest.get("posts")),
+        "active": source_active,
+        "available": source_active,
+        "latest_posts_count": len(posts),
+        "public_json_enabled": mode == "public_limited",
         "read_only": True,
         "posting_enabled": False,
         "commenting_enabled": False,
@@ -140,13 +147,13 @@ def reddit_status() -> dict[str, Any]:
         "subreddits_monitored": _DEFAULT_SUBS,
         "symbols_detected": list((latest.get("symbol_mentions") or {}).keys())[:20],
         "last_fetch": latest.get("generated_at_utc"),
-        "rate_limit_status": "cached" if _CACHE.get("payload") else "not_fetched",
-        "errors": latest.get("errors", []),
+        "rate_limit_status": "cached" if _CACHE.get("payload") else "ready_not_fetched",
+        "errors": errors,
         "reason": (
             "OAuth read-only scanner."
             if mode == "oauth"
             else (
-                "Public limited read-only (no OAuth credentials)."
+                "Public Reddit JSON read-only scanner is ready; refresh filters posts into symbol velocity and hype-risk signals."
                 if mode == "public_limited"
                 else "Inactive — set REDDIT_CLIENT_ID/SECRET or use public mode."
             )
@@ -192,6 +199,7 @@ def refresh_reddit_scan(*, max_subs: int = 6) -> dict[str, Any]:
         "status": "ok" if posts else "degraded",
         "generated_at_utc": datetime.utcnow().isoformat() + "Z",
         "mode": mode,
+        "active": bool(posts),
         "posts": posts[:80],
         "symbol_mentions": dict(mention_counter),
         "reddit_symbol_velocity": hype,

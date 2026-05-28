@@ -1,5 +1,5 @@
 import type { DashboardData } from "@/types/dashboard";
-import { apiGet, buildApiUrl } from "@/lib/apiClient";
+import { apiGet } from "@/lib/apiClient";
 
 function emptyDashboard(message: string): DashboardData {
   return {
@@ -75,7 +75,10 @@ function emptyDashboard(message: string): DashboardData {
 }
 
 export async function getDashboardData(): Promise<DashboardData> {
-  const result = await apiGet<DashboardData>("/api/dashboard", { forServer: true });
+  const result = await apiGet<DashboardData>("/api/dashboard", {
+    forServer: true,
+    timeoutMs: 9000,
+  });
   if (!result.ok || !result.data) {
     return emptyDashboard(
       result.error || `API unavailable (${result.status}) — ${result.url}`
@@ -85,5 +88,5 @@ export async function getDashboardData(): Promise<DashboardData> {
 }
 
 export function getDiagnosticBundleUrl(): string {
-  return buildApiUrl("/api/diagnostic-bundle/download", false);
+  return "/reports";
 }
