@@ -82,6 +82,8 @@ DEFAULT_CONFIG = {
         "paper_trade_notional_max_usd": 40.0,
     },
     "ranking": {
+        "ai_managed": True,
+        "min_rank_score": 0.28,
         "w_signal_strength": 0.20,
         "w_confidence": 0.20,
         "w_edge_over_cost": 0.25,
@@ -90,6 +92,17 @@ DEFAULT_CONFIG = {
         "w_volatility_anomaly": 0.05,
         "w_memory_penalty": 0.03,
         "w_correlation_penalty": 0.02,
+    },
+    "universe_ranking": {
+        "w_liquidity": 0.25,
+        "w_spread": 0.15,
+        "w_volume_spike": 0.20,
+        "w_atr": 0.15,
+        "w_freshness": 0.15,
+        "w_cost_efficiency": 0.10,
+        "min_rank_score": 0.28,
+        "max_spread_bps": 80.0,
+        "max_bar_age_seconds": 900.0,
     },
     "portfolio": {
         "execute_top_n_signals": 1,
@@ -109,7 +122,7 @@ DEFAULT_CONFIG = {
         "slippage_buffer_meme_pct": 0.30,
         "spread_model": "tiered_pct",
         "edge_multiplier": 2.0,
-        "edge_multiplier_paper": 2.0,
+        "edge_multiplier_paper": 1.35,
         "edge_multiplier_pre_live": 2.2,
         "edge_multiplier_tiny_live": 2.5,
         "edge_multiplier_live": 2.5,
@@ -363,7 +376,7 @@ DEFAULT_CONFIG = {
     "autonomous_paper_learning": {
         "mode_enabled": False,
         "scheduler_enabled": False,
-        "scheduler_interval_seconds": 300,
+        "scheduler_interval_seconds": 90,
         "max_paper_trades_per_day": 0,
         "max_paper_notional_per_trade_usd": 0,
         "default_paper_notional_usd": 5,
@@ -417,6 +430,8 @@ DEFAULT_CONFIG = {
         "dynamic_max_stocks": 30,
         "require_1m_fresh_for_shortlist": False,
         "allow_zero_volume_cached_bars_for_paper": True,
+        "max_bar_staleness_hours": 72,
+        "skip_live_quote_for_ranking": True,
     },
     "exploration": {
         "enabled": True,

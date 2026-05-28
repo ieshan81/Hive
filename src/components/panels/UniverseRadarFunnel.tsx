@@ -100,47 +100,62 @@ export function UniverseRadarFunnel() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [statusRes, shortlistRes] = await Promise.all([
-      apiGet<UniverseStatusPayload>("/api/universe/status", { timeoutMs: 10000 }),
+    const timeoutMs = 35000;
+    const [statusRes, shortlistRes, radarRes] = await Promise.all([
+      apiGet<UniverseStatusPayload>("/api/universe/status", { timeoutMs }),
       apiGet<Payload & { shortlist?: Shortlist[]; execution_shortlist_count?: number; scored_symbols?: number }>(
         "/api/universe/execution-shortlist",
-        { timeoutMs: 10000 }
+        { timeoutMs }
       ),
+      apiGet<Record<string, unknown>>("/api/universe/radar", { timeoutMs }),
     ]);
     const statusData = statusRes.ok ? statusRes.data : null;
     const shortlistData = shortlistRes.ok ? shortlistRes.data : null;
+    const radarData = radarRes.ok ? radarRes.data : null;
     const sourceCounts = statusData?.sources_summary?.source_counts ?? {};
     const activeCrypto = statusData?.groups?.active_push_pull_candidates ?? statusData?.groups?.crypto_universe ?? [];
     const activeFresh = activeCrypto.filter((s) => s.bar_freshness === "fresh").length;
+    const radarFunnel = (radarData?.funnel ?? (radarData?.pipeline as Record<string, unknown>)?.funnel ?? {}) as Record<
+      string,
+      number
+    >;
 
-    if (statusData) {
-      const usdPairs = Number(sourceCounts.alpaca_crypto_usd_pairs ?? sourceCounts.display_universe_total ?? 0);
-      const shortlist = shortlistData?.shortlist ?? shortlistData?.pipeline?.shortlist ?? [];
-      const zeroText = shortlistData?.why_zero_eligible || shortlistData?.answer;
+    if (statusData || shortlistData || radarData) {
+      const usdPairs = Math.max(
+        Number(sourceCounts.alpaca_crypto_usd_pairs ?? sourceCounts.display_universe_total ?? 0),
+        Number(radarFunnel.available ?? 0)
+      );
+      const radarPipe = radarData?.pipeline as { shortlist?: Shortlist[] } | undefined;
+      const shortlist = (shortlistData?.shortlist ?? shortlistData?.pipeline?.shortlist ?? radarPipe?.shortlist ?? []) as Shortlist[];
+      const ranked = Number(shortlistData?.scored_symbols ?? radarFunnel.ranked ?? 0);
+      const shortlistCount = Number(
+        shortlistData?.execution_shortlist_count ?? radarFunnel.execution_shortlist ?? shortlist.length
+      );
+      const zeroText = shortlistData?.why_zero_eligible || shortlistData?.answer || (radarData?.answer as string);
       setData({
-        status: String(shortlistData?.status ?? statusData.sources_summary?.status ?? "ok"),
+        status: String(shortlistData?.status ?? radarData?.status ?? statusData?.sources_summary?.status ?? "ok"),
         answer:
           shortlist.length > 0
             ? `${usdPairs} USD crypto pairs available; ${shortlist.length} paper exploration candidate${shortlist.length === 1 ? "" : "s"} passed hard data and edge gates.`
             : zeroText || `${usdPairs} USD crypto pairs available; no paper candidate passed hard gates yet.`,
-        block_breakdown: shortlistData?.no_trade_reason_breakdown ?? shortlistData?.block_breakdown ?? {},
+        block_breakdown: shortlistData?.no_trade_reason_breakdown ?? shortlistData?.block_breakdown ?? (radarData?.block_breakdown as Record<string, number>) ?? {},
         counts: {
           available_usd_pairs: usdPairs,
-          cached_usd_pairs: usdPairs,
-          fresh: activeFresh,
-          eligible: activeCrypto.length,
-          ranked: Number(shortlistData?.scored_symbols ?? 0),
-          execution_shortlist: Number(shortlistData?.execution_shortlist_count ?? shortlist.length),
+          cached_usd_pairs: Number(radarFunnel.cached ?? usdPairs),
+          fresh: Math.max(Number(radarFunnel.fresh ?? 0), activeFresh),
+          eligible: Math.max(Number(radarFunnel.eligible ?? 0), activeCrypto.length),
+          ranked,
+          execution_shortlist: shortlistCount,
         },
         pipeline: {
-          cycle_id: shortlistData?.shortlist_mode ?? "status",
+          cycle_id: String(shortlistData?.shortlist_mode ?? "hybrid_radar"),
           funnel: {
             available: usdPairs,
-            cached: usdPairs,
-            fresh: activeFresh,
-            eligible: activeCrypto.length,
-            ranked: Number(shortlistData?.scored_symbols ?? 0),
-            execution_shortlist: Number(shortlistData?.execution_shortlist_count ?? shortlist.length),
+            cached: Number(radarFunnel.cached ?? usdPairs),
+            fresh: Math.max(Number(radarFunnel.fresh ?? 0), activeFresh),
+            eligible: Math.max(Number(radarFunnel.eligible ?? 0), activeCrypto.length),
+            ranked,
+            execution_shortlist: shortlistCount,
           },
           shortlist,
         },

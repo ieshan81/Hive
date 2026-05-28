@@ -108,7 +108,7 @@ def hybrid_radar_snapshot(
         funnel = build_funnel_breakdown(session, cfg, max_evaluate=max_eval, fetch_quotes=fetch_quotes)
         pipe = funnel.get("pipeline") or {}
         all_ranked = pipe.get("all_ranked") or []
-        ranked = rank_universe(all_ranked)[:max_ranked]
+        ranked = rank_universe(all_ranked, config=cfg)[:max_ranked]
         shortlist = [r for r in ranked if not r.get("dropped")][:max_short]
         if funnel.get("degraded") or rate_limited:
             shortlist = []

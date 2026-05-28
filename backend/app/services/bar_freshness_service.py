@@ -9,12 +9,19 @@ from sqlmodel import Session, select
 
 from app.database import HistoricalBar
 from app.services.config_manager import ConfigManager
+from app.services.engine_config import cfg_get
 from app.services.historical_data_service import HistoricalDataService, _parse_ts
 from app.services.symbol_normalize import symbol_variants
 
 
-# Push-pull entries require recent 5Min bars (not months-old research data).
+# Default staleness window — overridden by universe.max_bar_staleness_hours in config.
 MAX_BAR_STALENESS_HOURS = 48
+
+
+def max_bar_staleness_hours(config: dict | None) -> float:
+    if not config:
+        return MAX_BAR_STALENESS_HOURS
+    return float(cfg_get(config, "universe.max_bar_staleness_hours", MAX_BAR_STALENESS_HOURS))
 
 
 class BarFreshnessService:
@@ -46,7 +53,8 @@ class BarFreshnessService:
             }
         last_ts = row.timestamp
         age_h = (datetime.utcnow() - last_ts).total_seconds() / 3600.0
-        fresh = age_h <= MAX_BAR_STALENESS_HOURS
+        max_h = max_bar_staleness_hours(self.config)
+        fresh = age_h <= max_h
         return {
             "fresh": fresh,
             "executable": fresh,
@@ -54,6 +62,7 @@ class BarFreshnessService:
             "quote_freshness": "fresh" if fresh else "stale",
             "last_bar_at": last_ts.isoformat() + "Z",
             "staleness_hours": round(age_h, 1),
+            "max_staleness_hours": max_h,
             "reason": None if fresh else "data_stale",
             "plain": "Bars fresh" if fresh else f"Data stale — last bar {round(age_h, 0)}h ago",
             "meta": {"source": "database", "rows": 1, "matched_symbol": row.symbol},
@@ -67,7 +76,7 @@ class BarFreshnessService:
             timeframe=timeframe,
             min_rows=10,
             lookback_days=3,
-            max_staleness_hours=MAX_BAR_STALENESS_HOURS,
+            max_staleness_hours=max_bar_staleness_hours(self.config),
             force_refresh=False,
         )
         if not bars:
@@ -89,7 +98,8 @@ class BarFreshnessService:
         if staleness_days is not None and staleness_days > 3:
             age_h = max(age_h, float(staleness_days) * 24)
 
-        fresh = age_h <= MAX_BAR_STALENESS_HOURS
+        max_h = max_bar_staleness_hours(self.config)
+        fresh = age_h <= max_h
         return {
             "fresh": fresh,
             "executable": fresh,
@@ -97,6 +107,7 @@ class BarFreshnessService:
             "quote_freshness": "fresh" if fresh else "stale",
             "last_bar_at": last_ts.isoformat() + "Z",
             "staleness_hours": round(age_h, 1),
+            "max_staleness_hours": max_h,
             "reason": None if fresh else "data_stale",
             "plain": "Bars fresh" if fresh else f"Data stale — last bar {round(age_h, 0)}h ago",
             "meta": meta,

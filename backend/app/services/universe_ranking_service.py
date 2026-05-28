@@ -30,10 +30,48 @@ from app.services.push_pull_scorer import compute_atr, DEFAULT_TAKER_FEE_BPS
 # Constants
 # ──────────────────────────────────────────────────────────────
 
-MIN_RANK_SCORE = 0.40
+MIN_RANK_SCORE = 0.40  # legacy default; overridden by config when provided
 MAX_EXECUTION_SHORTLIST = 10
 MAX_BAR_AGE_SECONDS = 120.0
-DEFAULT_SPREAD_MAX_BPS = 50.0  # symbols above this are spread-ineligible
+DEFAULT_SPREAD_MAX_BPS = 50.0
+
+
+def _ranking_cfg(config: dict | None) -> dict:
+    if not config:
+        return {}
+    return (config.get("universe_ranking") or {}) if isinstance(config.get("universe_ranking"), dict) else {}
+
+
+def min_rank_score(config: dict | None = None) -> float:
+    u = _ranking_cfg(config)
+    if u.get("min_rank_score") is not None:
+        return float(u["min_rank_score"])
+    r = (config or {}).get("ranking") or {}
+    if isinstance(r, dict) and r.get("min_rank_score") is not None:
+        return float(r["min_rank_score"])
+    return MIN_RANK_SCORE
+
+
+def universe_rank_weights(config: dict | None = None) -> dict[str, float]:
+    u = _ranking_cfg(config)
+    return {
+        "w_liquidity": float(u.get("w_liquidity", 0.25)),
+        "w_spread": float(u.get("w_spread", 0.15)),
+        "w_volume_spike": float(u.get("w_volume_spike", 0.20)),
+        "w_atr": float(u.get("w_atr", 0.15)),
+        "w_freshness": float(u.get("w_freshness", 0.15)),
+        "w_cost_efficiency": float(u.get("w_cost_efficiency", 0.10)),
+    }
+
+
+def max_spread_bps(config: dict | None = None) -> float:
+    u = _ranking_cfg(config)
+    return float(u.get("max_spread_bps", DEFAULT_SPREAD_MAX_BPS))
+
+
+def max_bar_age_seconds(config: dict | None = None) -> float:
+    u = _ranking_cfg(config)
+    return float(u.get("max_bar_age_seconds", MAX_BAR_AGE_SECONDS))
 
 
 # ──────────────────────────────────────────────────────────────
@@ -168,7 +206,7 @@ def extract_symbol_metrics(
 # Ranking formula — cross-sectional percentiles
 # ──────────────────────────────────────────────────────────────
 
-def rank_universe(symbol_metrics: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def rank_universe(symbol_metrics: list[dict[str, Any]], config: dict | None = None) -> list[dict[str, Any]]:
     """
     Apply the 6-factor universe ranking formula to all eligible symbols.
     Returns list sorted by universe_rank_score descending.
@@ -182,6 +220,9 @@ def rank_universe(symbol_metrics: list[dict[str, Any]]) -> list[dict[str, Any]]:
       + 0.10 * cost_efficiency
     )
     """
+    weights = universe_rank_weights(config)
+    min_rank = min_rank_score(config)
+
     eligible = [m for m in symbol_metrics if m.get("eligible", False)]
     ineligible = [m for m in symbol_metrics if not m.get("eligible", False)]
 
@@ -207,12 +248,12 @@ def rank_universe(symbol_metrics: list[dict[str, Any]]) -> list[dict[str, Any]]:
         cost_pct = m["cost_efficiency"]  # already 0–1
 
         rank_score = (
-            0.25 * liq_pct
-            + 0.15 * spread_pct_inv
-            + 0.20 * vol_pct
-            + 0.15 * atr_pct
-            + 0.15 * fresh_pct
-            + 0.10 * cost_pct
+            weights["w_liquidity"] * liq_pct
+            + weights["w_spread"] * spread_pct_inv
+            + weights["w_volume_spike"] * vol_pct
+            + weights["w_atr"] * atr_pct
+            + weights["w_freshness"] * fresh_pct
+            + weights["w_cost_efficiency"] * cost_pct
         )
 
         ranked.append(
@@ -226,9 +267,10 @@ def rank_universe(symbol_metrics: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "atr_pct": round(atr_pct, 4),
                     "freshness_pct": round(fresh_pct, 4),
                     "cost_efficiency": round(cost_pct, 4),
+                    "weights_used": weights,
                 },
                 "ranked": True,
-                "dropped": rank_score < MIN_RANK_SCORE,
+                "dropped": rank_score < min_rank,
             }
         )
 
@@ -288,5 +330,5 @@ def build_pipeline_snapshot(
         "eligible": eligible_syms,
         "shortlist": shortlist,
         "all_ranked": ranked,
-        "min_rank_threshold": MIN_RANK_SCORE,
+        "min_rank_threshold": min_rank_score(None),
     }

@@ -75,8 +75,15 @@ export function UniversePanel() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const statusRes = await apiGet<UniverseStatusPayload>("/api/universe/status", { timeoutMs: 10000 });
+    const timeoutMs = 35000;
+    const [statusRes, shortlistRes, radarRes] = await Promise.all([
+      apiGet<UniverseStatusPayload>("/api/universe/status", { timeoutMs }),
+      apiGet<Record<string, unknown>>("/api/universe/execution-shortlist", { timeoutMs }),
+      apiGet<Record<string, unknown>>("/api/universe/radar", { timeoutMs }),
+    ]);
     const statusData = statusRes.ok ? statusRes.data : null;
+    const shortlistData = shortlistRes.ok ? shortlistRes.data : null;
+    const radarData = radarRes.ok ? radarRes.data : null;
     const statusSymbols = [
       ...(statusData?.groups?.crypto_universe ?? []),
       ...(statusData?.groups?.stock_universe ?? []),
@@ -85,38 +92,75 @@ export function UniversePanel() {
     const statusSourceCounts = statusData?.sources_summary?.source_counts ?? {};
     const activeCrypto = statusData?.groups?.active_push_pull_candidates ?? statusData?.groups?.crypto_universe ?? [];
     const activeFresh = activeCrypto.filter((s) => s.bar_freshness === "fresh").length;
-    if (statusData) {
-      const usdPairs = Number(statusSourceCounts.alpaca_crypto_usd_pairs ?? statusSymbols.length);
-      setSymbols(statusSymbols);
-      setBlockBreakdown({});
+    const radarPipe = radarData?.pipeline as Record<string, unknown> | undefined;
+    const radarFunnel = (radarData?.funnel ?? radarPipe?.funnel ?? {}) as Record<string, number>;
+    const slCounts = shortlistData?.counts as Record<string, number> | undefined;
+    const ranked = Number(shortlistData?.scored_symbols ?? radarFunnel.ranked ?? slCounts?.ranked ?? 0);
+    const shortlistN = Number(
+      shortlistData?.execution_shortlist_count ??
+        (Array.isArray(shortlistData?.shortlist) ? shortlistData.shortlist.length : 0) ??
+        radarFunnel.execution_shortlist ??
+        0
+    );
+    const usdPairs = Math.max(
+      Number(statusSourceCounts.alpaca_crypto_usd_pairs ?? 0),
+      Number(radarFunnel.available ?? 0),
+      statusSymbols.length
+    );
+
+    if (statusData || shortlistData || radarData) {
+      const radarSyms = ((radarPipe?.shortlist as SymbolRow[]) ??
+        (radarData?.symbols as SymbolRow[]) ??
+        []) as SymbolRow[];
+      const syms =
+        statusSymbols.length > 0
+          ? statusSymbols
+          : radarSyms.length > 0
+            ? radarSyms
+            : ((shortlistData?.shortlist as SymbolRow[]) ?? []);
+      setSymbols(syms);
+      setBlockBreakdown(
+        (shortlistData?.no_trade_reason_breakdown as Record<string, number>) ??
+          (radarData?.block_breakdown as Record<string, number>) ??
+          {}
+      );
       setCounts({
-        total: usdPairs,
-        cached: usdPairs,
-        fresh: activeFresh,
-        eligible: activeCrypto.length,
-        ranked: 0,
-        shortlist: 0,
-        displayed: statusSymbols.length,
+        total: usdPairs || syms.length,
+        cached: Number(radarFunnel.cached ?? usdPairs ?? syms.length),
+        fresh: Math.max(Number(radarFunnel.fresh ?? 0), activeFresh),
+        eligible: Math.max(Number(radarFunnel.eligible ?? 0), activeCrypto.length),
+        ranked,
+        shortlist: shortlistN,
+        displayed: syms.length,
       });
       setSources({
         source_counts: {
-          alpaca_crypto_assets_api: Number(statusSourceCounts.alpaca_crypto_assets_api ?? statusSymbols.length),
+          alpaca_crypto_assets_api: Number(
+            statusSourceCounts.alpaca_crypto_assets_api ?? usdPairs ?? syms.length
+          ),
           alpaca_crypto_usd_pairs: usdPairs,
-          displayed_pairs: Number(statusSourceCounts.display_universe_total ?? statusSymbols.length),
+          displayed_pairs: Number(statusSourceCounts.display_universe_total ?? syms.length),
         },
-        alpaca_crypto_api_called: Boolean(statusData.sources_summary?.alpaca_crypto_api_called),
-        last_refresh_at: statusData.sources_summary?.last_refresh_at,
-        source_note: `${usdPairs} USD crypto pairs available. Showing ${statusSymbols.length} fast-status rows; ${activeFresh} active crypto symbols have fresh cached candles.`,
+        alpaca_crypto_api_called: Boolean(
+          statusData?.sources_summary?.alpaca_crypto_api_called ?? radarData?.status === "ok"
+        ),
+        last_refresh_at:
+          (radarData?.generated_at_utc as string) ??
+          statusData?.sources_summary?.last_refresh_at,
+        source_note: `${usdPairs} USD pairs · ${ranked} ranked · ${shortlistN} on execution shortlist.`,
       });
       setMode({
         mode_label: "Hybrid Radar",
         active_mode: "hybrid_radar",
-        mode_explanation: "Fast status truth is shown first so a slow full snapshot cannot masquerade as zero universe.",
+        mode_explanation:
+          shortlistN > 0
+            ? "Live funnel from status + radar + execution shortlist."
+            : "Radar loaded — refresh bars or lower rank gate if shortlist is empty.",
       });
       setLoading(false);
       return;
     }
-    const ps = await apiGet<Record<string, unknown>>("/api/page-state/universe", { timeoutMs: 10000 });
+    const ps = await apiGet<Record<string, unknown>>("/api/page-state/universe", { timeoutMs });
     if (ps.ok && ps.data) {
       const d = ps.data;
       const rawSyms = ((d.symbols as SymbolRow[]) ?? []).filter((s) => s.symbol);

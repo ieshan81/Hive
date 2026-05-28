@@ -286,7 +286,7 @@ def build_funnel_breakdown(
             unavailable_symbols.append(sym)
 
     metrics = [r["metrics"] for r in per_symbol if r.get("metrics")]
-    ranked = urs.rank_universe(metrics)
+    ranked = urs.rank_universe(metrics, config=cfg)
     rank_by_sym = {r["symbol"]: r for r in ranked}
 
     eligible_rows = []

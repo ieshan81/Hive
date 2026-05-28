@@ -46,6 +46,18 @@ def freshness(
     )
 
 
+@router.get("/ohlc")
+def ohlc_chart(
+    symbol: str = "BTC/USD",
+    timeframe: str = "5Min",
+    limit: int = 120,
+    session: Session = Depends(get_session),
+):
+    from app.services.ohlc_chart_service import ohlc_series
+
+    return ohlc_series(session, symbol, timeframe=timeframe, limit=min(500, max(20, limit)))
+
+
 @router.post("/refresh-bars")
 def refresh_bars(
     body: dict = Body(default={}),
