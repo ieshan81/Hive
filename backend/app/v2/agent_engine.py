@@ -39,7 +39,7 @@ def refresh_watchlist_bars(
         operator=operator,
     )
     out_stock = {}
-    sess = SessionEngine(session).current()
+    sess = SessionEngine().detect()
     if stock_symbols and sess.stock_trading_allowed:
         out_stock = mds.refresh_bars(
             asset_type="stock",

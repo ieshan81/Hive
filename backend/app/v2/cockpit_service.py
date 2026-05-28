@@ -86,7 +86,7 @@ def build_cockpit(session: Session) -> dict[str, Any]:
                 "symbol": r.symbol,
                 "side": r.side,
                 "status": r.status,
-                "quantity": r.quantity,
+                "quantity": r.requested_qty,
                 "submitted_at": r.submitted_at.isoformat() + "Z" if r.submitted_at else None,
             }
             for r in logs

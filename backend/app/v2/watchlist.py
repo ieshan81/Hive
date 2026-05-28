@@ -86,7 +86,7 @@ def live_crypto_watchlist(*, force: bool = True) -> dict[str, Any]:
 def live_stock_watchlist(session: Session, *, limit: int = 80) -> dict[str, Any]:
     if not settings.alpaca_configured:
         return {"status": "not_configured", "symbols": list(MAJOR_STOCKS), "count": len(MAJOR_STOCKS)}
-    session_state = SessionEngine(session).current()
+    session_state = SessionEngine().detect()
     if not session_state.stock_trading_allowed:
         return {
             "status": "session_closed",
