@@ -115,13 +115,12 @@ def hybrid_radar_snapshot(
         shortlist = slice_limit([r for r in ranked if not r.get("dropped")], max_short)
         if funnel.get("degraded") or rate_limited:
             shortlist = []
-
+        to_trade_count = len(shortlist) if shortlist else int(funnel.get("eligible_count") or 0)
         eligible_count = int(funnel.get("eligible_count") or 0)
         paper_trade_allowed = bool(
             not funnel.get("degraded")
             and not rate_limited
             and eligible_count > 0
-            and bool(shortlist)
         )
         tier_counts: dict[str, int] = {}
         tier_samples: dict[str, list[str]] = {}
@@ -145,13 +144,15 @@ def hybrid_radar_snapshot(
             "paper_trade_allowed": paper_trade_allowed,
             "pipeline": pipe,
             "execution_shortlist": shortlist,
+            "eligible_trades": shortlist,
             "labels": {
                 "available": "Radar scanned available assets",
                 "cached": "Cached assets",
                 "fresh": "Fresh data count",
-                "eligible": "Eligible assets",
-                "ranked": "Top ranked candidates",
-                "shortlist": "Execution shortlist",
+                "eligible": "Passed hard gates",
+                "ranked": "Scored by push-pull",
+                "shortlist": "Queued for paper entry",
+                "execution_shortlist": "Queued for paper entry",
             },
             "counts": {
                 "available_usd_pairs": len(usd_pairs),
@@ -159,7 +160,8 @@ def hybrid_radar_snapshot(
                 "evaluated": funnel.get("evaluated_symbols", 0),
                 "eligible": funnel.get("eligible_count", 0),
                 "ranked": len([r for r in ranked if not r.get("dropped")]),
-                "execution_shortlist": len(shortlist),
+                "execution_shortlist": to_trade_count,
+                "to_trade": to_trade_count,
             },
             "funnel": funnel.get("funnel"),
             "block_breakdown": funnel.get("block_breakdown"),

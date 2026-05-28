@@ -128,36 +128,53 @@ def rankings(session: Session = Depends(get_session)):
 
 @router.get("/execution-shortlist")
 def execution_shortlist(session: Session = Depends(get_session)):
-    """Fast paper-exploration shortlist.
+    """Eligible paper entries — all symbols that pass gates (no shortlist cap)."""
+    return _eligible_trades_payload(session)
 
-    This endpoint intentionally avoids the older 36-symbol live funnel so the UI
-    cannot overload the DB/API pool just to explain why the shortlist is empty.
-    """
+
+@router.get("/eligible-trades")
+def eligible_trades(session: Session = Depends(get_session)):
+    """Canonical eligible-trades list for Universe UI and agent cycles."""
+    return _eligible_trades_payload(session)
+
+
+def _eligible_trades_payload(session: Session) -> dict:
+    from app.services.config_manager import ConfigManager
+    from app.services.engine_config import cfg_get
     from app.services.trader_console_service import trader_console_status
 
+    cfg = ConfigManager(session).get_current()
     payload = trader_console_status(session)
-    shortlist = payload.get("shortlist") or []
-    shortlist_mode = "paper_exploration"
+    eligible = payload.get("eligible_trades") or payload.get("shortlist") or []
+    trade_all = bool(cfg_get(cfg, "universe.trade_all_eligible", True))
+    scored = int(payload.get("scored_symbols") or 0)
     why_zero = None
-    if not shortlist:
+    if not eligible:
         why_zero = (
-            f"Push-pull scored {payload.get('scored_symbols', 0)} symbols; no candidate passed hard paper gates. "
-            f"Main blockers: {payload.get('no_trade_reason_breakdown') or {}}"
+            f"Scored {scored} symbols; none passed hard paper gates yet. "
+            f"Blockers: {payload.get('no_trade_reason_breakdown') or {}}"
         )
+    msg = payload.get("message") or (
+        f"{len(eligible)} eligible — agent trades all each cycle."
+        if eligible
+        else "No eligible symbols this scan."
+    )
     return {
         "status": payload.get("status") or "ok",
         "generated_at_utc": payload.get("generated_at_utc"),
-        "answer": payload.get("message"),
+        "answer": msg,
         "block_breakdown": payload.get("no_trade_reason_breakdown") or {},
-        "shortlist": shortlist,
+        "eligible_trades": eligible,
+        "shortlist": eligible,
         "strict_shortlist": [],
-        "paper_exploration_shortlist": shortlist,
-        "shortlist_mode": shortlist_mode,
-        "execution_shortlist_count": len(shortlist),
-        "paper_exploration_shortlist_count": len(shortlist),
-        "eligible_count": payload.get("shortlist_count", 0),
-        "scored_symbols": payload.get("scored_symbols", 0),
-        "selected_candidate": shortlist[0] if shortlist else None,
+        "paper_exploration_shortlist": eligible,
+        "shortlist_mode": "trade_all_eligible" if trade_all else "paper_exploration",
+        "trade_all_eligible": trade_all,
+        "execution_shortlist_count": len(eligible),
+        "eligible_count": len(eligible),
+        "paper_exploration_shortlist_count": len(eligible),
+        "scored_symbols": scored,
+        "selected_candidate": eligible[0] if eligible else None,
         "no_trade_reason_breakdown": payload.get("no_trade_reason_breakdown") or {},
         "why_zero_eligible": why_zero,
     }
