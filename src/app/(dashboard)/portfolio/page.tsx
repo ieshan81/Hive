@@ -43,18 +43,16 @@ export default function PortfolioPage() {
     const m: Record<string, PanelLoadMeta> = {};
     const ts = new Date().toISOString();
 
-    const psRes = await apiGet<Record<string, unknown>>("/api/page-state/portfolio");
-    const pRes = psRes.ok ? psRes : await apiGet("/api/positions");
-    const oRes = psRes.ok
-      ? ({ ok: true, data: { orders: psRes.data?.orders }, status: 200, error: null } as const)
-      : await apiGet("/api/orders");
-    const reconRes = psRes.ok
-      ? ({ ok: true, data: psRes.data?.reconciliation, status: 200, error: null } as const)
-      : await apiGet("/api/portfolio/reconciliation");
-    const dashRes = await apiGet("/api/dashboard");
+    const cockpitRes = await apiGet<Record<string, unknown>>("/api/cockpit", { timeoutMs: 90000 });
+    const pRes = await apiGet("/api/positions");
+    const oRes = await apiGet("/api/orders");
+    const reconRes = await apiGet("/api/portfolio/reconciliation");
+    const dashRes = cockpitRes.ok ? cockpitRes : await apiGet("/api/dashboard");
 
     if (pRes.ok) {
-      const posPayload = psRes.ok ? { positions: psRes.data?.positions } : pRes.data;
+      const posPayload = cockpitRes.ok
+        ? { positions: cockpitRes.data?.positions }
+        : pRes.data;
       setPositions(normalizePositions(posPayload));
       m.positions = { source: "live_api", lastUpdated: ts, endpoint: "/api/positions", httpStatus: pRes.status };
     } else {
@@ -70,8 +68,8 @@ export default function PortfolioPage() {
 
     if (reconRes.ok) setRecon(reconRes.data as Record<string, unknown>);
     else setRecon(null);
-    if (psRes.ok && psRes.data) {
-      setNextAction(String(psRes.data.next_action ?? psRes.data.message ?? ""));
+    if (cockpitRes.ok && cockpitRes.data) {
+      setNextAction(String(cockpitRes.data.ai_cockpit_message ?? ""));
     }
 
     if (dashRes.ok && dashRes.data && typeof dashRes.data === "object") {

@@ -28,14 +28,14 @@ export function DynamicWeightsPanel() {
   const [rebalancing, setRebalancing] = useState(false);
 
   const load = useCallback(async () => {
-    const r = await apiGet<WeightsPayload>("/api/strategy/dynamic-weights", { timeoutMs: 12000 });
+    const r = await apiGet<WeightsPayload>("/api/weights", { timeoutMs: 12000 });
     if (r.ok && r.data) setData(r.data);
     setLoading(false);
   }, []);
 
   const aiRebalance = async () => {
     setRebalancing(true);
-    const r = await apiPost<Record<string, unknown>>("/api/strategy/dynamic-weights/ai-rebalance", {
+    const r = await apiPost<Record<string, unknown>>("/api/weights/ai-rebalance", {
       context: { source: "push_pull_ui" },
     });
     if (r.ok && r.data) {

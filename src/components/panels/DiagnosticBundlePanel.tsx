@@ -12,7 +12,7 @@ export function DiagnosticBundlePanel() {
   const [bundleStatus, setBundleStatus] = useState<Record<string, unknown> | null>(null);
 
   useEffect(() => {
-    void apiGet<Record<string, unknown>>("/api/page-state/reports").then((r) => {
+    void apiGet<Record<string, unknown>>("/api/diagnostics/export/status").then((r) => {
       if (r.ok && r.data) setBundleStatus(r.data);
     });
   }, []);

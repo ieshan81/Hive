@@ -30,9 +30,55 @@ router = APIRouter(prefix="/api", tags=["api"])
 
 @router.get("/dashboard")
 def get_dashboard(session: Session = Depends(get_session)):
-    from app.services.safe_responses import safe_build_dashboard
+    """Thin wrapper — prefer GET /api/cockpit for live truth."""
+    from app.v2.cockpit_service import build_cockpit
 
-    return safe_build_dashboard(session)
+    c = build_cockpit(session)
+    ctrl = c.get("control") or {}
+    acct = c.get("account") or {}
+    return {
+        "status": "ok",
+        "lastSync": c.get("generated_at_utc", "Not synced"),
+        "lastSyncAt": c.get("generated_at_utc"),
+        "systemStatus": {
+            "alpacaConnected": bool(acct.get("connected")),
+            "geminiConfigured": True,
+            "databaseConnected": True,
+            "killSwitchActive": False,
+            "paperTradingOnly": True,
+            "liveTradingEnabled": False,
+        },
+        "statusChips": [
+            {"label": "U.S. Stocks", "value": "—", "variant": "neutral"},
+            {"label": "Crypto", "value": "OPEN", "variant": "success"},
+            {"label": "AI Mode", "value": "COCKPIT", "variant": "info"},
+            {"label": "Risk Mode", "value": "FORMULA CAGE", "variant": "info"},
+        ],
+        "accountSurvival": {
+            "status": "ok" if acct.get("equity") else "waiting",
+            "message": c.get("ai_cockpit_message"),
+            "capital": acct.get("equity"),
+            "plToday": acct.get("daily_pl"),
+            "plTodayPct": None,
+            "drawdown": None,
+            "riskStatus": "NORMAL",
+            "riskStatusMessage": "Live cockpit",
+            "riskLevel": 0,
+            "dailyLossUsed": 0,
+            "dailyLossLimit": 0,
+            "weeklyLossUsed": 0,
+            "weeklyLossLimit": 0,
+            "sparklines": {"capital": [], "pl": [], "drawdown": []},
+        },
+        "aiFundManager": {"status": "ok" if ctrl.get("paper_learning_on") else "not_configured", "message": None},
+        "memoryGraph": {"status": "empty", "message": "Use cockpit", "nodes": []},
+        "strategies": [],
+        "riskRules": [],
+        "marketAssets": [],
+        "monteCarlo": {"status": "unavailable", "message": "Use cockpit"},
+        "marketRadarMeta": {"status": "ok", "message": None, "refreshedAt": c.get("generated_at_utc"), "opportunitiesScanned": c.get("funnel", {}).get("available", 0)},
+        "backtest": {"status": "not_run", "message": "Use backtesting lab"},
+    }
 
 
 @router.get("/health")
@@ -86,11 +132,14 @@ def run_cycle(
     session: Session = Depends(get_session),
     _op: str = Depends(require_operator_token),
 ):
-    from app.services.cycle_engine import CycleEngine
+    """Legacy path — runs V2 agent cycle (bars → score → paper execution)."""
+    from app.v2.agent_engine import run_agent_cycle
 
-    result = CycleEngine(session).run()
-    session.commit()
-    session.expire_all()
+    result = run_agent_cycle(session, operator="api_cycle_run")
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
     return result
 
 

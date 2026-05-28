@@ -130,13 +130,39 @@ export function TraderConsolePanel() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const res = await apiGet<ConsolePayload>("/api/trader-console/status", { timeoutMs: 10000 });
+    const res = await apiGet<Record<string, unknown>>("/api/cockpit", { timeoutMs: 90000 });
     if (res.ok && res.data) {
-      setData(res.data);
+      const c = res.data;
+      const ctrl = (c.control as Record<string, unknown>) || {};
+      const acct = (c.account as Record<string, unknown>) || {};
+      const mapped: ConsolePayload = {
+        status: "ok",
+        generated_at_utc: c.generated_at_utc as string,
+        paper_broker: true,
+        live_trading_locked: true,
+        message: c.ai_cockpit_message as string,
+        account: {
+          alpaca_configured: Boolean(acct.connected),
+          alpaca_connected: Boolean(acct.connected),
+          equity: acct.equity as number,
+          daily_pl: acct.daily_pl as number,
+        },
+        autopilot: {
+          paper_learning: Boolean(ctrl.paper_learning_on),
+          can_place_paper_orders_now: Boolean(ctrl.can_place_paper_orders),
+          blockers: (ctrl.blockers as string[]) || [],
+        },
+        positions: (c.positions as PositionRow[]) || [],
+        shortlist: (c.shortlist as ShortlistRow[]) || [],
+        shortlist_count: ((c.funnel as Record<string, number>)?.shortlist as number) || 0,
+        no_trade_reason_breakdown: (c.block_breakdown as Record<string, number>) || {},
+      };
+      setData(mapped);
       setMessage(null);
-    } else {
-      setMessage(res.error || "Trader Console is temporarily unavailable.");
+      setLoading(false);
+      return;
     }
+    setMessage(res.error || "Trader Console is temporarily unavailable.");
     setLoading(false);
   }, []);
 
@@ -159,7 +185,7 @@ export function TraderConsolePanel() {
     if (!symbol.trim()) return;
     if (!window.confirm(`Send a caged paper buy request for ${symbol.trim().toUpperCase()}?`)) return;
     setBusy("buy");
-    const res = await apiPostOperator<Record<string, unknown>>("/api/trader-console/manual-buy", {
+    const res = await apiPostOperator<Record<string, unknown>>("/api/paper/manual-buy", {
       symbol: symbol.trim().toUpperCase(),
       actor: "operator",
     });

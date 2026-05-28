@@ -160,77 +160,43 @@ export function UniversePanel() {
       setLoading(false);
       return;
     }
-    const ps = await apiGet<Record<string, unknown>>("/api/page-state/universe", { timeoutMs });
-    if (ps.ok && ps.data) {
-      const d = ps.data;
-      const rawSyms = ((d.symbols as SymbolRow[]) ?? []).filter((s) => s.symbol);
-      const syms = (rawSyms.length > 0 ? rawSyms : statusSymbols).map((s) => {
-        const live = statusBySymbol.get(s.symbol);
-        if (!live) return s;
-        return {
-          ...s,
-          asset_type: s.asset_type ?? live.asset_type,
-          status: live.status ?? s.status,
-          tradable_now: live.tradable_now ?? s.tradable_now,
-          source: s.source ?? live.source,
-          blocked_reason: live.blocked_reason ?? s.blocked_reason,
-          quote_currency: s.quote_currency ?? live.quote_currency,
-          funding_status: s.funding_status ?? live.funding_status,
-          bar_freshness: live.bar_freshness ?? s.bar_freshness,
-          quote_freshness: live.quote_freshness ?? s.quote_freshness,
-          last_scan_at: live.last_scan_at ?? s.last_scan_at,
-        };
-      });
-      const f = (d.funnel as Record<string, number>) ?? {};
-      const blockers = (d.block_breakdown as Record<string, number>) ?? {};
-      const c = (d.counts as Record<string, number>) ?? {};
-      const sp = (d.source_proof as Record<string, unknown>) ?? {};
-      const availableUsdPairs = Math.max(
-        Number(f.available ?? 0),
-        Number(c.available_usd_pairs ?? 0),
-        Number(statusSourceCounts.alpaca_crypto_usd_pairs ?? 0)
-      );
-      const cachedUsdPairs = Math.max(
-        Number(f.cached ?? 0),
-        Number(c.cached_usd_pairs ?? 0),
-        Number(statusSourceCounts.alpaca_crypto_usd_pairs ?? 0)
-      );
-      const staleFullFanout = Number(f.fresh ?? c.fresh ?? c.fresh_count ?? 0) === 0 && activeFresh > 0;
-
+    const [funnelRes, watchRes] = await Promise.all([
+      apiGet<Record<string, unknown>>("/api/funnel", { timeoutMs }),
+      apiGet<Record<string, unknown>>("/api/watchlist", { timeoutMs }),
+    ]);
+    if (funnelRes.ok && funnelRes.data) {
+      const f = (funnelRes.data.funnel as Record<string, number>) ?? {};
+      const blockers = (funnelRes.data.block_breakdown as Record<string, number>) ?? {};
+      const shortlistRows = (funnelRes.data.shortlist as { symbol?: string }[]) ?? [];
+      const cryptoSyms = ((watchRes.data?.crypto as Record<string, unknown>)?.symbols as string[]) ?? [];
+      const syms: SymbolRow[] =
+        statusSymbols.length > 0
+          ? statusSymbols
+          : shortlistRows.map((s) => ({ symbol: s.symbol ?? "", asset_type: "Crypto", status: "Shortlist" }));
       setSymbols(syms);
       setBlockBreakdown(blockers);
       setCounts({
-        total: availableUsdPairs || syms.length,
-        cached: cachedUsdPairs || syms.length,
-        fresh: Math.max(Number(f.fresh ?? c.fresh ?? c.fresh_count ?? 0), activeFresh),
-        eligible: Math.max(Number(f.eligible ?? c.eligible ?? 0), activeFresh > 0 ? activeCrypto.length : 0),
-        ranked: f.ranked ?? c.ranked ?? 0,
-        shortlist: f.execution_shortlist ?? c.execution_shortlist ?? 0,
+        total: Number(f.available ?? cryptoSyms.length ?? syms.length),
+        cached: Number(f.cached ?? cryptoSyms.length),
+        fresh: Math.max(Number(f.fresh ?? 0), activeFresh),
+        eligible: Number(f.eligible ?? 0),
+        ranked: Number(f.ranked ?? 0),
+        shortlist: Number(f.shortlist ?? shortlistRows.length),
         displayed: syms.length,
       });
       setSources({
         source_counts: {
-          alpaca_crypto_assets_api: Number(
-            statusSourceCounts.alpaca_crypto_assets_api ?? sp.usd_pair_count ?? syms.length
-          ),
-          alpaca_crypto_usd_pairs: Number(statusSourceCounts.alpaca_crypto_usd_pairs ?? sp.usd_pair_count ?? syms.length),
-          displayed_pairs: Number(statusSourceCounts.display_universe_total ?? sp.curated_crypto_displayed ?? syms.length),
+          alpaca_crypto_usd_pairs: cryptoSyms.length,
+          displayed_pairs: syms.length,
         },
-        alpaca_crypto_api_called: Boolean(sp.api_called),
-        last_refresh_at: sp.last_successful_scan as string | undefined,
-        source_note:
-          staleFullFanout
-            ? `Full 36-pair shortlist cache says stale; fast status confirms ${activeFresh} active crypto symbols have fresh cached candles.`
-            : syms.length > 8
-            ? `Hybrid radar is showing ${syms.length} cached USD pairs, not a tiny curated list.`
-            : "This is a reduced cached display. Run a radar refresh to rebuild the broader universe.",
+        alpaca_crypto_api_called: watchRes.ok,
+        last_refresh_at: funnelRes.data.generated_at_utc as string | undefined,
+        source_note: String(funnelRes.data.why_zero_shortlist || "Live funnel + watchlist"),
       });
       setMode({
-        mode_label: String(d.mode_label ?? "Hybrid Radar"),
-        active_mode: String(d.active_mode ?? "hybrid_radar"),
-        mode_explanation: d.cached_data_used
-          ? "Using cached radar truth. The paper tick refreshes candles before symbols can become entry-eligible."
-          : undefined,
+        mode_label: "Live cockpit",
+        active_mode: "live_funnel",
+        mode_explanation: "No page-state cache — direct /api/funnel and /api/watchlist.",
       });
     }
     setLoading(false);

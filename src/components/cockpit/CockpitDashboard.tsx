@@ -51,7 +51,7 @@ export function CockpitDashboard() {
 
   const load = useCallback(async () => {
     setErr(null);
-    const r = await apiGet<Cockpit>("/api/v2/cockpit", { timeoutMs: 90000 });
+    const r = await apiGet<Cockpit>("/api/cockpit", { timeoutMs: 90000 });
     if (r.ok && r.data) setData(r.data);
     else setErr(r.error || "Cockpit unavailable");
     setLoading(false);
@@ -66,7 +66,7 @@ export function CockpitDashboard() {
   const runCycle = async () => {
     setCycleBusy(true);
     setErr(null);
-    const r = await apiPostOperator("/api/v2/cycle/run", { operator: "cockpit" }, { timeoutMs: 120000 });
+    const r = await apiPostOperator("/api/agent/cycle", { operator: "cockpit" }, { timeoutMs: 120000 });
     if (!r.ok) setErr(r.error || "Cycle failed");
     await load();
     setCycleBusy(false);
@@ -83,7 +83,7 @@ export function CockpitDashboard() {
     setRebuildLog("Nuking database and clearing caches…");
     setErr(null);
     const r = await apiPostOperator(
-      "/api/v2/rebuild",
+      "/api/rebuild",
       { operator: "cockpit" },
       { timeoutMs: REBUILD_TIMEOUT_MS }
     );

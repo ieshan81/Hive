@@ -24,13 +24,23 @@ export function ControlCenterPanel() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    void apiGet<ControlCenterStatus & { strategy_parameters_labeled?: Record<string, number> }>(
-      "/api/page-state/control-center"
-    ).then((res) => {
+    void apiGet<Record<string, unknown>>("/api/cockpit", { timeoutMs: 90000 }).then((res) => {
       if (res.ok && res.data) {
+        const c = res.data;
+        const ctrl = (c.control as Record<string, unknown>) || {};
+        const w = (c.weights as Record<string, unknown>) || {};
         setData({
-          ...res.data,
-          strategy_parameters: res.data.strategy_parameters_labeled ?? res.data.strategy_parameters,
+          system_state: {
+            paper_learning: Boolean(ctrl.paper_learning_on),
+            bot_can_place: Boolean(ctrl.bot_can_place),
+            mode: String(ctrl.mode || "paper"),
+            live_locked: true,
+          },
+          strategy_parameters: (w.universe_ranking as Record<string, number>) || {},
+          operator_actions: [
+            { label: "Hard rebuild", endpoint: "/api/rebuild" },
+            { label: "Agent cycle", endpoint: "/api/agent/cycle" },
+          ],
         });
       }
     });

@@ -99,12 +99,43 @@ export function MissionControlPanel() {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const res = await apiGet<Cockpit & { mission_control?: Cockpit; cards?: Record<string, { value?: unknown; reason?: string }> }>(
-      "/api/page-state/mission-control"
-    );
-    const payload = res.data?.mission_control ? { ...res.data.mission_control, cards: res.data.cards } : res.data;
-    if (res.ok && payload) {
-      setData(payload as Cockpit);
+    const res = await apiGet<Record<string, unknown>>("/api/cockpit", { timeoutMs: 90000 });
+    if (res.ok && res.data) {
+      const c = res.data;
+      const ctrl = (c.control as Record<string, unknown>) || {};
+      const acct = (c.account as Record<string, unknown>) || {};
+      const funnel = (c.funnel as Record<string, number>) || {};
+      const shortlist = (c.shortlist as { symbol?: string }[]) || [];
+      setData({
+        status: "ok",
+        data_freshness: "live",
+        live_truth: c.live_truth,
+        mission_summary: {
+          headline: String(c.ai_cockpit_message || "Live cockpit"),
+          engine_doing: "V2 agent · bars → funnel → score → paper",
+        },
+        account_survival: {
+          current_paper_equity: acct.equity,
+          today_pl: acct.daily_pl,
+          broker_sync_status: acct.connected ? "synced" : "offline",
+        },
+        can_place_paper_orders: ctrl.can_place_paper_orders,
+        primary_blocker_plain: Array.isArray(ctrl.blockers) ? String(ctrl.blockers[0] || "") : "",
+        cockpit_bar: {
+          shortlist: funnel.shortlist ?? 0,
+          ranked: funnel.ranked ?? 0,
+          passed: c.passed_count ?? 0,
+          paper: ctrl.paper_learning_on ? "ON" : "OFF",
+        },
+        market_radar: {
+          top_active_candidates: shortlist.map((s) => ({
+            symbol: s.symbol,
+            status: "shortlist",
+          })),
+        },
+        latest_insight: { narrative: c.ai_cockpit_message },
+        strategy_status: { active: Boolean(ctrl.paper_learning_on), signal_formula_summary: "Live push-pull scoring" },
+      } as Cockpit);
       setError(null);
     } else {
       setError(res.error || `HTTP ${res.status}`);

@@ -9,25 +9,24 @@ export function WhyNoTradeCard() {
   const [payload, setPayload] = useState<Record<string, unknown> | null>(null);
 
   const load = useCallback(async () => {
-    const [mc, verdict, shortlist] = await Promise.all([
-      apiGet<Record<string, unknown>>("/api/mission-control/status"),
-      apiGet<Record<string, unknown>>("/api/strategy/push-pull/verdict"),
+    const [cockpit, shortlist] = await Promise.all([
+      apiGet<Record<string, unknown>>("/api/cockpit", { timeoutMs: 90000 }),
       apiGet<Record<string, unknown>>("/api/universe/execution-shortlist"),
     ]);
-    const tick = ((mc.data?.push_pull_engine as Record<string, unknown>)?.last_tick || {}) as Record<
-      string,
-      unknown
-    >;
+    const c = cockpit.data || {};
+    const ctrl = (c.control as Record<string, unknown>) || {};
+    const scores = (c.scores as Record<string, unknown>[]) || [];
+    const top = scores[0];
     setPayload({
-      execution_shortlist_count: shortlist.data?.execution_shortlist_count ?? 0,
-      eligible_count: shortlist.data?.eligible_count ?? 0,
-      funnel_answer: shortlist.data?.answer || verdict.data?.funnel_answer,
-      strategy_verdict: verdict.data?.current_status,
-      should_paper_trade_now: verdict.data?.should_paper_trade_now,
-      open_positions: mc.data?.account_survival,
-      last_tick_reason: tick.result || tick.no_trade_reason,
-      top_candidate: tick.top_candidate,
-      next_experiment: verdict.data?.next_experiment,
+      execution_shortlist_count: shortlist.data?.execution_shortlist_count ?? (c.funnel as Record<string, number>)?.shortlist ?? 0,
+      eligible_count: shortlist.data?.eligible_count ?? c.passed_count ?? 0,
+      funnel_answer: c.why_zero_shortlist || c.ai_cockpit_message,
+      strategy_verdict: ctrl.bot_can_place ? "ready" : "blocked",
+      should_paper_trade_now: Boolean(ctrl.can_place_paper_orders && ctrl.paper_learning_on),
+      open_positions: c.positions,
+      last_tick_reason: Array.isArray(ctrl.blockers) ? ctrl.blockers.join(", ") : c.ai_cockpit_message,
+      top_candidate: top ? { symbol: top.symbol, trade_quality_score: top.quality_score } : undefined,
+      next_experiment: null,
     });
   }, []);
 

@@ -54,28 +54,28 @@ export function PushPullTraderPanel() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [ps, liveStatus, sig] = await Promise.all([
-      apiGet<Record<string, unknown>>("/api/page-state/push-pull"),
+    const [cockpit, liveStatus, sig] = await Promise.all([
+      apiGet<Record<string, unknown>>("/api/cockpit", { timeoutMs: 90000 }),
       apiGet<Record<string, unknown>>("/api/push-pull/status"),
       apiGet<Record<string, unknown>>(`/api/push-pull/signals?symbol=${encodeURIComponent(signalSymbol)}`),
     ]);
 
-    if (ps.ok && ps.data) {
-      const d = ps.data;
-      const tick = (d.latest_tick as Record<string, unknown>) ?? null;
-      const reasons = (d.no_trade_reasons as unknown[]) ?? [];
+    if (cockpit.ok && cockpit.data) {
+      const d = cockpit.data;
+      const ctrl = (d.control as Record<string, unknown>) || {};
+      const reasons = (ctrl.blockers as unknown[]) ?? [];
       const primaryReason =
-        String(d.why_blocked ?? "") ||
-        String(tick?.no_trade_reason ?? "") ||
-        reasons.map(String).filter(Boolean).join(", ");
-      setLatestTick(tick);
-      setOrderProof((d.paper_order_proof as Record<string, unknown>) ?? null);
-      setLessons((d.lessons as Record<string, unknown>[]) ?? []);
+        String(d.why_zero_shortlist ?? "") ||
+        reasons.map(String).filter(Boolean).join(", ") ||
+        String(d.ai_cockpit_message ?? "");
+      setLatestTick(null);
+      setOrderProof({ recent_trades: d.recent_trades });
+      setLessons([]);
       setDiagnosis({
         why_no_order: primaryReason,
         no_trade_reasons: reasons,
-        next_action: d.next_action,
-        experiments: d.experiments,
+        next_action: ctrl.can_place_paper_orders ? "Run agent cycle" : "Fix blockers or rebuild",
+        experiments: [],
       });
     }
     if (liveStatus.ok && liveStatus.data) {

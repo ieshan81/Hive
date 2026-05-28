@@ -40,20 +40,6 @@ export function HiveMemoryGraphPanel({ compact = false }: Props) {
     const params = new URLSearchParams();
     if (showRaw) params.set("show_raw", "true");
     if (expandCluster) params.set("expand_cluster", expandCluster);
-    const ps = await apiGet<{ graph?: HiveBrainGraphResponse; headline?: string }>(
-      "/api/page-state/hive-mind"
-    );
-    if (ps.ok && ps.data?.graph?.nodes?.length) {
-      setGraph(ps.data.graph);
-      setMeta({
-        source: "live_api",
-        lastUpdated: new Date().toISOString(),
-        endpoint: "/api/page-state/hive-mind",
-        httpStatus: ps.status,
-      });
-      setLoading(false);
-      return;
-    }
     params.set("mode", "research");
     const path = `/api/hive-brain/graph?${params}`;
     const result = await apiGet<HiveBrainGraphResponse>(path);

@@ -14,8 +14,8 @@ from app.routers import (
     autonomous_paper_learning,
     capital_allocator,
     danger_zone,
-    mission_control,
     universe,
+    cockpit,
     activity,
     performance,
     market_data,
@@ -45,12 +45,8 @@ from app.routers import (
     news,
     research_experiments,
     market_sessions,
-    page_state,
     diagnostics_export,
-    trader_console,
-    dynamic_strategy,
 )
-from app.v2 import router as v2_router
 from app.services.database_bootstrap_service import repair_database_bootstrap
 from app.services.startup import bootstrap_database
 
@@ -82,7 +78,7 @@ app.include_router(market_meme.router)
 app.include_router(settings_brain.router)
 app.include_router(autonomous_paper_learning.router)
 app.include_router(capital_allocator.router)
-app.include_router(mission_control.router)
+app.include_router(cockpit.router)
 app.include_router(universe.router)
 app.include_router(activity.router)
 app.include_router(performance.router)
@@ -109,11 +105,7 @@ app.include_router(social_reddit.router)
 app.include_router(news.router)
 app.include_router(research_experiments.router)
 app.include_router(market_sessions.router)
-app.include_router(page_state.router)
 app.include_router(diagnostics_export.router)
-app.include_router(trader_console.router)
-app.include_router(dynamic_strategy.router)
-app.include_router(v2_router.router)
 
 
 @app.on_event("startup")
