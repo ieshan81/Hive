@@ -2250,25 +2250,40 @@ def _collect_new_spec_files(session: Session) -> dict[str, Any]:
     try:
         from app.services.universe_sources_service import universe_scan_summary
         from app.services.universe_strategy_discovery_service import build_funnel_breakdown
+        from app.services.trader_console_service import trader_console_status
 
         funnel = build_funnel_breakdown(session, max_evaluate=36, fetch_quotes=False)
         pipe = (funnel or {}).get("pipeline") or {}
+        console = trader_console_status(session, force=True)
+        paper_shortlist = console.get("shortlist") or []
+        strict_shortlist = pipe.get("shortlist", [])
+        shortlist = paper_shortlist or strict_shortlist
+        shortlist_mode = "paper_exploration" if paper_shortlist else "strict_funnel"
         out["universe_pipeline.json"] = {
             **base,
             "scan_summary": universe_scan_summary(session),
             "funnel": pipe.get("funnel"),
             "block_breakdown": funnel.get("block_breakdown"),
             "ranked_candidates": (funnel.get("ranked_candidates") or [])[:25],
+            "paper_exploration_count": len(paper_shortlist),
             "live_rankings_endpoint": "/api/universe/rankings",
         }
         out["universe_execution_shortlist.json"] = {
             **base,
             "live_endpoint": "/api/universe/execution-shortlist",
-            "shortlist": pipe.get("shortlist", []),
-            "execution_shortlist_count": (pipe.get("funnel") or {}).get("execution_shortlist", 0),
-            "eligible_count": funnel.get("eligible_count", 0),
-            "block_breakdown": funnel.get("block_breakdown"),
-            "note": "Top symbols that survived the full Available→Cached→Fresh→Eligible→Ranked funnel.",
+            "shortlist": shortlist,
+            "strict_shortlist": strict_shortlist,
+            "paper_exploration_shortlist": paper_shortlist,
+            "shortlist_mode": shortlist_mode,
+            "execution_shortlist_count": len(shortlist),
+            "paper_exploration_shortlist_count": len(paper_shortlist),
+            "eligible_count": max(int(funnel.get("eligible_count", 0) or 0), int(console.get("shortlist_count", 0) or 0)),
+            "scored_symbols": console.get("scored_symbols", 0),
+            "block_breakdown": console.get("no_trade_reason_breakdown") or funnel.get("block_breakdown"),
+            "strict_funnel_block_breakdown": funnel.get("block_breakdown"),
+            "why_zero_eligible": None if shortlist else console.get("message"),
+            "contract_note": "Paper exploration shortlist follows the live /api/universe/execution-shortlist contract; strict funnel data is retained for diagnostics.",
+            "note": "Top symbols from paper exploration when present, with strict funnel context retained for diagnostics.",
         }
     except Exception as exc:
         out["universe_pipeline.json"] = {**base, "error": str(exc)[:300]}

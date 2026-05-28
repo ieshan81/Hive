@@ -25,6 +25,24 @@ from app.trading_cage.micro_cap_allocator import MicroCapAllocator
 from app.trading_cage.paper_guard import PaperGuardViolation, assert_paper_only
 
 
+def _paper_exploration_cost_override(config: dict, cand: ApprovedCandidate) -> bool:
+    meta = cand.meta or {}
+    nested_score = meta.get("push_pull_score") or {}
+    exp = config.get("exploration") or {}
+    promotion = (config.get("promotion") or {}).get("current_stage", "PAPER")
+    execution = config.get("execution") or {}
+    live_orders = bool(execution.get("live_orders_enabled", False)) or bool(config.get("live_trading_enabled", False))
+    levels = meta.get("dynamic_exit_levels") or nested_score.get("dynamic_exit_levels") or {}
+    has_exit_truth = all(levels.get(k) is not None for k in ("stop_loss", "take_profit", "trailing_stop", "invalidation_price"))
+    marked_probe = bool(
+        meta.get("paper_exploration_probe")
+        or nested_score.get("paper_exploration_probe")
+        or meta.get("paper_exploration")
+        or nested_score.get("paper_exploration")
+    )
+    return promotion == "PAPER" and bool(exp.get("enabled", True)) and not live_orders and marked_probe and has_exit_truth
+
+
 @dataclass
 class ExecutionCageResult:
     passed: bool
@@ -116,14 +134,21 @@ class ExecutionCage:
             tier=cand.tier or "TIER_ALT",
         )
         if not cost.passed and cand.signal_type == "entry":
-            return ExecutionCageResult(
-                False,
-                "cost_model",
-                cost.block_reason_code,
-                cost.human_reason,
-                cost_model=cost.evidence,
-                evidence=evidence,
-            )
+            if _paper_exploration_cost_override(self.config, cand):
+                evidence["paper_exploration_cost_override"] = {
+                    "original_block_reason_code": cost.block_reason_code,
+                    "human_reason": cost.human_reason,
+                    "mode": "paper_probe_dynamic_exit_truth",
+                }
+            else:
+                return ExecutionCageResult(
+                    False,
+                    "cost_model",
+                    cost.block_reason_code,
+                    cost.human_reason,
+                    cost_model=cost.evidence,
+                    evidence=evidence,
+                )
 
         if cand.signal_type == "entry" and account:
             alloc = MicroCapAllocator(self.session, self.config).compute_entry_notional(

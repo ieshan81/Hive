@@ -39,6 +39,10 @@ def test_gemini_proposal_forbidden():
 def test_micro_cap_allocator_min():
     from app.trading_cage.micro_cap_allocator import MicroCapAllocator
 
+    class FakePosition:
+        def __init__(self, qty):
+            self.qty = qty
+
     class FakeResult:
         def first(self):
             return None
@@ -58,6 +62,34 @@ def test_micro_cap_allocator_min():
     )
     assert d.allowed
     assert d.notional_usd >= 20.0
+
+    unlimited_cfg = {
+        **cfg,
+        "portfolio": {"reserve_cash_pct": 5.0, "max_concurrent_positions": 0},
+        "risk": {"max_exposure_per_symbol_pct": 100.0},
+    }
+    unlimited = MicroCapAllocator(FakeSession(), unlimited_cfg).compute_entry_notional(
+        equity=200,
+        buying_power=200,
+        symbol="UNI/USD",
+        open_positions=[FakePosition(1), FakePosition(2)],
+    )
+    assert unlimited.allowed, unlimited
+    assert unlimited.evidence["max_open_positions_policy"] == "unlimited"
+
+    capped_cfg = {
+        **cfg,
+        "portfolio": {"reserve_cash_pct": 5.0, "max_concurrent_positions": 1},
+        "risk": {"max_exposure_per_symbol_pct": 100.0},
+    }
+    capped = MicroCapAllocator(FakeSession(), capped_cfg).compute_entry_notional(
+        equity=200,
+        buying_power=200,
+        symbol="UNI/USD",
+        open_positions=[FakePosition(1)],
+    )
+    assert not capped.allowed
+    assert capped.reason_code == "ALLOCATOR_MAX_POSITIONS"
 
 
 if __name__ == "__main__":

@@ -52,6 +52,9 @@ def score(config: dict):
 
 
 def main() -> None:
+    from app.services.execution_preflight import _paper_exploration_cost_override
+    from app.services.push_pull_scoring_service import _paper_probe_eligible
+
     exploratory = score(cfg(True))
     strict = score(cfg(False))
 
@@ -67,6 +70,34 @@ def main() -> None:
         "VWAP_CONFIRMATION",
         "EMA_CONFIRMATION",
     }
+
+    levels = {
+        "stop_loss": 99.0,
+        "take_profit": 103.0,
+        "trailing_stop": 99.5,
+        "invalidation_price": 99.25,
+    }
+    assert _paper_probe_eligible(
+        {
+            "entry_allowed": False,
+            "quote_freshness": "fresh",
+            "bar_freshness": "fresh",
+            "gate_results": {"quote_fresh": True, "bar_fresh": True, "spread_ok": True},
+            "dynamic_exit_levels": levels,
+        }
+    )
+    assert _paper_exploration_cost_override(
+        cfg(True),
+        {"paper_exploration_probe": True, "dynamic_exit_levels": levels},
+        formula_paper_mode=True,
+    )
+    unsafe_cfg = cfg(True)
+    unsafe_cfg["execution"] = {"live_orders_enabled": True}
+    assert not _paper_exploration_cost_override(
+        unsafe_cfg,
+        {"paper_exploration_probe": True, "dynamic_exit_levels": levels},
+        formula_paper_mode=True,
+    )
     print("verify_paper_exploration_allows_soft_gate_candidate: PASS")
 
 

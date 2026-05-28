@@ -50,6 +50,29 @@ def _thresholds(config: dict) -> dict[str, float]:
     }
 
 
+def _paper_exploration_on(config: dict) -> bool:
+    exp = config.get("exploration") or {}
+    promotion = (config.get("promotion") or {}).get("current_stage", "PAPER")
+    execution = config.get("execution") or {}
+    live_orders = bool(execution.get("live_orders_enabled", False)) or bool(config.get("live_trading_enabled", False))
+    return promotion == "PAPER" and bool(exp.get("enabled", True)) and not live_orders
+
+
+def _paper_probe_eligible(row: dict[str, Any]) -> bool:
+    levels = row.get("dynamic_exit_levels") or {}
+    gates = row.get("gate_results") or {}
+    required_levels = ("stop_loss", "take_profit", "trailing_stop", "invalidation_price")
+    has_exit_truth = all(levels.get(k) is not None for k in required_levels)
+    data_ready = (
+        row.get("quote_freshness") == "fresh"
+        and row.get("bar_freshness") == "fresh"
+        and bool(gates.get("quote_fresh", True))
+        and bool(gates.get("bar_fresh", True))
+        and bool(gates.get("spread_ok", True))
+    )
+    return bool(has_exit_truth and data_ready and row.get("entry_allowed") is not True)
+
+
 def _metrics_from_bars(bars: list[dict], quote: dict) -> dict[str, Any]:
     if len(bars) < 3:
         return {}
@@ -274,6 +297,31 @@ def score_active_universe(
 
     ranked = sorted(scored_rows, key=lambda x: float(x.get("trade_quality_score") or 0), reverse=True)
     selected = next((r for r in ranked if r.get("entry_allowed")), None)
+    if selected is None and _paper_exploration_on(cfg):
+        for idx, row in enumerate(ranked):
+            if not _paper_probe_eligible(row):
+                continue
+            original_reason = row.get("no_trade_reason") or "strict_gate_failed"
+            probe = dict(row)
+            probe["entry_allowed"] = True
+            probe["paper_exploration_probe"] = True
+            probe["paper_probe_original_reason"] = original_reason
+            probe["no_trade_reason"] = None
+            probe["soft_concerns"] = list(dict.fromkeys((probe.get("soft_concerns") or []) + [original_reason]))
+            evidence = dict(probe.get("score_components") or {})
+            evidence["paper_exploration_probe"] = True
+            evidence["paper_probe_original_reason"] = original_reason
+            evidence["hard_to_soft_concerns"] = list(
+                dict.fromkeys((evidence.get("soft_concerns") or []) + [original_reason])
+            )
+            probe["score_components"] = evidence
+            probe["thesis"] = (
+                f"Paper probe selected despite {original_reason}; dynamic stop, target, trailing, "
+                "and invalidation bars define the experiment."
+            )
+            ranked[idx] = probe
+            selected = probe
+            break
     rejected = [
         {
             "symbol": r.get("symbol"),

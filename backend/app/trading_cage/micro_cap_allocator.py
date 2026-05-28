@@ -20,6 +20,13 @@ from app.database import ExecutionLog, OrderRecord, PositionSnapshot
 from app.services.engine_config import cfg_get
 
 
+def _zero_or_negative_means_unlimited(value: Any) -> bool:
+    try:
+        return int(value) <= 0
+    except (TypeError, ValueError):
+        return False
+
+
 @dataclass
 class AllocationDecision:
     allowed: bool
@@ -44,7 +51,9 @@ class MicroCapAllocator:
         pending_notional: float = 0.0,
     ) -> AllocationDecision:
         reserve_pct = float(cfg_get(self.config, "portfolio.reserve_cash_pct", 60.0)) / 100.0
-        max_positions = int(cfg_get(self.config, "portfolio.max_concurrent_positions", 2))
+        raw_max_positions = cfg_get(self.config, "portfolio.max_concurrent_positions", 2)
+        max_positions_unlimited = _zero_or_negative_means_unlimited(raw_max_positions)
+        max_positions = 0 if max_positions_unlimited else int(raw_max_positions)
         max_sym_pct = float(cfg_get(self.config, "risk.max_exposure_per_symbol_pct", 20.0)) / 100.0
         deploy_pct = 1.0 - reserve_pct
         alpaca_min = float(cfg_get(self.config, "execution.alpaca_crypto_min_notional_usd", 10.0))
@@ -64,12 +73,13 @@ class MicroCapAllocator:
             "symbol_cap_usd": round(sym_cap, 2),
             "buying_power_cap_usd": round(bp_cap, 2),
             "open_positions": open_count,
-            "max_open_positions": max_positions,
+            "max_open_positions": None if max_positions_unlimited else max_positions,
+            "max_open_positions_policy": "unlimited" if max_positions_unlimited else "capped",
             "alpaca_min_notional": min_trade,
             "target_range_usd": [target_min, target_max],
         }
 
-        if open_count >= max_positions:
+        if not max_positions_unlimited and open_count >= max_positions:
             return AllocationDecision(
                 False, 0, "ALLOCATOR_MAX_POSITIONS", f"Already at max {max_positions} open positions", evidence
             )

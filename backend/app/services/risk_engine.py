@@ -14,6 +14,13 @@ from app.services.risk_codes import CHECK_TO_CODE, CHECK_TO_RULE, primary_block_
 from app.services.session_engine import SessionState
 
 
+def _zero_or_negative_means_unlimited(value: Any) -> bool:
+    try:
+        return int(value) <= 0
+    except (TypeError, ValueError):
+        return False
+
+
 @dataclass
 class TradeProposal:
     symbol: str
@@ -218,7 +225,9 @@ class RiskEngine:
             self.session.exec(select(PositionSnapshot).where(PositionSnapshot.qty > 0)).all()
         )
         max_open = self.config.get("max_open_positions", 2)
-        if open_positions >= max_open:
+        if _zero_or_negative_means_unlimited(max_open):
+            pass_check("max_open_positions")
+        elif open_positions >= int(max_open):
             fail("max_open_positions", f"Max open positions ({max_open}) reached")
         else:
             pass_check("max_open_positions")

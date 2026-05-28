@@ -53,6 +53,13 @@ def _stage_portfolio_value(config: dict, key: str, default: float) -> float:
     return float(cfg_get(config, f"portfolio.{key}", default))
 
 
+def _zero_or_negative_means_unlimited(value: Any) -> bool:
+    try:
+        return int(value) <= 0
+    except (TypeError, ValueError):
+        return False
+
+
 def compute_ranking_score(
     config: dict,
     cand: ApprovedCandidate,
@@ -135,7 +142,9 @@ class PortfolioGate:
             return result
 
         top_n = int(_stage_portfolio_value(self.config, "execute_top_n_signals", 1))
-        max_concurrent = int(_stage_portfolio_value(self.config, "max_concurrent_positions", 2))
+        raw_max_concurrent = _stage_portfolio_value(self.config, "max_concurrent_positions", 2)
+        max_concurrent_unlimited = _zero_or_negative_means_unlimited(raw_max_concurrent)
+        max_concurrent = 0 if max_concurrent_unlimited else int(raw_max_concurrent)
         max_exposure_pct = _stage_portfolio_value(self.config, "max_total_exposure_pct", 40.0) / 100.0
         reserve_pct = _stage_portfolio_value(self.config, "reserve_cash_pct", 60.0) / 100.0
         score_min = float(cfg_get(self.config, "portfolio.signal_score_min", 0.35))
@@ -197,7 +206,11 @@ class PortfolioGate:
                 reason = "DUPLICATE_SYMBOL_POSITION"
                 human = "Already holding symbol"
                 result.blocked_count += 1
-            elif len(open_positions) >= max_concurrent and cand.signal_type == "entry":
+            elif (
+                not max_concurrent_unlimited
+                and len(open_positions) >= max_concurrent
+                and cand.signal_type == "entry"
+            ):
                 status = "portfolio_deferred"
                 reason = "MAX_CONCURRENT_POSITIONS"
                 human = f"Max concurrent positions ({max_concurrent}) reached"
@@ -246,7 +259,8 @@ class PortfolioGate:
                 "ranking_components": comp,
                 "promotion_stage": promotion_stage,
                 "top_n": top_n,
-                "max_concurrent": max_concurrent,
+                "max_concurrent": None if max_concurrent_unlimited else max_concurrent,
+                "max_concurrent_policy": "unlimited" if max_concurrent_unlimited else "capped",
                 "exposure_ratio": exposure_ratio,
             }
             dec = PortfolioDecision(

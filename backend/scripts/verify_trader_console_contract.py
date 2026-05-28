@@ -11,16 +11,17 @@ def read(rel: str) -> str:
 
 
 def main() -> None:
-    router = read("app/routers/trader_console.py")
+    router = read("app/routers/cockpit.py")
     service = read("app/services/trader_console_service.py")
     main_py = read("app/main.py")
     allowlist = (ROOT.parent / "src/lib/operatorProxyAllowlist.ts").read_text(encoding="utf-8")
 
-    assert 'APIRouter(prefix="/api/trader-console"' in router
+    assert 'APIRouter(prefix="/api"' in router
     assert "_op: str = Depends(require_operator_token)" in router
+    assert '@router.post("/paper/manual-buy")' in router
     assert "manual_paper_buy(session, body, actor=actor)" in router
-    assert "app.include_router(trader_console.router)" in main_py
-    assert "/api/trader-console/" in allowlist
+    assert "app.include_router(cockpit.router)" in main_py
+    assert '"/api/paper/"' in allowlist
 
     assert "TrainingExecutionService(session).execute_approved_decision" in service
     assert "AggressivePaperLearningService(session)" in service

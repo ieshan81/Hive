@@ -120,6 +120,22 @@ def _has_exit_plan(sig: StrategySignal, meta: dict) -> bool:
     return bool(meta.get("max_hold_hours") or meta.get("expected_hold_time"))
 
 
+def _paper_exploration_cost_override(config: dict, meta: dict, *, formula_paper_mode: bool) -> bool:
+    nested_score = meta.get("push_pull_score") or {}
+    exp = config.get("exploration") or {}
+    execution = config.get("execution") or {}
+    live_orders = bool(execution.get("live_orders_enabled", False)) or bool(config.get("live_trading_enabled", False))
+    levels = meta.get("dynamic_exit_levels") or nested_score.get("dynamic_exit_levels") or {}
+    has_exit_truth = all(levels.get(k) is not None for k in ("stop_loss", "take_profit", "trailing_stop", "invalidation_price"))
+    marked_probe = bool(
+        meta.get("paper_exploration_probe")
+        or nested_score.get("paper_exploration_probe")
+        or meta.get("paper_exploration")
+        or nested_score.get("paper_exploration")
+    )
+    return formula_paper_mode and bool(exp.get("enabled", True)) and not live_orders and marked_probe and has_exit_truth
+
+
 def run_preflight(
     session: Session,
     config: dict,
@@ -250,7 +266,14 @@ def run_preflight(
         tier=cand.tier,
     )
     if not cost.passed and cand.signal_type == "entry":
-        return PreflightResult(False, "EDGE_BELOW_COST", cost.human_reason, {**evidence, "cost": cost.evidence})
+        if _paper_exploration_cost_override(config, meta, formula_paper_mode=formula_paper_mode):
+            evidence["paper_exploration_cost_override"] = {
+                "original_block_reason_code": cost.block_reason_code,
+                "human_reason": cost.human_reason,
+                "mode": "paper_probe_dynamic_exit_truth",
+            }
+        else:
+            return PreflightResult(False, "EDGE_BELOW_COST", cost.human_reason, {**evidence, "cost": cost.evidence})
 
     if cand.signal_type == "entry":
         if cand.stop_loss is None and (sig is None or sig.stop_loss is None):
@@ -350,7 +373,7 @@ def run_preflight(
 
     return PreflightResult(
         passed=True,
-        evidence={**evidence, "preflight": "passed", "cost": cost.evidence if cost.passed else None},
+        evidence={**evidence, "preflight": "passed", "cost": cost.evidence},
         client_order_id=client_id,
         limit_price=limit_px,
         quote=quote,
