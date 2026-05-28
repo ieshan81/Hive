@@ -82,15 +82,17 @@ def run_agent_cycle(session: Session, operator: str = "v2_agent") -> dict[str, A
     if (wl.get("stocks") or {}).get("status") == "ok":
         stock_syms = (wl.get("stocks") or {}).get("symbols") or BOOTSTRAP_STOCKS[:6]
 
+    # Refresh every USD pair we funnel-evaluate (post-nuke DB is empty for unranged symbols).
+    max_crypto_refresh = int((cfg.get("universe") or {}).get("max_scanned_symbols_per_cycle") or 36)
     refresh = refresh_watchlist_bars(
         session,
         cfg,
-        crypto_symbols=crypto_syms[:16],
+        crypto_symbols=crypto_syms[:max_crypto_refresh],
         stock_symbols=stock_syms[:6],
         operator=operator,
     )
 
-    funnel = live_funnel(session, cfg, max_evaluate=48)
+    funnel = live_funnel(session, cfg, max_evaluate=max_crypto_refresh)
     scores = score_watchlist(session, cfg, limit=32)
     score_rows = scores.get("scores") or []
     passed = [r for r in score_rows if r.get("pass") or r.get("entry_allowed")]
@@ -140,7 +142,7 @@ def run_agent_cycle(session: Session, operator: str = "v2_agent") -> dict[str, A
         "ai_nudge": ai_nudge,
         "trade_cycle": trade,
         "scheduler": sched.status(),
-        "can_place_paper_orders": truth.get("can_place_paper_orders"),
-        "blockers": truth.get("blockers"),
+        "can_place_paper_orders": truth.get("effective_can_place_paper_orders"),
+        "blockers": truth.get("blockers") or truth.get("blocker_codes"),
         "weights": weights.get("universe_ranking"),
     }

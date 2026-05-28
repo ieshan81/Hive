@@ -65,10 +65,11 @@ def build_cockpit(session: Session) -> dict[str, Any]:
         "passed_count": len(passed),
         "weights": weights,
         "control": {
-            "can_place_paper_orders": truth.get("can_place_paper_orders"),
-            "paper_learning_on": truth.get("paper_learning_on"),
-            "bot_can_place": truth.get("bot_can_place_paper_orders"),
-            "blockers": truth.get("blockers") or [],
+            "can_place_paper_orders": truth.get("effective_can_place_paper_orders"),
+            "paper_learning_on": bool(truth.get("operator_desired_paper_learning"))
+            and truth.get("current_mode") not in ("paper_learning_off", "off", "env_paused"),
+            "bot_can_place": truth.get("effective_can_place_paper_orders"),
+            "blockers": truth.get("blockers") or truth.get("blocker_codes") or [],
             "mode": truth.get("current_mode"),
         },
         "positions": [
@@ -99,8 +100,8 @@ def _cockpit_narrative(funnel: dict, truth: dict, passed: list, weights: dict) -
     f = funnel.get("funnel") or {}
     parts = [
         f"Watchlist funnel: {f.get('available', 0)} available → {f.get('shortlist', 0)} shortlist.",
-        f"Paper learning {'ON' if truth.get('paper_learning_on') else 'OFF'}.",
-        f"Bot may trade: {'YES' if truth.get('can_place_paper_orders') else 'NO'}.",
+        f"Paper learning {'ON' if truth.get('operator_desired_paper_learning') else 'OFF'}.",
+        f"Bot may trade: {'YES' if truth.get('effective_can_place_paper_orders') else 'NO'}.",
     ]
     if passed:
         parts.append(f"Top setup: {passed[0].get('symbol')} quality {passed[0].get('quality_score', 0):.0f}.")
