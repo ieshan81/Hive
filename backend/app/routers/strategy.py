@@ -70,6 +70,17 @@ def pp_latest(session: Session = Depends(get_session)):
 
 @router.get("/push-pull/verdict")
 def push_pull_verdict(session: Session = Depends(get_session)):
-    from app.services.universe_strategy_discovery_service import strategy_verdict
+    """Fast verdict for legacy UI polls — uses cockpit truth, not heavy discovery."""
+    from app.v2.cockpit_service import build_cockpit_summary
 
-    return strategy_verdict(session)
+    c = build_cockpit_summary(session)
+    ctrl = c.get("control") or {}
+    return {
+        "status": "ok",
+        "current_status": "ready" if ctrl.get("bot_can_place") else "blocked",
+        "should_paper_trade_now": bool(ctrl.get("can_place_paper_orders")),
+        "funnel_answer": c.get("ai_cockpit_message"),
+        "plain_verdict": c.get("ai_cockpit_message"),
+        "funnel": c.get("funnel"),
+        "shortlist_count": (c.get("funnel") or {}).get("shortlist", 0),
+    }

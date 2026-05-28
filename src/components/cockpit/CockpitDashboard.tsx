@@ -35,7 +35,8 @@ type Cockpit = {
     blockers?: string[];
     mode?: string;
   };
-  account?: { equity?: number; daily_pl?: number };
+  account?: { connected?: boolean; equity?: number; daily_pl?: number };
+  alpaca_connected?: boolean;
   positions?: Array<{ symbol: string; qty: number; unrealized_pl?: number }>;
   recent_trades?: Array<{ symbol: string; side: string; status: string }>;
   weights?: { universe_ranking?: Record<string, number>; min_rank_score?: number };
@@ -199,8 +200,8 @@ export function CockpitDashboard() {
           ],
           [
             "Alpaca",
-            data?.account?.connected ? "CONNECTED" : "OFFLINE",
-            data?.account?.connected ? "#00FF66" : "#EF4444",
+            data?.account?.connected || data?.alpaca_connected ? "CONNECTED" : "OFFLINE",
+            data?.account?.connected || data?.alpaca_connected ? "#00FF66" : "#EF4444",
           ],
         ].map(([label, val, color]) => (
           <div key={label} className="rounded-xl border border-white/10 bg-white/[0.02] p-3">

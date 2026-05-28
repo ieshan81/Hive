@@ -124,7 +124,7 @@ export function MissionControlPanel() {
         cockpit_bar: {
           shortlist: funnel.shortlist ?? 0,
           ranked: funnel.ranked ?? 0,
-          passed: c.passed_count ?? 0,
+          passed: Number(c.passed_count ?? 0),
           paper: ctrl.paper_learning_on ? "ON" : "OFF",
         },
         market_radar: {

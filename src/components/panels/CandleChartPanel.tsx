@@ -46,9 +46,7 @@ export function CandleChartPanel({ defaultSymbol = "BTC/USD" }: { defaultSymbol?
   const seriesRef = useRef<ReturnType<
     ReturnType<typeof import("lightweight-charts").createChart>["addCandlestickSeries"]
   > | null>(null);
-  const priceLinesRef = useRef<ReturnType<
-    NonNullable<ReturnType<typeof import("lightweight-charts").createChart>["addCandlestickSeries"]>["createPriceLine"]
-  >[]>([]);
+  const priceLinesRef = useRef<import("lightweight-charts").IPriceLine[]>([]);
   const [symbol, setSymbol] = useState(defaultSymbol);
   const [timeframe, setTimeframe] = useState("5Min");
   const [loading, setLoading] = useState(false);
@@ -67,7 +65,7 @@ export function CandleChartPanel({ defaultSymbol = "BTC/USD" }: { defaultSymbol?
     priceLinesRef.current = [];
   };
 
-  const applyOverlays = (ctx: ChartContextPayload | null) => {
+  const applyOverlays = useCallback((ctx: ChartContextPayload | null) => {
     if (!seriesRef.current || !ctx) return;
     const markers = (ctx.markers ?? []).map((m) => ({
       time: m.time as import("lightweight-charts").UTCTimestamp,
@@ -89,7 +87,7 @@ export function CandleChartPanel({ defaultSymbol = "BTC/USD" }: { defaultSymbol?
       priceLinesRef.current.push(line);
     }
     setBrainNote(ctx.ai_narrative ?? null);
-  };
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -127,7 +125,7 @@ export function CandleChartPanel({ defaultSymbol = "BTC/USD" }: { defaultSymbol?
     if (ctxRes.ok && ctxRes.data) applyOverlays(ctxRes.data);
     else setBrainNote("AI trade markers load when backend chart-context is available.");
     setLoading(false);
-  }, [symbol, timeframe]);
+  }, [symbol, timeframe, applyOverlays]);
 
   useEffect(() => {
     setSymbol(defaultSymbol);
