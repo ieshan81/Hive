@@ -26,7 +26,7 @@ def build_cockpit(session: Session) -> dict[str, Any]:
         alpaca.sync_account_cached(force=True)
         alpaca.sync_positions_cached(force=True)
 
-    wl = live_full_watchlist(force=True)
+    wl = live_full_watchlist(session, force=True)
     funnel = live_funnel(session, cfg)
     truth = product_truth(session, cfg)
     scores = score_active_universe(session, cfg, limit=12)

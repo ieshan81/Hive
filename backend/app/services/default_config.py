@@ -469,6 +469,11 @@ DEFAULT_CONFIG = {
         "fast_training_require_exit_monitor": True,
         "use_db_lease": True,
     },
+    "v2": {
+        "aggressive_mode": True,
+        "skip_entry_safety_snapshot_gates": True,
+        "scheduler_interval_seconds": 45,
+    },
     "locked_config_keys": list(
         {
             "promotion.current_stage",

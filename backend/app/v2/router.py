@@ -1,4 +1,4 @@
-"""V2 API — live cockpit, cycles, bootstrap (research rebuild path)."""
+"""V2 API — hard nuke, rebuild, live cockpit, aggressive agent cycles."""
 
 from fastapi import APIRouter, Body, Depends
 from sqlmodel import Session
@@ -20,7 +20,7 @@ def v2_cockpit(session: Session = Depends(get_session)):
 def v2_watchlist(session: Session = Depends(get_session)):
     from app.v2.watchlist import live_full_watchlist
 
-    return live_full_watchlist(force=True)
+    return live_full_watchlist(session, force=True)
 
 
 @router.get("/funnel")
@@ -30,15 +30,38 @@ def v2_funnel(session: Session = Depends(get_session)):
     return live_funnel(session)
 
 
+@router.post("/nuke")
+def v2_hard_nuke(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
+    from app.v2.rebuild import hard_nuke
+
+    return hard_nuke(session, operator=str(body.get("operator") or "operator"))
+
+
+@router.post("/rebuild")
+def v2_full_rebuild(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
+    """Hard nuke + aggressive profile + paper ON + bar refresh + 2 agent cycles."""
+    from app.v2.rebuild import full_rebuild
+
+    return full_rebuild(session, operator=str(body.get("operator") or "operator"))
+
+
 @router.post("/cycle/run")
 def v2_run_cycle(
     body: dict = Body(default={}),
     session: Session = Depends(get_session),
     _op: str = Depends(require_operator_token),
 ):
-    from app.v2.cycle_runner import run_trading_cycle
+    from app.v2.agent_engine import run_agent_cycle
 
-    return run_trading_cycle(session, operator=str(body.get("operator") or "operator"))
+    return run_agent_cycle(session, operator=str(body.get("operator") or "operator"))
 
 
 @router.post("/bootstrap")
@@ -47,41 +70,15 @@ def v2_bootstrap(
     session: Session = Depends(get_session),
     _op: str = Depends(require_operator_token),
 ):
-    """
-    Research rebuild bootstrap: optional soft reset, refresh major watchlist bars,
-  enable paper learning, run first cycle.
-    """
-    from app.services.market_data_refresh_service import MarketDataRefreshService
-    from app.services.paper_learning_start_service import start_fresh_paper_learning
-    from app.v2.cycle_runner import run_trading_cycle
-    from app.v2.watchlist import MAJOR_CRYPTO
+    """Alias for /rebuild — always hard nuke unless nuke_first=false explicitly."""
+    from app.v2.rebuild import full_rebuild, hard_nuke
 
     operator = str(body.get("operator") or "operator")
-    if body.get("nuke_first"):
-        from app.services.danger_zone_service import DangerZoneService
+    if body.get("nuke_first") is False:
+        from app.v2.agent_engine import run_agent_cycle
+        from app.services.paper_learning_start_service import start_fresh_paper_learning
 
-        DangerZoneService(session).nuke_everything(operator=operator)
-
-    from app.services.config_manager import ConfigManager
-
-    config = ConfigManager(session).get_current()
-    refresh = MarketDataRefreshService(session, config).refresh_bars(
-        asset_type="crypto",
-        timeframe="5Min",
-        symbols=MAJOR_CRYPTO,
-        lookback_hours=72,
-        operator=operator,
-    )
-    start = start_fresh_paper_learning(session, operator=operator)
-    cycle = run_trading_cycle(session, operator=operator)
-    try:
-        session.commit()
-    except Exception:
-        session.rollback()
-    return {
-        "status": "ok",
-        "message": "V2 bootstrap complete — paper learning enabled, watchlist bars refreshed, cycle run.",
-        "bars_refresh": refresh,
-        "paper_learning": start,
-        "cycle": cycle,
-    }
+        start = start_fresh_paper_learning(session, operator=operator)
+        cycle = run_agent_cycle(session, operator=operator)
+        return {"status": "ok", "paper_learning": start, "cycle": cycle}
+    return full_rebuild(session, operator=operator)

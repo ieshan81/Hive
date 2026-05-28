@@ -42,10 +42,13 @@ def entry_safety_status(session: Session, config: Optional[dict] = None) -> dict
 
     age = _snapshot_age_seconds()
     freshness = _data_freshness_label(age)
-    if freshness in ("stale", "very_stale", "unknown") or not _CACHE.get("cockpit"):
-        warnings.append("Mission Control snapshot stale or not yet built")
-        if not bool((cfg.get("exploration") or {}).get("dynamic_formula_mode", True)):
-            blockers.append("system_snapshot_degraded")
+    skip_snapshot_gates = bool(cfg_get(cfg, "v2.skip_entry_safety_snapshot_gates", False))
+
+    if not skip_snapshot_gates:
+        if freshness in ("stale", "very_stale", "unknown") or not _CACHE.get("cockpit"):
+            warnings.append("Mission Control snapshot stale or not yet built")
+            if not bool((cfg.get("exploration") or {}).get("dynamic_formula_mode", True)):
+                blockers.append("system_snapshot_degraded")
 
     cached_symbols = 0
     try:
@@ -53,12 +56,14 @@ def entry_safety_status(session: Session, config: Optional[dict] = None) -> dict
     except Exception:
         cached_symbols = 0
 
-    if not radar.get("cached_snapshot_available"):
+    if not skip_snapshot_gates and not radar.get("cached_snapshot_available"):
         if cached_symbols:
             warnings.append("In-memory radar snapshot cold; database universe cache is available.")
         else:
             blockers.append("universe_snapshot_stale")
             warnings.append("Universe radar cache empty")
+    elif skip_snapshot_gates and not cached_symbols:
+        warnings.append("V2 aggressive mode — universe DB cache warming after nuke")
 
     new_entries_allowed = len(blockers) == 0
     return {

@@ -206,16 +206,26 @@ export async function checkServerOperatorProxy(): Promise<boolean> {
 /** Mutating POST via server proxy or operator session token (never NEXT_PUBLIC). */
 export async function apiPostOperator<T = unknown>(
   backendPath: string,
-  body?: unknown
+  body?: unknown,
+  options?: { timeoutMs?: number }
 ): Promise<ApiFetchResult<T> & { authMode?: string }> {
+  const timeoutMs = options?.timeoutMs ?? 120000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const proxyOk = await checkServerOperatorProxy();
   if (proxyOk) {
-    const res = await fetch("/operator-proxy", {
-      method: "POST",
-      headers: { Accept: "application/json", "Content-Type": "application/json" },
-      body: JSON.stringify({ path: backendPath, body: body ?? {} }),
-      cache: "no-store",
-    });
+    let res: Response;
+    try {
+      res = await fetch("/operator-proxy", {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ path: backendPath, body: body ?? {} }),
+        cache: "no-store",
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
     const text = await res.text();
     let data: T | null = null;
     try {
@@ -257,7 +267,9 @@ export async function apiPostOperator<T = unknown>(
     },
     body: JSON.stringify(body ?? {}),
     cache: "no-store",
+    signal: controller.signal,
   });
+  clearTimeout(timer);
   const text = await direct.text();
   let data: T | null = null;
   if (text) {

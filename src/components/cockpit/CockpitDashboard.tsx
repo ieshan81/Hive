@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Brain, Play, RefreshCw, Zap, Shield, TrendingUp } from "lucide-react";
+import { Brain, RefreshCw, Zap, Shield, TrendingUp, Skull } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { CandleChartPanel } from "@/components/panels/CandleChartPanel";
 import { apiGet, apiPostOperator } from "@/lib/apiClient";
@@ -10,11 +10,21 @@ type Cockpit = {
   generated_at_utc?: string;
   live_truth?: boolean;
   ai_cockpit_message?: string;
-  watchlist?: { total?: number; crypto?: { usd_pairs?: number } };
+  watchlist?: {
+    total?: number;
+    crypto?: { usd_pairs?: number; symbols?: string[] };
+    stocks?: { count?: number; symbols?: string[] };
+  };
   funnel?: Record<string, number>;
   shortlist?: Array<{ symbol: string; universe_rank_score?: number }>;
   why_zero_shortlist?: string;
-  scores?: Array<{ symbol: string; pass?: boolean; quality_score?: number; push_score?: number }>;
+  scores?: Array<{
+    symbol: string;
+    pass?: boolean;
+    entry_allowed?: boolean;
+    quality_score?: number;
+    push_score?: number;
+  }>;
   passed_count?: number;
   control?: {
     can_place_paper_orders?: boolean;
@@ -29,16 +39,19 @@ type Cockpit = {
   weights?: { universe_ranking?: Record<string, number>; min_rank_score?: number };
 };
 
+const REBUILD_TIMEOUT_MS = 180000;
+
 export function CockpitDashboard() {
   const [data, setData] = useState<Cockpit | null>(null);
   const [loading, setLoading] = useState(true);
   const [cycleBusy, setCycleBusy] = useState(false);
-  const [bootstrapBusy, setBootstrapBusy] = useState(false);
+  const [rebuildBusy, setRebuildBusy] = useState(false);
+  const [rebuildLog, setRebuildLog] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setErr(null);
-    const r = await apiGet<Cockpit>("/api/v2/cockpit", { timeoutMs: 60000 });
+    const r = await apiGet<Cockpit>("/api/v2/cockpit", { timeoutMs: 90000 });
     if (r.ok && r.data) setData(r.data);
     else setErr(r.error || "Cockpit unavailable");
     setLoading(false);
@@ -46,29 +59,52 @@ export function CockpitDashboard() {
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 20000);
+    const t = setInterval(load, 25000);
     return () => clearInterval(t);
   }, [load]);
 
   const runCycle = async () => {
     setCycleBusy(true);
-    const r = await apiPostOperator("/api/v2/cycle/run", { operator: "cockpit" });
+    setErr(null);
+    const r = await apiPostOperator("/api/v2/cycle/run", { operator: "cockpit" }, { timeoutMs: 120000 });
     if (!r.ok) setErr(r.error || "Cycle failed");
     await load();
     setCycleBusy(false);
   };
 
-  const bootstrap = async () => {
-    if (!confirm("Bootstrap V2: reset learning state, refresh major watchlist bars, enable paper learning, run cycle?")) return;
-    setBootstrapBusy(true);
-    const r = await apiPostOperator("/api/v2/bootstrap", { operator: "cockpit", nuke_first: false });
-    if (!r.ok) setErr(r.error || "Bootstrap failed");
+  const hardRebuild = async () => {
+    if (
+      !confirm(
+        "HARD NUKE + REBUILD: Deletes all trades, bars, memories, and brain data. Rebuilds aggressive V2 agent on Alpaca paper. Continue?"
+      )
+    )
+      return;
+    setRebuildBusy(true);
+    setRebuildLog("Nuking database and clearing caches…");
+    setErr(null);
+    const r = await apiPostOperator(
+      "/api/v2/rebuild",
+      { operator: "cockpit" },
+      { timeoutMs: REBUILD_TIMEOUT_MS }
+    );
+    if (!r.ok) {
+      setErr(r.error || "Rebuild failed or timed out — check Railway logs");
+      setRebuildLog(null);
+    } else {
+      const msg = (r.data as { message?: string })?.message || "Rebuild complete";
+      const can = (r.data as { can_trade?: boolean })?.can_trade;
+      setRebuildLog(`${msg} · Bot can trade: ${can ? "YES" : "NO"}`);
+    }
     await load();
-    setBootstrapBusy(false);
+    setRebuildBusy(false);
   };
 
   const f = data?.funnel ?? {};
   const ctrl = data?.control ?? {};
+  const chartSymbol =
+    data?.shortlist?.[0]?.symbol ||
+    data?.scores?.find((s) => s.pass || s.entry_allowed)?.symbol ||
+    "BTC/USD";
 
   return (
     <div className="space-y-4 max-w-6xl">
@@ -78,11 +114,16 @@ export function CockpitDashboard() {
           AI Trading Cockpit
         </h1>
         <p className="text-sm text-slate-400 mt-1">
-          Research v2 — live Alpaca truth, dynamic SL/TP, AI adjusts weights only (never executes).
+          Research v2 — live Alpaca crypto + stocks, dynamic SL/TP, aggressive paper cycles. No snapshot cache.
         </p>
         {data?.ai_cockpit_message && (
           <p className="text-xs text-hive-cyan/90 mt-2 border border-hive-cyan/20 rounded-lg px-3 py-2 bg-hive-cyan/5">
             {data.ai_cockpit_message}
+          </p>
+        )}
+        {rebuildLog && (
+          <p className="text-xs text-[#00FF66]/90 mt-2 border border-[#00FF66]/20 rounded-lg px-3 py-2">
+            {rebuildLog}
           </p>
         )}
         {err && <p className="text-xs text-amber-400 mt-2">{err}</p>}
@@ -92,7 +133,7 @@ export function CockpitDashboard() {
         <button
           type="button"
           onClick={load}
-          disabled={loading}
+          disabled={loading || rebuildBusy}
           className="flex items-center gap-1.5 text-xs px-3 py-2 rounded border border-white/10 text-slate-300 hover:bg-white/5"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
@@ -100,30 +141,31 @@ export function CockpitDashboard() {
         </button>
         <button
           type="button"
-          onClick={runCycle}
-          disabled={cycleBusy}
-          className="flex items-center gap-1.5 text-xs px-3 py-2 rounded border border-[#00FF66]/40 text-[#00FF66] hover:bg-[#00FF66]/10"
+          onClick={hardRebuild}
+          disabled={rebuildBusy}
+          className="flex items-center gap-1.5 text-xs px-3 py-2 rounded border border-red-500/50 text-red-300 hover:bg-red-500/10"
         >
-          <Zap className="h-3.5 w-3.5" />
-          {cycleBusy ? "Running cycle…" : "Run trading cycle"}
+          <Skull className="h-3.5 w-3.5" />
+          {rebuildBusy ? "Rebuilding… (up to 3 min)" : "Hard nuke + rebuild"}
         </button>
         <button
           type="button"
-          onClick={bootstrap}
-          disabled={bootstrapBusy}
-          className="flex items-center gap-1.5 text-xs px-3 py-2 rounded border border-hive-cyan/40 text-hive-cyan hover:bg-hive-cyan/10"
+          onClick={runCycle}
+          disabled={cycleBusy || rebuildBusy}
+          className="flex items-center gap-1.5 text-xs px-3 py-2 rounded border border-[#00FF66]/40 text-[#00FF66] hover:bg-[#00FF66]/10"
         >
-          <Play className="h-3.5 w-3.5" />
-          {bootstrapBusy ? "Bootstrapping…" : "Bootstrap V2"}
+          <Zap className="h-3.5 w-3.5" />
+          {cycleBusy ? "Agent cycle…" : "Run agent cycle"}
         </button>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-5">
         {[
           ["Paper learning", ctrl.paper_learning_on ? "ON" : "OFF", ctrl.paper_learning_on ? "#00FF66" : "#F59E0B"],
           ["Bot can trade", ctrl.bot_can_place ? "YES" : "NO", ctrl.bot_can_place ? "#00FF66" : "#F59E0B"],
           ["Equity", data?.account?.equity != null ? `$${data.account.equity.toFixed(2)}` : "—", "#fff"],
-          ["Watchlist", String(data?.watchlist?.crypto?.usd_pairs ?? 0), "#00dbe9"],
+          ["Crypto pairs", String(data?.watchlist?.crypto?.usd_pairs ?? 0), "#00dbe9"],
+          ["Stocks", String(data?.watchlist?.stocks?.count ?? 0), "#00dbe9"],
         ].map(([label, val, color]) => (
           <div key={label} className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
             <p className="text-[10px] uppercase text-slate-500">{label}</p>
@@ -134,7 +176,7 @@ export function CockpitDashboard() {
         ))}
       </div>
 
-      <GlassPanel title="Live funnel (no cache)" icon={<TrendingUp className="h-4 w-4" />}>
+      <GlassPanel title="Live funnel" icon={<TrendingUp className="h-4 w-4" />}>
         <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
           {[
             ["Available", f.available],
@@ -155,16 +197,18 @@ export function CockpitDashboard() {
         )}
       </GlassPanel>
 
+      <CandleChartPanel defaultSymbol={chartSymbol} />
+
       <div className="grid gap-4 lg:grid-cols-2">
-        <GlassPanel title="Execution shortlist" icon={<Shield className="h-4 w-4" />}>
+        <GlassPanel title="Shortlist" icon={<Shield className="h-4 w-4" />}>
           {(data?.shortlist?.length ?? 0) === 0 ? (
-            <p className="text-[11px] text-slate-500">No shortlist — run cycle after bar refresh.</p>
+            <p className="text-[11px] text-slate-500">Empty — run agent cycle after rebuild.</p>
           ) : (
             <ul className="space-y-1">
               {data?.shortlist?.map((s) => (
-                <li key={s.symbol} className="text-[11px] text-white flex justify-between">
+                <li key={s.symbol} className="text-[11px] flex justify-between text-white">
                   <span>{s.symbol}</span>
-                  <span className="text-hive-cyan mono-metric">
+                  <span className="text-hive-cyan">
                     {((s.universe_rank_score ?? 0) * 100).toFixed(0)}
                   </span>
                 </li>
@@ -173,14 +217,15 @@ export function CockpitDashboard() {
           )}
         </GlassPanel>
 
-        <GlassPanel title="Live scores" icon={<Zap className="h-4 w-4" />}>
-          <p className="text-[10px] text-slate-500 mb-2">{data?.passed_count ?? 0} passed push-pull gates</p>
-          <ul className="space-y-1 max-h-[180px] overflow-y-auto">
-            {(data?.scores ?? []).slice(0, 8).map((s) => (
-              <li key={s.symbol} className="text-[10px] flex justify-between text-slate-300">
-                <span>{s.symbol}</span>
-                <span style={{ color: s.pass ? "#00FF66" : "#849495" }}>
-                  Q{(s.quality_score ?? 0).toFixed(0)} P{(s.push_score ?? 0).toFixed(0)}
+        <GlassPanel title="Live scores (push-pull + patterns)">
+          <p className="text-[10px] text-slate-500 mb-2">{data?.passed_count ?? 0} passed gates</p>
+          <ul className="space-y-1 max-h-[200px] overflow-y-auto">
+            {(data?.scores ?? []).map((s) => (
+              <li key={s.symbol} className="text-[10px] flex justify-between">
+                <span className="text-slate-300">{s.symbol}</span>
+                <span style={{ color: s.pass || s.entry_allowed ? "#00FF66" : "#849495" }}>
+                  Q{(s.quality_score ?? 0).toFixed(0)} · P{(s.push_score ?? 0).toFixed(0)}
+                  {s.entry_allowed ? " · GO" : ""}
                 </span>
               </li>
             ))}
@@ -188,11 +233,9 @@ export function CockpitDashboard() {
         </GlassPanel>
       </div>
 
-      <CandleChartPanel defaultSymbol={(data?.shortlist?.[0]?.symbol as string) || "BTC/USD"} />
-
       <GlassPanel title="Recent paper trades">
         {(data?.recent_trades?.length ?? 0) === 0 ? (
-          <p className="text-[11px] text-slate-500">No trades yet — bootstrap + run cycle.</p>
+          <p className="text-[11px] text-slate-500">No trades yet — hard rebuild then run agent cycle.</p>
         ) : (
           <ul className="space-y-1">
             {data?.recent_trades?.map((t, i) => (
@@ -205,7 +248,7 @@ export function CockpitDashboard() {
       </GlassPanel>
 
       <p className="text-[9px] text-slate-600">
-        Live @ {data?.generated_at_utc?.slice(0, 19) ?? "—"} · cached_snapshot=false
+        Live @ {data?.generated_at_utc?.slice(0, 19) ?? "—"} · scheduler ~45s when paper learning ON
       </p>
     </div>
   );

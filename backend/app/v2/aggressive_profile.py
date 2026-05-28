@@ -1,0 +1,84 @@
+"""V2 aggressive paper profile — research rebuild defaults (dynamic, not hard-capped)."""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+def aggressive_config_patch() -> dict[str, Any]:
+    return {
+        "v2": {
+            "aggressive_mode": True,
+            "skip_entry_safety_snapshot_gates": True,
+            "scheduler_interval_seconds": 45,
+        },
+        "ranking": {
+            "ai_managed": True,
+            "min_rank_score": 0.18,
+        },
+        "universe_ranking": {
+            "min_rank_score": 0.18,
+            "max_spread_bps": 120.0,
+            "max_bar_age_seconds": 1800.0,
+        },
+        "universe": {
+            "mode": "hybrid_radar",
+            "speculative_paper_exploration": True,
+            "allow_zero_volume_cached_bars_for_paper": True,
+            "max_bar_staleness_hours": 96,
+            "skip_live_quote_for_ranking": True,
+            "require_1m_fresh_for_shortlist": False,
+            "max_scanned_symbols_per_cycle": 48,
+            "max_execution_shortlist": 8,
+        },
+        "cost": {
+            "edge_multiplier_paper": 1.1,
+            "min_expected_move_pct": 0.08,
+        },
+        "push_pull": {
+            "max_spread_bps": 80.0,
+            "max_quote_age_seconds": 90.0,
+            "max_bar_age_minutes": 180.0,
+            "push_strength_min": 0.002,
+        },
+        "exploration": {
+            "enabled": True,
+            "dynamic_formula_mode": True,
+            "require_stronger_edge": False,
+        },
+        "autonomous_paper_learning": {
+            "mode_enabled": True,
+            "scheduler_enabled": True,
+            "scheduler_interval_seconds": 45,
+            "refresh_market_data_before_tick": True,
+            "refresh_lookback_hours": 24,
+            "max_paper_trades_per_day": 0,
+            "max_open_paper_positions": 0,
+            "use_capital_allocator": True,
+        },
+        "execution": {
+            "paper_orders_enabled": True,
+            "live_orders_enabled": False,
+            "max_orders_per_cycle": 0,
+            "max_orders_per_hour": 0,
+            "max_orders_per_day": 0,
+        },
+        "fast_training": {
+            "fast_training_loop_enabled": True,
+            "fast_training_execute_orders": True,
+            "fast_training_cycle_seconds": 15,
+            "fast_training_max_scan_symbols": 48,
+            "fast_training_max_trades_per_day": 0,
+            "fast_training_max_open_positions": 0,
+            "exit_only_enabled": False,
+        },
+        "aggressive_paper_learning": {
+            "mode_enabled": True,
+            "use_capital_allocator": True,
+            "max_experiment_notional_per_trade_usd": 0,
+            "max_experiment_positions_total": 0,
+            "max_experiment_trades_per_day": 0,
+        },
+        "live_trading_enabled": False,
+        "paper_trading_only": True,
+    }
