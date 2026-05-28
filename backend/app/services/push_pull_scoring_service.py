@@ -10,6 +10,7 @@ from sqlmodel import Session, select
 
 from app.database import PositionSnapshot, StrategyRegistry
 from app.services.bar_freshness_service import BarFreshnessService
+from app.services.candlestick_pattern_engine import top_pattern
 from app.services.config_manager import ConfigManager
 from app.services.dynamic_exit_levels_service import compute_dynamic_exit_levels
 from app.services.historical_data_service import HistoricalDataService
@@ -108,6 +109,8 @@ def score_symbol(
 
     hist = HistoricalDataService(session, config)
     bars, _meta = hist.get_bars(symbol, timeframe="5Min", min_rows=14, lookback_days=14)
+    pattern = top_pattern(bars)
+    pattern_direction = str(pattern.get("direction") or "long")
     metrics = _metrics_from_bars(bars, quote)
     bar_age_min = None
     if bar_chk.get("staleness_hours") is not None:
@@ -128,6 +131,10 @@ def score_symbol(
         vwap_confirm=bool(metrics.get("body_pct", 0) >= _thresholds(config)["body_pct_min"]),
         ema_confirm=bool(metrics.get("momentum_1h", 0) >= _thresholds(config)["push_strength_min"]),
         atr_valid=bar_chk.get("fresh", False),
+        pattern_confidence=float(pattern.get("confidence") or 0.0),
+        pullback_quality_score=float(pattern.get("pullback_quality_score") or 0.45),
+        reversal_risk_score=float(pattern.get("reversal_risk_score") or 0.35),
+        continuation_score=float(pattern.get("continuation_score") or 0.45),
     )
     pull_exit = scored.pull_exit_score if has_position else None
     version = _strategy_version(session)
@@ -148,6 +155,8 @@ def score_symbol(
                     "push_score": scored.push_score,
                     "trade_quality_score": scored.trade_quality_score,
                     "edge_after_cost_bps": scored.edge_after_cost_bps,
+                    "pattern_confidence": pattern.get("confidence"),
+                    "reversal_risk_score": pattern.get("reversal_risk_score"),
                     "score_components": scored.evidence,
                 },
                 tier=tier,
@@ -168,6 +177,14 @@ def score_symbol(
         "no_trade_reason": scored.no_trade_reason,
         "gate_results": scored.gate_results,
         "score_components": scored.evidence,
+        "pattern": pattern,
+        "pattern_name": pattern.get("pattern"),
+        "pattern_confidence": pattern.get("confidence"),
+        "pullback_quality_score": pattern.get("pullback_quality_score"),
+        "reversal_risk_score": pattern.get("reversal_risk_score"),
+        "continuation_score": pattern.get("continuation_score"),
+        "paper_exploration": scored.evidence.get("paper_exploration"),
+        "soft_concerns": scored.evidence.get("soft_concerns") or [],
         "dynamic_exit_levels": dynamic_levels,
         "stop_loss": (dynamic_levels or {}).get("stop_loss"),
         "take_profit": (dynamic_levels or {}).get("take_profit"),
@@ -180,7 +197,17 @@ def score_symbol(
         "bars_count": len(bars),
         "universe_status": (universe_row or {}).get("status"),
         "blocked_reason": (universe_row or {}).get("blocked_reason"),
+        "thesis": _thesis_for(pattern, scored.entry_allowed, scored.no_trade_reason, pattern_direction),
     }
+
+
+def _thesis_for(pattern: dict[str, Any], entry_allowed: bool, reason: Optional[str], direction: str) -> str:
+    name = str(pattern.get("pattern") or "none").replace("_", " ")
+    if entry_allowed:
+        return f"Paper exploration can test {name} {direction} setup; dynamic exit bars define the risk."
+    if reason:
+        return f"{name.title()} observed, but hard execution gate reports {reason}."
+    return f"{name.title()} context is being monitored for a controlled pullback."
 
 
 def score_active_universe(

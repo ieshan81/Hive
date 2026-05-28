@@ -1,7 +1,7 @@
 """Default risk/config — all thresholds in DB, versioned via ConfigManager."""
 
 DEFAULT_CONFIG = {
-    "config_version": 5,
+    "config_version": 6,
     "max_risk_per_trade": 0.005,
     "max_position_size_pct": 1.0,
     "max_open_positions": 0,
@@ -51,6 +51,7 @@ DEFAULT_CONFIG = {
         "max_bar_age_minutes": 120.0,
         "enter_threshold": 0.70,
         "paper_exploration_enter_floor": 0.42,
+        "paper_exploration_min_quality": 0.38,
         "min_trade_quality": 0.60,
         "atr_stop_multiplier": 2.0,
         "atr_period": 14,

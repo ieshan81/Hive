@@ -31,10 +31,11 @@ def _threshold(config: dict, key: str, default: float) -> float:
 
 
 def _paper_exploration_on(config: dict) -> bool:
-    apl = config.get("autonomous_paper_learning") or {}
     exp = config.get("exploration") or {}
     promotion = (config.get("promotion") or {}).get("current_stage", "PAPER")
-    return promotion == "PAPER" and bool(exp.get("enabled", True)) and bool(apl.get("mode_enabled", False))
+    execution = config.get("execution") or {}
+    live_orders = bool(execution.get("live_orders_enabled", False)) or bool(config.get("live_trading_enabled", False))
+    return promotion == "PAPER" and bool(exp.get("enabled", True)) and not live_orders
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -57,6 +58,10 @@ def score_push_pull_setup(
     overextension: Optional[float] = None,
     expected_move_pct: Optional[float] = None,
     tier: str = "TIER_ALT",
+    pattern_confidence: Optional[float] = None,
+    pullback_quality_score: Optional[float] = None,
+    reversal_risk_score: Optional[float] = None,
+    continuation_score: Optional[float] = None,
 ) -> PushPullScore:
     """Score a push setup; returns entry_allowed and no_trade_reason."""
     gates: dict[str, bool] = {}
@@ -72,11 +77,16 @@ def score_push_pull_setup(
     base_enter = _threshold(config, "enter_threshold", 0.70)
     min_quality = _threshold(config, "min_trade_quality", 0.60)
     paper_floor = _threshold(config, "paper_exploration_enter_floor", 0.42)
+    paper_min_quality = _threshold(config, "paper_exploration_min_quality", 0.38)
 
     mom = float(momentum_1h or 0)
     body = float(body_pct or 0)
     vol = float(volume_spike or 1.0)
     spread_bps = float(spread_pct or 0) * 10000.0 if spread_pct and spread_pct < 1 else float(spread_pct or 0) * 100.0
+    pattern_score = _clamp(float(pattern_confidence or 0.0), 0.0, 1.0)
+    pullback_score = _clamp(float(pullback_quality_score if pullback_quality_score is not None else 0.55), 0.0, 1.0)
+    reversal_risk = _clamp(float(reversal_risk_score if reversal_risk_score is not None else 0.35), 0.0, 1.0)
+    continuation = _clamp(float(continuation_score if continuation_score is not None else 0.55), 0.0, 1.0)
 
     cost = evaluate_edge_after_cost_bps(
         config,
@@ -112,7 +122,7 @@ def score_push_pull_setup(
     adaptive_enter += min(0.12, max(0.0, spread_bps - (max_spread_bps * 0.5)) / max(max_spread_bps * 4, 1.0))
     if exploration_on:
         adaptive_enter = max(paper_floor, adaptive_enter - 0.08)
-        min_quality = min(min_quality, 0.50)
+        min_quality = min(min_quality, paper_min_quality)
     adaptive_enter = _clamp(adaptive_enter, paper_floor if exploration_on else 0.55, 0.92)
 
     gates["push_above_threshold"] = push_score >= adaptive_enter
@@ -136,17 +146,61 @@ def score_push_pull_setup(
                 code = "PUSH_BELOW_THRESHOLD"
             if gate == "edge_after_cost_positive":
                 code = "NEGATIVE_EDGE_AFTER_COST"
+            if gate == "spread_ok":
+                code = "SPREAD_TOO_WIDE"
+            if gate == "quote_fresh":
+                code = "STALE_QUOTE"
+            if gate == "bar_fresh":
+                code = "STALE_BAR"
+            if gate == "atr_valid":
+                code = "ATR_INVALID"
             if code not in reasons:
                 reasons.append(code)
 
     pull_exit_score = max(0.0, 1.0 - (overextension or 0) / max(overext_max, 0.01))
-    trade_quality = push_score * 0.5 + pull_exit_score * 0.2 + (1.0 if cost.passed else 0) * 0.3
+    research_quality = (
+        push_score * 0.25
+        + pullback_score * 0.30
+        + continuation * 0.25
+        + pattern_score * 0.20
+    ) * (1.0 - reversal_risk * 0.5)
+    legacy_quality = push_score * 0.5 + pull_exit_score * 0.2 + (1.0 if cost.passed else 0) * 0.3
+    trade_quality = max(research_quality, legacy_quality if pattern_score <= 0 else (research_quality * 0.75 + legacy_quality * 0.25))
     gates["quality_above_min"] = trade_quality >= min_quality
     if not gates["quality_above_min"] and "QUALITY_BELOW_MIN" not in reasons:
         reasons.append("QUALITY_BELOW_MIN")
 
-    entry_allowed = all(gates.values()) and cost.passed
-    no_trade = None if entry_allowed else (reasons[0] if reasons else "GATE_FAILED")
+    hard_gate_names = {
+        "spread_ok",
+        "quote_fresh",
+        "bar_fresh",
+        "atr_valid",
+        "edge_after_cost_positive",
+        "quality_above_min",
+    }
+    if not exploration_on:
+        hard_gate_names.update(
+            {
+                "push_above_threshold",
+                "candle_quality",
+                "volume_spike",
+                "vwap_confirmation",
+                "ema_confirmation",
+                "not_overextended",
+            }
+        )
+    hard_gates = {k: v for k, v in gates.items() if k in hard_gate_names}
+    soft_gates = {k: v for k, v in gates.items() if k not in hard_gate_names}
+    entry_allowed = all(hard_gates.values()) and cost.passed
+    hard_reasons = [
+        r
+        for r in reasons
+        if (
+            r.lower() in hard_gate_names
+            or r in ("NEGATIVE_EDGE_AFTER_COST", "SPREAD_TOO_WIDE", "STALE_QUOTE", "STALE_BAR", "ATR_INVALID", "QUALITY_BELOW_MIN")
+        )
+    ]
+    no_trade = None if entry_allowed else (hard_reasons[0] if hard_reasons else (reasons[0] if reasons else "GATE_FAILED"))
 
     return PushPullScore(
         push_score=round(push_score, 4),
@@ -166,6 +220,14 @@ def score_push_pull_setup(
             "adaptive_enter_threshold": round(adaptive_enter, 4),
             "min_trade_quality": round(min_quality, 4),
             "paper_exploration": exploration_on,
+            "hard_gate_results": hard_gates,
+            "soft_gate_results": soft_gates,
+            "soft_concerns": [k for k, ok in soft_gates.items() if not ok],
+            "pattern_confidence": round(pattern_score, 4),
+            "pullback_quality_score": round(pullback_score, 4),
+            "reversal_risk_score": round(reversal_risk, 4),
+            "continuation_score": round(continuation, 4),
+            "research_trade_quality": round(research_quality, 4),
             "push_score_0_100": round(push_score * 100, 2),
             "trade_quality_0_100": round(trade_quality * 100, 2),
         },

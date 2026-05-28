@@ -19,6 +19,7 @@ export const ALLOWED_POST_PREFIXES = [
   "/api/social/reddit/",
   "/api/news/",
   "/api/scanners/",
+  "/api/trader-console/",
   "/api/fast-training/",
   "/api/autonomous-paper-learning/",
   "/api/paper-learning/",

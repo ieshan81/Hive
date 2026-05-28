@@ -128,18 +128,38 @@ def rankings(session: Session = Depends(get_session)):
 
 @router.get("/execution-shortlist")
 def execution_shortlist(session: Session = Depends(get_session)):
-    """Top-N symbols that survived the full funnel."""
-    payload = rankings(session)
-    pipe = (payload or {}).get("pipeline") or {}
+    """Fast paper-exploration shortlist.
+
+    This endpoint intentionally avoids the older 36-symbol live funnel so the UI
+    cannot overload the DB/API pool just to explain why the shortlist is empty.
+    """
+    from app.services.trader_console_service import trader_console_status
+
+    payload = trader_console_status(session)
+    shortlist = payload.get("shortlist") or []
+    shortlist_mode = "paper_exploration"
+    why_zero = None
+    if not shortlist:
+        why_zero = (
+            f"Push-pull scored {payload.get('scored_symbols', 0)} symbols; no candidate passed hard paper gates. "
+            f"Main blockers: {payload.get('no_trade_reason_breakdown') or {}}"
+        )
     return {
-        "status": "ok",
+        "status": payload.get("status") or "ok",
         "generated_at_utc": payload.get("generated_at_utc"),
-        "answer": payload.get("answer"),
-        "block_breakdown": payload.get("block_breakdown"),
-        "shortlist": pipe.get("shortlist", []),
-        "execution_shortlist_count": pipe.get("funnel", {}).get("execution_shortlist", 0),
-        "eligible_count": payload.get("eligible_count", 0),
-        "why_zero_eligible": payload.get("answer") if payload.get("eligible_count") == 0 else None,
+        "answer": payload.get("message"),
+        "block_breakdown": payload.get("no_trade_reason_breakdown") or {},
+        "shortlist": shortlist,
+        "strict_shortlist": [],
+        "paper_exploration_shortlist": shortlist,
+        "shortlist_mode": shortlist_mode,
+        "execution_shortlist_count": len(shortlist),
+        "paper_exploration_shortlist_count": len(shortlist),
+        "eligible_count": payload.get("shortlist_count", 0),
+        "scored_symbols": payload.get("scored_symbols", 0),
+        "selected_candidate": shortlist[0] if shortlist else None,
+        "no_trade_reason_breakdown": payload.get("no_trade_reason_breakdown") or {},
+        "why_zero_eligible": why_zero,
     }
 
 

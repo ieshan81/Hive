@@ -47,6 +47,7 @@ from app.routers import (
     market_sessions,
     page_state,
     diagnostics_export,
+    trader_console,
 )
 from app.services.database_bootstrap_service import repair_database_bootstrap
 from app.services.startup import bootstrap_database
@@ -108,6 +109,7 @@ app.include_router(research_experiments.router)
 app.include_router(market_sessions.router)
 app.include_router(page_state.router)
 app.include_router(diagnostics_export.router)
+app.include_router(trader_console.router)
 
 
 @app.on_event("startup")

@@ -1,5 +1,5 @@
-import { MissionControlPanel } from "@/components/panels/MissionControlPanel";
+import { TraderConsolePanel } from "@/components/panels/TraderConsolePanel";
 
 export default function MissionControlPage() {
-  return <MissionControlPanel />;
+  return <TraderConsolePanel />;
 }
