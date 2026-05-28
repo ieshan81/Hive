@@ -18,7 +18,8 @@ type Cockpit = {
     stocks?: { count?: number; symbols?: string[] };
   };
   funnel?: Record<string, number>;
-  shortlist?: Array<{ symbol: string; universe_rank_score?: number; trade_quality_score?: number }>;
+  shortlist?: Array<{ symbol: string; universe_rank_score?: number; trade_quality_score?: number; stop_loss?: number; take_profit?: number }>;
+  eligible_trades?: Array<{ symbol: string; universe_rank_score?: number; trade_quality_score?: number; stop_loss?: number; take_profit?: number }>;
   why_zero_shortlist?: string;
   scores?: Array<{
     symbol: string;
@@ -77,8 +78,12 @@ export function CockpitDashboard() {
 
   const f = data?.funnel ?? {};
   const ctrl = data?.control ?? {};
+  const eligible =
+    data?.eligible_trades ??
+    data?.shortlist ??
+    (data?.scores ?? []).filter((s) => s.entry_allowed);
   const chartSymbol =
-    data?.shortlist?.[0]?.symbol ||
+    eligible[0]?.symbol ||
     data?.scores?.find((s) => s.pass || s.entry_allowed)?.symbol ||
     "BTC/USD";
 
@@ -153,46 +158,42 @@ export function CockpitDashboard() {
 
       <CockpitFunnelBrain funnel={f} blockers={data?.why_zero_shortlist} aiNote={data?.ai_cockpit_message} />
 
-      <CandleChartPanel defaultSymbol={chartSymbol} />
+      <CandleChartPanel defaultSymbol={chartSymbol} title="TradingView wrapper · AI-controlled overlays" />
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <GlassPanel title="Shortlist" icon={<Shield className="h-4 w-4" />}>
-          {(data?.shortlist?.length ?? 0) === 0 ? (
-            <p className="text-[11px] text-slate-500">
-              Empty - scheduler is watching; the next paper cycle will refresh candidates automatically.
-            </p>
-          ) : (
-            <ul className="space-y-1">
-              {data?.shortlist?.map((s) => (
-                <li key={s.symbol} className="text-[11px] flex justify-between text-white">
-                  <span>{s.symbol}</span>
-                  <span className="text-hive-cyan">
-                    {s.universe_rank_score != null
-                      ? (s.universe_rank_score * 100).toFixed(0)
-                      : ((s.trade_quality_score ?? 0) * 100).toFixed(0)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </GlassPanel>
-
-        <GlassPanel title="Live scores (push-pull + patterns)">
-          <p className="text-[10px] text-slate-500 mb-2">{data?.passed_count ?? 0} passed gates</p>
-          <ul className="space-y-1 max-h-[200px] overflow-y-auto">
-            {(data?.scores ?? []).map((s) => (
-              <li key={s.symbol} className="text-[10px] flex justify-between">
-                <span className="text-slate-300">{s.symbol}</span>
-                <span style={{ color: s.pass || s.entry_allowed ? "#00FF66" : "#849495" }}>
-                  Q{((s.quality_score ?? s.trade_quality_score ?? 0) * 100).toFixed(0)} P
-                  {((s.push_score ?? 0) * 100).toFixed(0)}
-                  {s.entry_allowed ? " GO" : ""}
+      <GlassPanel title="Eligible trades (all pass gates — no shortlist cap)" icon={<Shield className="h-4 w-4" />}>
+        {eligible.length === 0 ? (
+          <p className="text-[11px] text-slate-500">
+            None this scan — radar still watches full universe; next cycle retries all eligible symbols with TP/SL bands.
+          </p>
+        ) : (
+          <ul className="space-y-1 max-h-[280px] overflow-y-auto">
+            {eligible.map((s) => {
+              const row = s as {
+                symbol: string;
+                universe_rank_score?: number;
+                trade_quality_score?: number;
+                quality_score?: number;
+                stop_loss?: number;
+                take_profit?: number;
+              };
+              const q =
+                row.universe_rank_score != null
+                  ? (row.universe_rank_score * 100).toFixed(0)
+                  : ((row.trade_quality_score ?? row.quality_score ?? 0) * 100).toFixed(0);
+              return (
+              <li key={row.symbol} className="text-[11px] flex justify-between gap-2 text-white border-b border-white/5 py-1">
+                <span>{row.symbol}</span>
+                <span className="text-hive-cyan shrink-0">
+                  Q{q}
+                  {row.stop_loss != null ? ` · SL ${Number(row.stop_loss).toFixed(2)}` : ""}
+                  {row.take_profit != null ? ` · TP ${Number(row.take_profit).toFixed(2)}` : ""}
                 </span>
               </li>
-            ))}
+              );
+            })}
           </ul>
-        </GlassPanel>
-      </div>
+        )}
+      </GlassPanel>
 
       <GlassPanel title="Recent paper trades">
         {(data?.recent_trades?.length ?? 0) === 0 ? (

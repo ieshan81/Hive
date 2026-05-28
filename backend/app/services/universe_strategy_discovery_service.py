@@ -297,13 +297,16 @@ def build_funnel_breakdown(
         if r.get("eligible") and not dropped:
             eligible_rows.append({**m, "blocks": r.get("blocks")})
 
-    snapshot = urs.build_pipeline_snapshot(available, metrics, ranked, max_shortlist=10)
+    snapshot = urs.build_pipeline_snapshot(available, metrics, ranked, max_shortlist=0)
     # build_pipeline_snapshot only knows metric-level eligibility. Override
-    # the candidate/shortlist layers with the stricter deterministic gate
-    # result from evaluate_symbol_blocks so stale bars, account blocks, and
-    # other cage blockers do not leak into execution shortlist.
+    # the candidate layers with the stricter deterministic gate result from
+    # evaluate_symbol_blocks so stale bars, account blocks, and other cage
+    # blockers do not leak into execution lists.
+    from app.services.scan_limits import scan_limit, slice_limit
+
+    exec_cap = scan_limit(cfg, "universe.max_execution_shortlist", 0)
     snapshot["eligible"] = eligible_rows
-    snapshot["shortlist"] = eligible_rows[:10]
+    snapshot["shortlist"] = slice_limit(eligible_rows, exec_cap)
     snapshot.setdefault("funnel", {})
     fresh_count = sum(
         1
@@ -332,7 +335,7 @@ def build_funnel_breakdown(
         )
     else:
         answer_parts.append(
-            f"{n_avail} USD pairs → evaluated {n_eval} → {n_eligible} eligible → shortlist {n_short}"
+            f"{n_avail} USD pairs → evaluated {n_eval} → {n_eligible} eligible → {n_short} queued for paper entry"
         )
 
     return {

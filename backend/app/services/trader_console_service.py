@@ -115,13 +115,16 @@ def trader_console_status(session: Session, *, force: bool = False) -> dict[str,
         return payload
 
     cfg = ConfigManager(session).get_current()
+    from app.services.scan_limits import scan_limit
+
     adapter = AlpacaAdapter(session)
     account = adapter.sync_account_cached(force=False) if adapter.configured else _latest_account(session)
     positions = list(session.exec(select(PositionSnapshot).where(PositionSnapshot.qty > 0)).all())
     reviews = OpenPositionReviewService(session, cfg).review_all().get("reviews", [])
-    scored = score_active_universe(session, cfg, limit=8)
+    eval_limit = scan_limit(cfg, "universe.max_scanned_symbols_per_cycle", 0)
+    scored = score_active_universe(session, cfg, limit=eval_limit)
     scores = scored.get("scores") or []
-    shortlist = [row for row in scores if row.get("entry_allowed")][:5]
+    eligible = [row for row in scores if row.get("entry_allowed")]
     latest_decision = _latest_decision(session)
     latest_ai = _latest_ai_review(session)
     paper_status = PaperExecutionService(session).status()
@@ -153,16 +156,19 @@ def trader_console_status(session: Session, *, force: bool = False) -> dict[str,
         "account": _account_payload(account, adapter),
         "positions": reviews,
         "open_positions_count": len(positions),
-        "shortlist": shortlist,
-        "shortlist_count": len(shortlist),
+        "eligible_trades": eligible,
+        "eligible_count": len(eligible),
+        "shortlist": eligible,
+        "shortlist_count": len(eligible),
         "scored_symbols": scored.get("symbols_scored", 0),
         "no_trade_reason_breakdown": scored.get("no_trade_reason_breakdown") or {},
         "latest_decision": _decision_payload(latest_decision),
         "latest_ai_nudge": _ai_payload(latest_ai),
         "paper_execution": paper_status,
         "message": (
-            "Paper exploration found a candidate." if shortlist else
-            "No paper candidate passed hard data, edge, and exit-level gates."
+            f"{len(eligible)} eligible setup(s) — agent trades all that pass gates each cycle."
+            if eligible
+            else "No symbols passed hard data, edge, and exit-level gates this scan."
         ),
     }
     _STATUS_CACHE["cached_at"] = datetime.utcnow()

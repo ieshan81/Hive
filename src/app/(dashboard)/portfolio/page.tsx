@@ -1,17 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Wallet, RefreshCw, AlertTriangle } from "lucide-react";
+import { Wallet, RefreshCw, AlertTriangle, Info } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { PanelError } from "@/components/ui/PanelError";
 import { apiGet, apiPost, apiPostOperator } from "@/lib/apiClient";
-import { normalizeOrders, normalizePositions } from "@/lib/apiNormalize";
+import { normalizeOrders } from "@/lib/apiNormalize";
 import { OrderMetricsBar } from "@/components/ui/OrderMetricsBar";
 import { ExecutionOrdersTable } from "@/components/ui/ExecutionOrdersTable";
 import { PortfolioExecutionPanel } from "@/components/panels/PortfolioExecutionPanel";
+import { CandleChartPanel } from "@/components/panels/CandleChartPanel";
 import type { OrderSummaryCounts } from "@/lib/orderDisplay";
-import type { OrderRecord, PanelLoadMeta, Position } from "@/types/api";
+import type { OrderRecord } from "@/types/api";
 
 type BrokerRow = {
   symbol?: string;
@@ -21,70 +21,43 @@ type BrokerRow = {
   market_value?: number;
   unrealized_pl?: number;
   unrealized_pl_pct?: number;
-  synced_at?: string;
   local_history_incomplete?: boolean;
-  local_orders?: Record<string, unknown>[];
-  local_execution_logs?: Record<string, unknown>[];
+  local_history_note?: string;
 };
 
+function displaySymbol(raw: string): string {
+  if (raw.includes("/")) return raw;
+  if (raw.endsWith("USD") && raw.length > 3) return `${raw.slice(0, -3)}/USD`;
+  return raw;
+}
+
 export default function PortfolioPage() {
-  const [positions, setPositions] = useState<Position[]>([]);
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [orderSummary, setOrderSummary] = useState<OrderSummaryCounts | undefined>();
   const [recon, setRecon] = useState<Record<string, unknown> | null>(null);
-  const [nextAction, setNextAction] = useState<string | null>(null);
   const [exitStatus, setExitStatus] = useState<Record<string, string>>({});
   const [armedExitSymbol, setArmedExitSymbol] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [meta, setMeta] = useState<Record<string, PanelLoadMeta>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
-    const m: Record<string, PanelLoadMeta> = {};
-    const ts = new Date().toISOString();
-
-    const cockpitRes = await apiGet<Record<string, unknown>>("/api/cockpit", { timeoutMs: 90000 });
-    const pRes = await apiGet("/api/positions");
-    const oRes = await apiGet("/api/orders");
-    const reconRes = await apiGet("/api/portfolio/reconciliation");
-    const dashRes = cockpitRes.ok ? cockpitRes : await apiGet("/api/dashboard");
-
-    if (pRes.ok) {
-      const posPayload = cockpitRes.ok
-        ? { positions: cockpitRes.data?.positions }
-        : pRes.data;
-      setPositions(normalizePositions(posPayload));
-      m.positions = { source: "live_api", lastUpdated: ts, endpoint: "/api/positions", httpStatus: pRes.status };
-    } else {
-      setPositions([]);
-      m.positions = {
-        source: "empty",
-        lastUpdated: ts,
-        endpoint: "/api/positions",
-        httpStatus: pRes.status,
-        error: pRes.error || `HTTP ${pRes.status}`,
-      };
-    }
+    const [cockpitRes, oRes, reconRes] = await Promise.all([
+      apiGet<Record<string, unknown>>("/api/cockpit", { timeoutMs: 90000 }),
+      apiGet("/api/orders"),
+      apiGet("/api/portfolio/reconciliation"),
+    ]);
 
     if (reconRes.ok) setRecon(reconRes.data as Record<string, unknown>);
     else setRecon(null);
-    if (cockpitRes.ok && cockpitRes.data) {
-      setNextAction(String(cockpitRes.data.ai_cockpit_message ?? ""));
-    }
 
-    if (dashRes.ok && dashRes.data && typeof dashRes.data === "object") {
-      const d = dashRes.data as Record<string, unknown>;
+    if (cockpitRes.ok && cockpitRes.data && typeof cockpitRes.data === "object") {
+      const d = cockpitRes.data as Record<string, unknown>;
       setOrderSummary(d.orderSummary as OrderSummaryCounts | undefined);
     }
 
-    if (oRes.ok) {
-      setOrders(normalizeOrders(oRes.data));
-      m.orders = { source: "live_api", lastUpdated: ts, endpoint: "/api/orders", httpStatus: oRes.status };
-    } else {
-      setOrders([]);
-    }
+    if (oRes.ok) setOrders(normalizeOrders(oRes.data));
+    else setOrders([]);
 
-    setMeta(m);
     setLoading(false);
   }, []);
 
@@ -122,21 +95,21 @@ export default function PortfolioPage() {
   const brokerTruth = (recon?.broker_truth as Record<string, unknown>) || {};
   const brokerRows = (brokerTruth.positions as BrokerRow[]) || [];
   const warning = recon?.reconciliation_warning as string | undefined;
-  const localTruth = (recon?.local_truth as Record<string, unknown>) || {};
+  const isInfoNote = Boolean(brokerRows.some((p) => p.local_history_note));
 
   return (
     <section className="max-w-5xl space-y-4">
       <header className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Wallet className="h-6 w-6 text-hive-cyan" />
-          <h1 className="text-xl font-semibold text-white">Portfolio &amp; Execution</h1>
+          <h1 className="text-xl font-semibold text-white">Portfolio</h1>
         </div>
         <button
           type="button"
           onClick={refresh}
           className="flex items-center gap-1 text-xs text-hive-cyan border border-hive-cyan/30 rounded px-3 py-1.5"
         >
-          <RefreshCw className="h-3 w-3" /> Refresh broker
+          <RefreshCw className="h-3 w-3" /> Refresh
         </button>
       </header>
 
@@ -144,117 +117,74 @@ export default function PortfolioPage() {
         <EmptyState message="Loading broker positions…" />
       ) : (
         <>
-          {(warning || nextAction) && (
-            <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
-              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-              <div>
-                {warning && <p>{warning}</p>}
-                {nextAction && <p className="text-xs mt-1 opacity-90">{nextAction}</p>}
-              </div>
+          {warning && (
+            <div
+              className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${
+                isInfoNote && !brokerRows.some((p) => p.local_history_incomplete)
+                  ? "border-cyan-500/30 bg-cyan-500/10 text-cyan-100"
+                  : "border-amber-500/30 bg-amber-500/10 text-amber-200"
+              }`}
+            >
+              {isInfoNote && !brokerRows.some((p) => p.local_history_incomplete) ? (
+                <Info className="h-4 w-4 shrink-0 mt-0.5" />
+              ) : (
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+              )}
+              <p>{warning}</p>
             </div>
           )}
 
-          <GlassPanel title="Broker truth (Alpaca paper)">
-            <p className="text-[11px] text-slate-500 mb-2">
-              Synced at {String(brokerTruth.synced_at ?? "—")}
+          <GlassPanel title="Open positions · chart + TP/SL bands">
+            <p className="text-[11px] text-slate-500 mb-3">
+              Alpaca paper sync · each position shows candles with AI entry markers and pattern-based stop/target lines
             </p>
             {brokerRows.length === 0 ? (
-              <EmptyState message="No open broker positions." />
+              <EmptyState message="No open broker positions — agent trades all eligible symbols each cycle." />
             ) : (
-              <div className="space-y-3">
-                {brokerRows.map((pos) => (
-                  <article key={String(pos.symbol)} className="rounded-lg border border-white/5 bg-white/2 p-3 text-sm">
-                    <div className="flex items-center justify-between gap-3 mb-2">
-                      <span className="font-semibold text-white">{String(pos.symbol)}</span>
-                      <div className="flex items-center gap-2">
-                        {pos.local_history_incomplete && (
-                          <span className="text-[10px] text-amber-400">Local history incomplete</span>
-                        )}
+              <div className="space-y-6">
+                {brokerRows.map((pos) => {
+                  const sym = displaySymbol(String(pos.symbol));
+                  return (
+                    <article key={sym} className="rounded-lg border border-white/5 bg-white/[0.02] p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+                        <div>
+                          <span className="font-semibold text-white">{sym}</span>
+                          <p className="text-[10px] text-slate-500 mt-0.5">
+                            Qty {String(pos.qty)} · entry {String(pos.avg_entry ?? "—")} · P/L{" "}
+                            <span className={(pos.unrealized_pl ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}>
+                              {String(pos.unrealized_pl ?? "—")}
+                              {pos.unrealized_pl_pct != null ? ` (${pos.unrealized_pl_pct}%)` : ""}
+                            </span>
+                          </p>
+                          {pos.local_history_note && (
+                            <p className="text-[10px] text-cyan-300/80 mt-1">{pos.local_history_note}</p>
+                          )}
+                        </div>
                         <button
                           type="button"
-                          onClick={() => requestPaperSell(String(pos.symbol))}
+                          onClick={() => requestPaperSell(sym)}
                           className={
-                            armedExitSymbol === String(pos.symbol)
-                              ? "rounded border border-amber-300/60 bg-amber-400/15 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-100 hover:bg-amber-400/25"
-                              : "rounded border border-rose-400/40 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-rose-200 hover:bg-rose-500/20"
+                            armedExitSymbol === sym
+                              ? "rounded border border-amber-300/60 bg-amber-400/15 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-100"
+                              : "rounded border border-rose-400/40 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-rose-200"
                           }
                         >
-                          {armedExitSymbol === String(pos.symbol) ? "Confirm paper sell" : "Paper sell"}
+                          {armedExitSymbol === sym ? "Confirm paper sell" : "Paper sell"}
                         </button>
                       </div>
-                    </div>
-                    <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
-                      <dt className="text-slate-500">Qty</dt>
-                      <dd className="text-white text-right">{String(pos.qty)}</dd>
-                      <dt className="text-slate-500">Avg entry</dt>
-                      <dd className="text-white text-right">{String(pos.avg_entry ?? "—")}</dd>
-                      <dt className="text-slate-500">Current price</dt>
-                      <dd className="text-white text-right">{String(pos.current_price ?? "—")}</dd>
-                      <dt className="text-slate-500">Market value</dt>
-                      <dd className="text-white text-right">{String(pos.market_value ?? "—")}</dd>
-                      <dt className="text-slate-500">Unrealized P/L</dt>
-                      <dd className={`text-right ${(pos.unrealized_pl ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                        {String(pos.unrealized_pl ?? "—")}
-                        {pos.unrealized_pl_pct != null ? ` (${pos.unrealized_pl_pct}%)` : ""}
-                      </dd>
-                    </dl>
-                    {exitStatus[String(pos.symbol)] && (
-                      <p className="mt-2 text-[11px] text-amber-200">{exitStatus[String(pos.symbol)]}</p>
-                    )}
-                  </article>
-                ))}
-              </div>
-            )}
-          </GlassPanel>
-
-          <GlassPanel title="Local truth">
-            <ul className="text-sm text-slate-400 space-y-1">
-              <li>Reset epoch: {String((localTruth.reset_epoch as Record<string, unknown>)?.reset_epoch_id ?? "—")}</li>
-              <li>Local orders: {String(localTruth.order_count ?? 0)}</li>
-              <li>Execution logs: {String(localTruth.execution_log_count ?? 0)}</li>
-            </ul>
-            {positions.length > 0 && (
-              <div className="mt-3 space-y-2">
-                {positions.map((pos) => (
-                  <div key={String(pos.symbol)} className="text-[11px] text-slate-500 border-t border-white/5 pt-2">
-                    Local view: {String(pos.symbol)} qty {String(pos.qty ?? "—")} ({String(pos.source ?? "local")})
-                  </div>
-                ))}
-              </div>
-            )}
-          </GlassPanel>
-
-          <GlassPanel title="Open positions (legacy table)">
-            {meta.positions?.error ? (
-              <PanelError title="Positions fetch failed" meta={meta.positions} expectedShape='{ positions: [...] }' />
-            ) : positions.length === 0 ? (
-              <EmptyState message="No open positions." />
-            ) : (
-              <div className="space-y-3">
-                {positions.map((pos) => (
-                  <article key={String(pos.symbol)} className="rounded-lg border border-white/5 bg-white/2 p-3 text-sm">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="font-semibold text-white">{String(pos.symbol)}</span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-emerald-400 text-xs">{String(pos.source ?? "broker")}</span>
-                        <button
-                          type="button"
-                          onClick={() => requestPaperSell(String(pos.symbol))}
-                          className={
-                            armedExitSymbol === String(pos.symbol)
-                              ? "rounded border border-amber-300/60 bg-amber-400/15 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-100 hover:bg-amber-400/25"
-                              : "rounded border border-rose-400/40 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-rose-200 hover:bg-rose-500/20"
-                          }
-                        >
-                          {armedExitSymbol === String(pos.symbol) ? "Confirm paper sell" : "Paper sell"}
-                        </button>
-                      </div>
-                    </div>
-                    {exitStatus[String(pos.symbol)] && (
-                      <p className="mt-2 text-[11px] text-amber-200">{exitStatus[String(pos.symbol)]}</p>
-                    )}
-                  </article>
-                ))}
+                      {exitStatus[sym] && (
+                        <p className="text-[11px] text-amber-200 mb-2">{exitStatus[sym]}</p>
+                      )}
+                      <CandleChartPanel
+                        defaultSymbol={sym}
+                        symbolOptions={[sym]}
+                        lockSymbol
+                        compact
+                        title={`${sym} · AI chart wrapper`}
+                      />
+                    </article>
+                  );
+                })}
               </div>
             )}
           </GlassPanel>
@@ -262,7 +192,7 @@ export default function PortfolioPage() {
           <GlassPanel title="Orders">
             <OrderMetricsBar summary={orderSummary} compact />
             {orders.length === 0 ? (
-              <EmptyState message="No orders on record." />
+              <EmptyState message="No orders on record yet." />
             ) : (
               <ExecutionOrdersTable rows={orders as unknown as Record<string, unknown>[]} mode="order" />
             )}

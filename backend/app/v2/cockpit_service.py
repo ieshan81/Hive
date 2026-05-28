@@ -50,7 +50,7 @@ def build_cockpit_summary(session: Session) -> dict[str, Any]:
     from app.services.trader_console_service import trader_console_status
 
     tc = trader_console_status(session)
-    shortlist = tc.get("shortlist") or []
+    shortlist = tc.get("eligible_trades") or tc.get("shortlist") or []
     breakdown = tc.get("no_trade_reason_breakdown") or {}
 
     positions = list(session.exec(select(PositionSnapshot)).all())
@@ -59,15 +59,15 @@ def build_cockpit_summary(session: Session) -> dict[str, Any]:
     )
 
     avail = int(crypto.get("usd_pairs") or len(crypto.get("symbols") or []))
-    short_n = len(shortlist)
+    eligible_n = len(shortlist)
 
     funnel = {
         "available": avail,
         "cached": avail,
         "fresh": max(0, avail - int(breakdown.get("stale_bar", 0))),
-        "eligible": int(tc.get("shortlist_count") or short_n),
+        "eligible": int(tc.get("eligible_count") or eligible_n),
         "ranked": int(tc.get("scored_symbols") or 0),
-        "shortlist": short_n,
+        "shortlist": eligible_n,
     }
 
     return {
@@ -88,7 +88,8 @@ def build_cockpit_summary(session: Session) -> dict[str, Any]:
             "stocks": stocks,
         },
         "funnel": funnel,
-        "shortlist": shortlist[:10],
+        "eligible_trades": shortlist[:24],
+        "shortlist": shortlist[:24],
         "why_zero_shortlist": tc.get("message") if not shortlist else None,
         "block_breakdown": breakdown,
         "control": _control_from_truth(truth),
@@ -130,10 +131,13 @@ def build_cockpit(session: Session) -> dict[str, Any]:
         alpaca.sync_account_cached(force=True)
         alpaca.sync_positions_cached(force=True)
 
+    from app.services.scan_limits import scan_limit
+
     wl = live_full_watchlist(session, force=True)
     funnel = live_funnel(session, cfg)
     truth = product_truth(session, cfg)
-    scores = score_active_universe(session, cfg, limit=12)
+    eval_limit = scan_limit(cfg, "universe.max_scanned_symbols_per_cycle", 0)
+    scores = score_active_universe(session, cfg, limit=eval_limit)
     weights = get_dynamic_weights(session)
 
     account = session.exec(
@@ -165,7 +169,8 @@ def build_cockpit(session: Session) -> dict[str, Any]:
         "shortlist": funnel.get("shortlist"),
         "why_zero_shortlist": funnel.get("why_zero_shortlist"),
         "block_breakdown": funnel.get("block_breakdown"),
-        "scores": score_rows[:12],
+        "scores": score_rows[:48],
+        "eligible_trades": passed[:24],
         "passed_count": len(passed),
         "weights": weights,
         "control": _control_from_truth(truth),
@@ -198,7 +203,7 @@ def build_cockpit(session: Session) -> dict[str, Any]:
 def _cockpit_narrative(funnel: dict, truth: dict, passed: list, weights: dict) -> str:
     f = funnel.get("funnel") or {}
     parts = [
-        f"Watchlist funnel: {f.get('available', 0)} available → {f.get('shortlist', 0)} shortlist.",
+        f"Watchlist funnel: {f.get('available', 0)} available → {f.get('eligible', f.get('shortlist', 0))} eligible for entry.",
         f"Paper learning {'ON' if truth.get('operator_desired_paper_learning') else 'OFF'}.",
         f"Bot may trade: {'YES' if truth.get('effective_can_place_paper_orders') else 'NO'}.",
     ]

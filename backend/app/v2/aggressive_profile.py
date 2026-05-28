@@ -28,8 +28,18 @@ def aggressive_config_patch() -> dict[str, Any]:
             "max_bar_staleness_hours": 96,
             "skip_live_quote_for_ranking": True,
             "require_1m_fresh_for_shortlist": False,
-            "max_scanned_symbols_per_cycle": 48,
-            "max_execution_shortlist": 8,
+            "max_scanned_symbols_per_cycle": 0,
+            "max_execution_shortlist": 0,
+            "max_ranked_symbols_per_cycle": 0,
+            "trade_all_eligible": True,
+        },
+        "portfolio": {
+            "max_concurrent_positions": 0,
+            "reserve_cash_pct": 10.0,
+        },
+        "allocator": {
+            "paper_trade_notional_min_usd": 12.0,
+            "paper_trade_notional_max_usd": 22.0,
         },
         "cost": {
             "edge_multiplier_paper": 1.1,

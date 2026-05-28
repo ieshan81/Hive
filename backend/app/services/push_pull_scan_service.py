@@ -26,11 +26,17 @@ class PushPullScanService:
         self.bar = BarFreshnessService(session, self.config)
         self.quote = QuoteFreshnessService(session, self.config)
 
-    def run_tick_scan(self, *, max_evaluate: int = 8) -> dict[str, Any]:
-        """Full push-pull scan with score_push_pull_setup ranking on live path."""
+    def run_tick_scan(self, *, max_evaluate: int | None = None) -> dict[str, Any]:
+        """Full push-pull scan — trade every entry_allowed symbol (no shortlist cap)."""
+        from app.services.scan_limits import scan_limit, slice_limit
+
         ensure_crypto_push_pull_baseline(self.session, self.config)
 
-        universe = build_merged_universe(self.session, self.config, limit=60, lightweight=True)
+        universe_limit = scan_limit(self.config, "universe.max_scanned_symbols_per_cycle", 0)
+        if max_evaluate is None:
+            max_evaluate = scan_limit(self.config, "universe.max_scanned_symbols_per_cycle", 0)
+
+        universe = build_merged_universe(self.session, self.config, limit=universe_limit, lightweight=True)
         reason_counts: Counter[str] = Counter()
         candidates_created = 0
         approved_count = 0
@@ -103,11 +109,11 @@ class PushPullScanService:
 
         ranked = scoring.get("scores") or []
         selected = scoring.get("selected_candidate")
+        eligible_rows = [r for r in ranked if r.get("entry_allowed")]
+        rows_to_trade = slice_limit(eligible_rows, max_evaluate)
 
         evaluated = 0
-        for row_score in ranked:
-            if evaluated >= max_evaluate:
-                break
+        for row_score in rows_to_trade:
             sym = row_score.get("symbol")
             if not sym:
                 continue
@@ -122,20 +128,6 @@ class PushPullScanService:
                 continue
             push_signals += 1
             candidates_created += 1
-
-            if not row_score.get("entry_allowed"):
-                skipped_count += 1
-                ntr = (row_score.get("no_trade_reason") or "gate_failed").lower()
-                if "spread" in ntr:
-                    reason_counts["spread_too_wide"] += 1
-                elif "stale" in ntr or "bar" in ntr or "quote" in ntr:
-                    reason_counts["data_stale"] += 1
-                elif "edge" in ntr or "cost" in ntr:
-                    reason_counts["no_edge_after_cost"] += 1
-                else:
-                    reason_counts["no_push_signal"] += 1
-                decisions_out.append({"score": row_score, "decision": "skipped", "reason": row_score.get("no_trade_reason")})
-                continue
 
             fresh = self.bar.check(sym, allow_fetch=False)
             if not fresh.get("executable"):

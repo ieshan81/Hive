@@ -97,9 +97,12 @@ def hybrid_radar_snapshot(
         fetch_quotes = False
 
     try:
-        max_eval = int(cfg_get(cfg, "universe.max_scanned_symbols_per_cycle", 36) or 36)
-        max_short = int(cfg_get(cfg, "universe.max_execution_shortlist", 3) or 3)
-        max_ranked = int(cfg_get(cfg, "universe.max_ranked_symbols_per_cycle", 20) or 20)
+        from app.services.scan_limits import scan_limit, slice_limit, zero_means_unlimited
+
+        max_eval = scan_limit(cfg, "universe.max_scanned_symbols_per_cycle", 36)
+        max_short_raw = cfg_get(cfg, "universe.max_execution_shortlist", 3)
+        max_short = 9999 if zero_means_unlimited(max_short_raw) else max(1, int(max_short_raw))
+        max_ranked = scan_limit(cfg, "universe.max_ranked_symbols_per_cycle", 20)
 
         assets = fetch_crypto_assets(force=False) or {}
         usd_pairs = sorted(s for s in assets.keys() if s.endswith("/USD"))
@@ -109,7 +112,7 @@ def hybrid_radar_snapshot(
         pipe = funnel.get("pipeline") or {}
         all_ranked = pipe.get("all_ranked") or []
         ranked = rank_universe(all_ranked, config=cfg)[:max_ranked]
-        shortlist = [r for r in ranked if not r.get("dropped")][:max_short]
+        shortlist = slice_limit([r for r in ranked if not r.get("dropped")], max_short)
         if funnel.get("degraded") or rate_limited:
             shortlist = []
 
@@ -118,7 +121,7 @@ def hybrid_radar_snapshot(
             not funnel.get("degraded")
             and not rate_limited
             and eligible_count > 0
-            and shortlist
+            and bool(shortlist)
         )
         tier_counts: dict[str, int] = {}
         tier_samples: dict[str, list[str]] = {}

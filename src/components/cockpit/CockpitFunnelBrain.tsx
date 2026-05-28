@@ -12,7 +12,7 @@ const STAGES = [
   ["fresh", "Fresh"],
   ["eligible", "Eligible"],
   ["ranked", "Ranked"],
-  ["shortlist", "Shortlist"],
+  ["shortlist", "To trade"],
 ] as const;
 
 export function CockpitFunnelBrain({ funnel, blockers, aiNote }: Props) {

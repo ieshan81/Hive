@@ -313,7 +313,10 @@ def build_pipeline_snapshot(
 
     cached = [m["symbol"] for m in symbol_metrics]
     eligible_syms = [r for r in ranked if r.get("eligible") and not r.get("dropped")]
-    shortlist = [r for r in eligible_syms[:max_shortlist]]
+    if max_shortlist <= 0:
+        shortlist = eligible_syms
+    else:
+        shortlist = eligible_syms[:max_shortlist]
 
     return {
         "cycle_id": cycle_id,

@@ -338,8 +338,16 @@ def score_active_universe(
         }
     if universe is None:
         from app.services.universe_builder import build_merged_universe
+        from app.services.scan_limits import scan_limit, slice_limit
 
-        universe = build_merged_universe(session, cfg, limit=60, lightweight=True)
+        universe_limit = scan_limit(cfg, "universe.max_scanned_symbols_per_cycle", 0)
+        universe = build_merged_universe(session, cfg, limit=universe_limit, lightweight=True)
+
+    eval_limit = limit
+    if limit <= 0:
+        from app.services.scan_limits import scan_limit
+
+        eval_limit = scan_limit(cfg, "universe.max_scanned_symbols_per_cycle", 0)
 
     positions = session.exec(select(PositionSnapshot)).all()
     open_syms = {
@@ -352,7 +360,10 @@ def score_active_universe(
         u
         for u in universe
         if u.get("status") == "Active" and u.get("asset_type") in ("Crypto", "Stock")
-    ][:limit]
+    ]
+    from app.services.scan_limits import slice_limit
+
+    active_assets = slice_limit(active_assets, eval_limit)
 
     scored_rows: list[dict[str, Any]] = []
     for row in active_assets:

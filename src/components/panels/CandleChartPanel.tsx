@@ -29,18 +29,81 @@ type PriceLine = {
   color: string;
   title: string;
   lineStyle?: number;
+  axisLabelVisible?: boolean;
+  kind?: string;
+};
+
+type OverlaySummary = {
+  entry?: number;
+  stop_loss?: number;
+  take_profit?: number;
+  risk_reward?: number;
 };
 
 type ChartContextPayload = {
   status: string;
   markers?: ChartMarker[];
   price_lines?: PriceLine[];
+  overlay_summary?: OverlaySummary;
   ai_narrative?: string;
 };
 
+function OverlayLegend({ summary, lines }: { summary?: OverlaySummary; lines?: PriceLine[] }) {
+  const items =
+    summary && (summary.entry || summary.stop_loss || summary.take_profit)
+      ? [
+          summary.entry != null ? { label: "Entry", value: summary.entry, color: "#00dbe9" } : null,
+          summary.stop_loss != null ? { label: "Stop", value: summary.stop_loss, color: "#EF4444" } : null,
+          summary.take_profit != null ? { label: "Target", value: summary.take_profit, color: "#00FF66" } : null,
+        ].filter(Boolean)
+      : (lines ?? []).map((l) => ({
+          label: l.title,
+          value: l.price,
+          color: l.color,
+        }));
+
+  if (!items.length) return null;
+
+  return (
+    <div className="flex flex-wrap gap-2 mb-2">
+      {items.map((item) => (
+        <span
+          key={`${item!.label}-${item!.value}`}
+          className="inline-flex items-center gap-1.5 rounded border border-white/10 bg-black/30 px-2 py-1 text-[10px]"
+        >
+          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: item!.color }} />
+          <span className="text-slate-400">{item!.label}</span>
+          <span className="text-white mono-metric">{Number(item!.value).toFixed(4)}</span>
+        </span>
+      ))}
+      {summary?.risk_reward != null && (
+        <span className="inline-flex items-center rounded border border-violet-500/20 bg-violet-950/30 px-2 py-1 text-[10px] text-violet-200">
+          R:R {summary.risk_reward}
+        </span>
+      )}
+      <span className="inline-flex items-center gap-1 text-[10px] text-slate-500">
+        <span className="h-2 w-2 rounded-full bg-[#00FF66]" /> fill
+        <span className="h-2 w-2 rounded-full bg-[#a78bfa] ml-1" /> AI
+      </span>
+    </div>
+  );
+}
+
 const DEFAULT_SYMBOLS = ["BTC/USD", "ETH/USD", "SOL/USD", "DOGE/USD", "AVAX/USD", "LINK/USD"];
 
-export function CandleChartPanel({ defaultSymbol = "BTC/USD" }: { defaultSymbol?: string }) {
+export function CandleChartPanel({
+  defaultSymbol = "BTC/USD",
+  symbolOptions,
+  compact = false,
+  lockSymbol = false,
+  title = "Live Candles + AI brain",
+}: {
+  defaultSymbol?: string;
+  symbolOptions?: string[];
+  compact?: boolean;
+  lockSymbol?: boolean;
+  title?: string;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ReturnType<typeof import("lightweight-charts").createChart> | null>(null);
   const seriesRef = useRef<ReturnType<
@@ -53,6 +116,10 @@ export function CandleChartPanel({ defaultSymbol = "BTC/USD" }: { defaultSymbol?
   const [meta, setMeta] = useState<{ count: number; last?: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [brainNote, setBrainNote] = useState<string | null>(null);
+  const [overlaySummary, setOverlaySummary] = useState<OverlaySummary | undefined>();
+  const [priceLines, setPriceLines] = useState<PriceLine[]>([]);
+
+  const symbols = symbolOptions?.length ? symbolOptions : DEFAULT_SYMBOLS;
 
   const clearPriceLines = () => {
     for (const line of priceLinesRef.current) {
@@ -81,11 +148,14 @@ export function CandleChartPanel({ defaultSymbol = "BTC/USD" }: { defaultSymbol?
         price: pl.price,
         color: pl.color,
         title: pl.title,
-        lineWidth: 1,
+        lineWidth: pl.kind === "entry" ? 2 : 1,
         lineStyle: pl.lineStyle ?? 2,
+        axisLabelVisible: pl.axisLabelVisible ?? false,
       });
       priceLinesRef.current.push(line);
     }
+    setOverlaySummary(ctx.overlay_summary);
+    setPriceLines(ctx.price_lines ?? []);
     setBrainNote(ctx.ai_narrative ?? null);
   }, []);
 
@@ -109,6 +179,8 @@ export function CandleChartPanel({ defaultSymbol = "BTC/USD" }: { defaultSymbol?
       clearPriceLines();
       setMeta(null);
       setBrainNote(null);
+      setOverlaySummary(undefined);
+      setPriceLines([]);
       setLoading(false);
       return;
     }
@@ -139,7 +211,7 @@ export function CandleChartPanel({ defaultSymbol = "BTC/USD" }: { defaultSymbol?
       if (disposed || !containerRef.current) return;
       const chart = createChart(containerRef.current, {
         width: containerRef.current.clientWidth,
-        height: 360,
+        height: compact ? 220 : 360,
         layout: {
           background: { type: ColorType.Solid, color: "#0a0b0f" },
           textColor: "#b9cacb",
@@ -187,22 +259,28 @@ export function CandleChartPanel({ defaultSymbol = "BTC/USD" }: { defaultSymbol?
   }, [load]);
 
   return (
-    <GlassPanel title="Live Candles + AI brain" icon={<CandlestickChart className="h-4 w-4 text-hive-cyan" />}>
-      <p className="text-[10px] text-slate-500 mb-2">
-        TradingView Lightweight Charts · green/red arrows = paper fills · purple = AI signal · lines = SL/TP cage
-      </p>
+    <GlassPanel title={title} icon={<CandlestickChart className="h-4 w-4 text-hive-cyan" />}>
+      {!compact && (
+        <p className="text-[10px] text-slate-500 mb-2">
+          TradingView Lightweight Charts · arrows = fills · purple = AI signal · lines = SL/TP bands
+        </p>
+      )}
       <div className="flex flex-wrap gap-2 mb-2 items-center">
-        <select
-          value={symbol}
-          onChange={(e) => setSymbol(e.target.value)}
-          className="text-[10px] bg-black/40 border border-white/10 rounded px-2 py-1 text-slate-200"
-        >
-          {DEFAULT_SYMBOLS.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
+        {lockSymbol ? (
+          <span className="text-[11px] font-semibold text-white">{symbol}</span>
+        ) : (
+          <select
+            value={symbol}
+            onChange={(e) => setSymbol(e.target.value)}
+            className="text-[10px] bg-black/40 border border-white/10 rounded px-2 py-1 text-slate-200"
+          >
+            {symbols.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        )}
         <select
           value={timeframe}
           onChange={(e) => setTimeframe(e.target.value)}
@@ -227,6 +305,7 @@ export function CandleChartPanel({ defaultSymbol = "BTC/USD" }: { defaultSymbol?
           {brainNote}
         </p>
       )}
+      <OverlayLegend summary={overlaySummary} lines={priceLines} />
       {loading && <p className="text-[10px] text-slate-500 mb-1">Loading candles…</p>}
       {error && <p className="text-[10px] text-amber-400 mb-1">{error}</p>}
       <div ref={containerRef} className="w-full rounded-lg border border-white/[0.06] overflow-hidden" />
