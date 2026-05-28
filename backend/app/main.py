@@ -50,6 +50,7 @@ from app.routers import (
     trader_console,
     dynamic_strategy,
 )
+from app.v2 import router as v2_router
 from app.services.database_bootstrap_service import repair_database_bootstrap
 from app.services.startup import bootstrap_database
 
@@ -112,6 +113,7 @@ app.include_router(page_state.router)
 app.include_router(diagnostics_export.router)
 app.include_router(trader_console.router)
 app.include_router(dynamic_strategy.router)
+app.include_router(v2_router.router)
 
 
 @app.on_event("startup")

@@ -26,6 +26,7 @@ import { fetchAlpacaConnected } from "@/lib/brokerStatus";
 // Active state: cyan left-accent + faint cyan tint + tactical-green status border
 
 const navItems = [
+  { href: "/cockpit", label: "AI Cockpit", icon: Brain },
   { href: "/", label: "Mission Control", icon: LayoutDashboard },
   { href: "/universe", label: "Universe Radar", icon: Globe },
   { href: "/push-pull", label: "Push-Pull Trader", icon: TrendingUp },

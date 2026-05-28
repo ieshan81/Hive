@@ -1,5 +1,6 @@
-import { TraderConsolePanel } from "@/components/panels/TraderConsolePanel";
+import { redirect } from "next/navigation";
 
-export default function MissionControlPage() {
-  return <TraderConsolePanel />;
+/** Research v2 — AI cockpit is the primary entry (live truth, no snapshot cache). */
+export default function HomePage() {
+  redirect("/cockpit");
 }

@@ -7,9 +7,11 @@ export const ALLOWED_POST_EXACT_PATHS = [
   "/api/danger-zone/nuke-everything",
   "/api/danger-zone/ready-for-live-cleanup",
   "/api/admin/repair-database-bootstrap",
+  "/api/diagnostics/export/run",
 ] as const;
 
 export const ALLOWED_POST_PREFIXES = [
+  "/api/v2/",
   "/api/market-data/",
   "/api/universe/",
   "/api/mission-control/",
