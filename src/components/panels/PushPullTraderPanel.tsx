@@ -36,6 +36,12 @@ function numeric(value: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+function priceLabel(value: unknown): string {
+  const n = numeric(value);
+  if (!n) return "-";
+  return n >= 1 ? n.toFixed(4) : n.toFixed(8);
+}
+
 export function PushPullTraderPanel() {
   const [status, setStatus] = useState<Record<string, unknown> | null>(null);
   const [lessons, setLessons] = useState<Record<string, unknown>[]>([]);
@@ -217,10 +223,45 @@ export function PushPullTraderPanel() {
               <span className="text-slate-500">Edge after cost: </span>
               <span className="text-white">{numeric(topCandidate.edge_after_cost_bps).toFixed(1)} bps</span>
             </div>
+            <div>
+              <span className="text-slate-500">Risk reward: </span>
+              <span className="text-white">{numeric(topCandidate.risk_reward).toFixed(2)}R</span>
+            </div>
             <div className="col-span-2">
               <span className="text-slate-500">Decision: </span>
               <span className="text-white">{humanize(String(topCandidate.no_trade_reason ?? "waiting"))}</span>
             </div>
+            {(() => {
+              const levels = (topCandidate.dynamic_exit_levels as Record<string, unknown>) ?? {};
+              if (!levels.stop_loss && !levels.take_profit) return null;
+              return (
+                <div className="col-span-2 mt-2 rounded-lg border border-cyan-300/15 bg-cyan-300/[0.04] p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="text-[10px] uppercase tracking-wide text-cyan-200">Dynamic exit bars</span>
+                    <span className="text-[10px] text-slate-400">
+                      {String(levels.volatility_regime ?? "unknown")} volatility
+                    </span>
+                  </div>
+                  <div className="grid gap-1.5 sm:grid-cols-2">
+                    {[
+                      ["Entry", levels.entry_price, "text-white"],
+                      ["Stop", levels.stop_loss, "text-rose-300"],
+                      ["Target", levels.take_profit, "text-emerald-300"],
+                      ["Trail", levels.trailing_stop, "text-amber-200"],
+                      ["Invalidation", levels.invalidation_price, "text-orange-200"],
+                    ].map(([label, value, tone]) => (
+                      <div key={String(label)} className="flex items-center justify-between rounded border border-white/5 bg-black/20 px-2 py-1">
+                        <span className="text-slate-500">{String(label)}</span>
+                        <span className={`${tone} font-mono`}>{priceLabel(value)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-[10px] text-slate-400">
+                    Stop, target, trail, and invalidation move from ATR, spread, push quality, edge, and sentiment context.
+                  </p>
+                </div>
+              );
+            })()}
             {(() => {
               const components = (topCandidate.score_components as Record<string, unknown>) ?? {};
               return (

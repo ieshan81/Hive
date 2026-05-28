@@ -244,6 +244,7 @@ class HistoricalDataService:
         lookback_days: Optional[int] = None,
         max_staleness_hours: Optional[float] = None,
         force_refresh: bool = False,
+        asset_class: Optional[str] = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """Load from DB or fetch from Alpaca if insufficient or stale; trim to lookback window."""
         lb = lookback_days or 90
@@ -267,11 +268,13 @@ class HistoricalDataService:
 
         if _needs_fetch():
             fetch_lb = min(lb, 7) if max_staleness_hours else lb
+            resolved_asset_class = asset_class or ("crypto" if "/" in symbol else "stock")
             fetch = self.fetch_and_store(
                 symbol,
                 timeframe=timeframe,
                 limit=min(500, max(100, fetch_lb * 24 * 12)),
                 lookback_days=fetch_lb,
+                asset_class=resolved_asset_class,
             )
             if fetch.get("status") != "ok":
                 return [], {"error": fetch.get("message"), "confidence": "none", **fetch}

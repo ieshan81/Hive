@@ -10,9 +10,12 @@ from sqlmodel import Session, select
 from app.database import PositionSnapshot, StrategySignal
 from app.services.aggressive_paper_learning_service import AggressivePaperLearningService
 from app.services.config_manager import ConfigManager
+from app.services.dynamic_exit_levels_service import compute_dynamic_exit_levels, exit_trigger_for_long
+from app.services.historical_data_service import HistoricalDataService
 from app.services.lesson_memory_service import LessonMemoryService
 from app.services.meme_volatility_spike_detector import MemeVolatilitySpikeDetector
 from app.services.position_hold_time_service import build_position_truth, resolve_entry_time
+from app.services.symbol_normalize import display_symbol, symbols_match
 
 
 class OpenPositionReviewService:
@@ -42,6 +45,7 @@ class OpenPositionReviewService:
         strategy = truth.get("strategy_name")
         signal_id = truth.get("signal_id")
         intent = self._strategy_intent(strategy, signal_id)
+        dynamic_levels = self._dynamic_levels(symbol, pos, truth)
 
         push_pull_max = int(
             self.pl_cfg.get("push_pull_max_hold_minutes")
@@ -77,6 +81,17 @@ class OpenPositionReviewService:
             reason = "approaching_max_hold"
             stale_status = "warning"
 
+        exit_trigger = None
+        if dynamic_levels and str(pos.side or "long").lower() != "short":
+            exit_trigger = exit_trigger_for_long(
+                current_price=float(pos.current_price or pos.avg_entry_price or 0),
+                levels=dynamic_levels,
+            )
+            if exit_trigger:
+                action = "exit_recommended"
+                reason = str(exit_trigger.get("reason") or "dynamic_exit_level_hit")
+                stale_status = "exit_signal"
+
         spike = MemeVolatilitySpikeDetector(self.session, self.config).evaluate_symbol(symbol)
         return {
             **truth,
@@ -92,6 +107,8 @@ class OpenPositionReviewService:
             "stale_status": stale_status,
             "action": action,
             "reason": reason,
+            "dynamic_exit_levels": dynamic_levels,
+            "exit_trigger": exit_trigger,
             "exit_status": truth.get("exit_status", "open"),
             "monitor_status": truth.get("monitor_status", "active"),
             "manipulation_risk": spike.get("manipulation_risk"),
@@ -108,6 +125,66 @@ class OpenPositionReviewService:
             if sig and "push" in (sig.strategy or "").lower():
                 return "quick_push_pull"
         return "standard"
+
+    def _dynamic_levels(
+        self, symbol: str, pos: PositionSnapshot, truth: dict[str, Any]
+    ) -> Optional[dict[str, Any]]:
+        sig = None
+        signal_id = truth.get("signal_id")
+        if signal_id:
+            sig = self.session.get(StrategySignal, signal_id)
+        if not sig:
+            rows = list(
+                self.session.exec(select(StrategySignal).order_by(StrategySignal.created_at.desc()).limit(100)).all()
+            )
+            sig = next((row for row in rows if symbols_match(row.symbol, symbol)), None)
+
+        meta_raw = (sig.signal_metadata or {}) if sig else {}
+        meta = meta_raw if isinstance(meta_raw, dict) else {}
+        stored = meta.get("dynamic_exit_levels") if isinstance(meta.get("dynamic_exit_levels"), dict) else None
+        entry = float(pos.avg_entry_price or truth.get("avg_entry_price") or 0)
+        current = float(pos.current_price or entry or 0)
+        if entry <= 0:
+            return stored if isinstance(stored, dict) else None
+
+        asset_class = (getattr(sig, "asset_class", None) or ("crypto" if "/" in display_symbol(symbol) else "stock")).lower()
+        hist_symbol = display_symbol(symbol) if asset_class == "crypto" else symbol
+        hist = HistoricalDataService(self.session, self.config)
+        bars: list[dict[str, Any]] = []
+        for timeframe, lookback_days in (("1Min", 2), ("5Min", 7)):
+            try:
+                bars, _meta = hist.get_bars(
+                    hist_symbol,
+                    timeframe=timeframe,
+                    min_rows=15,
+                    lookback_days=lookback_days,
+                    max_staleness_hours=2.0,
+                    asset_class=asset_class,
+                )
+            except Exception:
+                bars = []
+            if bars:
+                break
+
+        quote = {
+            "mid": current,
+            "spread_pct": meta.get("spread_pct"),
+        }
+        signal_meta = meta.get("push_pull_score") if isinstance(meta.get("push_pull_score"), dict) else {}
+        try:
+            return compute_dynamic_exit_levels(
+                self.config,
+                symbol=hist_symbol,
+                side="buy",
+                entry_price=entry,
+                current_price=current,
+                bars=bars,
+                quote=quote,
+                signal_meta=signal_meta,
+                tier=meta.get("tier"),
+            ).to_dict()
+        except Exception:
+            return stored if isinstance(stored, dict) else None
 
     def _stale_memory(
         self, symbol: str, strategy: Optional[str], hold_min: float, max_hold: int, pos: PositionSnapshot

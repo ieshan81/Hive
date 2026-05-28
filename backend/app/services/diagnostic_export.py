@@ -127,6 +127,7 @@ def serialize_activity(row: ActivityLog) -> dict[str, Any]:
 
 def serialize_strategy_signal(row: StrategySignal) -> dict[str, Any]:
     meta = row.signal_metadata if isinstance(row.signal_metadata, dict) else {}
+    levels = meta.get("dynamic_exit_levels") if isinstance(meta.get("dynamic_exit_levels"), dict) else {}
     return {
         "id": row.id,
         "cycle_run_id": row.cycle_run_id,
@@ -143,8 +144,47 @@ def serialize_strategy_signal(row: StrategySignal) -> dict[str, Any]:
         "invalidation_reason": meta.get("invalidation_reason"),
         "stop_loss": row.stop_loss,
         "take_profit": row.take_profit,
+        "trailing_stop": levels.get("trailing_stop"),
+        "invalidation_price": levels.get("invalidation_price"),
+        "dynamic_exit_levels": levels or None,
         "expected_hold_time": meta.get("expected_hold_time"),
         "created_at": _iso(row.created_at),
+    }
+
+
+def _export_dynamic_exit_levels(session: Session) -> dict[str, Any]:
+    rows = list(
+        session.exec(select(StrategySignal).order_by(StrategySignal.created_at.desc()).limit(50)).all()
+    )
+    signals = []
+    for row in rows:
+        meta = row.signal_metadata if isinstance(row.signal_metadata, dict) else {}
+        levels = meta.get("dynamic_exit_levels")
+        if not isinstance(levels, dict):
+            continue
+        signals.append(
+            {
+                "signal_id": row.id,
+                "cycle_run_id": row.cycle_run_id,
+                "symbol": row.symbol,
+                "strategy": row.strategy,
+                "side": row.side,
+                "stop_loss": row.stop_loss,
+                "take_profit": row.take_profit,
+                "trailing_stop": levels.get("trailing_stop"),
+                "invalidation_price": levels.get("invalidation_price"),
+                "risk_reward": levels.get("risk_reward"),
+                "volatility_regime": levels.get("volatility_regime"),
+                "dynamic_exit_levels": levels,
+                "created_at": _iso(row.created_at),
+            }
+        )
+    return {
+        "generated_at_utc": datetime.utcnow().isoformat() + "Z",
+        "schema_version": "1.0",
+        "status": "ok",
+        "signals_with_dynamic_levels": len(signals),
+        "signals": signals,
     }
 
 
@@ -1286,6 +1326,11 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
                 ).push_pull_scores_export(session, cfg_brain),
                 export_errors,
             ),
+            "dynamic_exit_levels.json": safe_export_section(
+                "dynamic_exit_levels.json",
+                lambda: _export_dynamic_exit_levels(session),
+                export_errors,
+            ),
             "no_trade_reason_breakdown.json": safe_export_section(
                 "no_trade_reason_breakdown.json",
                 lambda: __import__(
@@ -1872,6 +1917,7 @@ BUNDLE_FILE_GROUPS: dict[str, list[str]] = {
     "Push-Pull": [
         "push_pull_latest_tick.json",
         "push_pull_scores.json",
+        "dynamic_exit_levels.json",
         "push_pull_decisions.json",
         "no_trade_reason_breakdown.json",
     ],

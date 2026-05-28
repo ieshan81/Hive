@@ -22,7 +22,9 @@ from app.services.aggressive_paper_learning_service import AggressivePaperLearni
 from app.services.alpaca_adapter import AlpacaAdapter, normalize_crypto_symbol
 from app.services.broker_safety import broker_base_url, is_paper_broker_url, live_lock_status
 from app.services.config_manager import ConfigManager
+from app.services.dynamic_exit_levels_service import compute_dynamic_exit_levels
 from app.services.engine_config import cfg_get
+from app.services.historical_data_service import HistoricalDataService
 from app.services.lesson_memory_service import LessonMemoryService
 from app.services.meme_volatility_spike_detector import MemeVolatilitySpikeDetector
 from app.services.open_position_review_service import OpenPositionReviewService
@@ -57,6 +59,28 @@ class TrainingExecutionService:
                 reasoning=details.get("message", "")[:500],
             )
         )
+
+    def _exit_bars_for_symbol(self, symbol: str, asset_class: str) -> list[dict[str, Any]]:
+        hist = HistoricalDataService(self.session, self.config)
+        for timeframe, min_rows, lookback_days in (("1Min", 15, 2), ("5Min", 15, 7)):
+            try:
+                bars, meta = hist.get_bars(
+                    symbol,
+                    timeframe=timeframe,
+                    min_rows=min_rows,
+                    lookback_days=lookback_days,
+                    max_staleness_hours=2.0,
+                    asset_class=asset_class,
+                )
+            except Exception:
+                continue
+            if bars:
+                for row in bars:
+                    row["timeframe"] = timeframe
+                return bars
+            if meta.get("error") and timeframe == "5Min":
+                return []
+        return []
 
     def preflight_training(self) -> dict[str, Any]:
         blockers = []
@@ -163,13 +187,22 @@ class TrainingExecutionService:
             notional = min(notional, exp_max * 0.75) if exp_max > 0 and not dynamic_formula_mode else notional
         qty = round(notional / mid, 8)
         tier = getattr(tier_info, "tier", str(tier_info))
-        cpp = self.config.get("crypto_push_pull") or {}
-        stop_pct = float(cpp.get("stop_loss_pct", 0.02))
-        take_pct = float(cpp.get("take_profit_pct", 0.03))
-        expected_move = float(cpp.get("momentum_threshold_1h", 0.004))
         signal_meta = (dec.risk_snapshot_json or {}).get("signal_meta") or {}
-        expected_move_pct = float(signal_meta.get("expected_move_pct") or (max(take_pct, expected_move) * 100.0))
-        stop_loss = mid * (1 - stop_pct) if dec.side == "buy" else mid * (1 + stop_pct)
+        exit_bars = self._exit_bars_for_symbol(dec.symbol, asset_class)
+        levels = compute_dynamic_exit_levels(
+            self.config,
+            symbol=dec.symbol,
+            side=dec.side,
+            entry_price=mid,
+            current_price=mid,
+            bars=exit_bars,
+            quote=quote,
+            signal_meta=signal_meta,
+            tier=tier,
+        )
+        dynamic_levels = levels.to_dict()
+        expected_move_pct = float(signal_meta.get("expected_move_pct") or levels.expected_move_pct)
+        stop_loss = levels.stop_loss
         max_hold_h = 6.5 if asset_class == "stock" else float(self.pl.cfg.get("meme_coin_max_hold_minutes", 240)) / 60.0
         if asset_class == "crypto" and spike.get("tier") == "MAJOR_CRYPTO":
             max_hold_h = float(self.pl.cfg.get("major_crypto_max_hold_hours", 48))
@@ -185,7 +218,7 @@ class TrainingExecutionService:
             confidence=0.65,
             status="generated",
             stop_loss=stop_loss,
-            take_profit=mid * 1.03 if dec.side == "buy" else mid * 0.97,
+            take_profit=levels.take_profit,
             signal_type="entry" if dec.side == "buy" else "exit",
             cycle_run_id=cycle_run_id,
             signal_metadata={
@@ -197,12 +230,17 @@ class TrainingExecutionService:
                 "tier": tier,
                 "max_hold_hours": max_hold_h,
                 "expected_hold_time": f"{max_hold_h}h",
-                "exit_strategy": "time_stop_and_momentum",
+                "exit_strategy": "dynamic_stop_take_profit_bars",
                 "spread_pct": quote.get("spread_pct"),
                 "expected_move_pct": expected_move_pct,
-                "edge_over_cost": float(cpp.get("edge_min_over_cost", 1.2)),
+                "edge_over_cost": dynamic_levels.get("risk_reward"),
                 "paper_experiment_decision_id": dec.id,
                 "push_pull_score": signal_meta,
+                "dynamic_exit_levels": dynamic_levels,
+                "stop_loss_bar": dynamic_levels.get("bars", {}).get("stop_loss"),
+                "take_profit_bar": dynamic_levels.get("bars", {}).get("take_profit"),
+                "trailing_stop_bar": dynamic_levels.get("bars", {}).get("trailing_stop"),
+                "invalidation_bar": dynamic_levels.get("bars", {}).get("invalidation"),
                 "broker_mode": "paper",
                 "live_trading_locked": True,
             },

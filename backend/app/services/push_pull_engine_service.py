@@ -134,6 +134,9 @@ class PushPullEngineService:
     def signals(self, symbol: Optional[str] = None, timeframe: str = "5Min") -> dict[str, Any]:
         """Plain push-pull signal view for operator (candles used internally)."""
         from app.services.technical_candle_analysis_service import TechnicalCandleAnalysisService
+        from app.services.dynamic_exit_levels_service import compute_dynamic_exit_levels
+        from app.services.historical_data_service import HistoricalDataService
+        from app.services.alpaca_adapter import normalize_crypto_symbol
 
         sym = symbol
         if not sym:
@@ -187,6 +190,41 @@ class PushPullEngineService:
         entry_level = support or candle.get("last_price")
         profit_target = resistance
         stop_level = (candle.get("annotations") or [{}])[0].get("invalidation_level") if candle.get("annotations") else None
+        dynamic_levels = None
+        last_price = candle.get("last_price")
+        if last_price:
+            try:
+                asset_class = "crypto" if "/" in sym or str(sym).upper().endswith("USD") else "stock"
+                hist_symbol = normalize_crypto_symbol(sym) if asset_class == "crypto" else sym
+                bars, _bar_meta = HistoricalDataService(self.session, self.config).get_bars(
+                    hist_symbol,
+                    timeframe=timeframe,
+                    min_rows=15,
+                    lookback_days=7,
+                    max_staleness_hours=2.0,
+                    asset_class=asset_class,
+                )
+                signal_meta = (
+                    (last_dec.risk_snapshot_json or {}).get("signal_meta") or {}
+                    if last_dec and isinstance(last_dec.risk_snapshot_json, dict)
+                    else {}
+                )
+                dynamic_levels = compute_dynamic_exit_levels(
+                    self.config,
+                    symbol=hist_symbol,
+                    side="buy",
+                    entry_price=float(last_price),
+                    current_price=float(last_price),
+                    bars=bars,
+                    quote={"mid": last_price},
+                    signal_meta=signal_meta,
+                    tier=signal_meta.get("tier") if isinstance(signal_meta, dict) else None,
+                ).to_dict()
+                entry_level = dynamic_levels.get("entry_price")
+                profit_target = dynamic_levels.get("take_profit")
+                stop_level = dynamic_levels.get("stop_loss")
+            except Exception:
+                dynamic_levels = None
 
         skip_reason = None
         if last_dec and last_dec.decision != "approved":
@@ -214,11 +252,15 @@ class PushPullEngineService:
                 "entry_level": entry_level,
                 "profit_target": profit_target,
                 "stop_safety_level": stop_level,
+                "trailing_stop": (dynamic_levels or {}).get("trailing_stop"),
+                "invalidation_level": (dynamic_levels or {}).get("invalidation_price"),
+                "risk_reward": (dynamic_levels or {}).get("risk_reward"),
                 "spread_cost_note": spread_note,
                 "expected_edge_note": "Edge checked after spread/cost on tick",
                 "skip_reason": skip_reason,
                 "next_action": next_action,
             },
+            "dynamic_exit_levels": dynamic_levels,
             "candle_summary": {
                 "bar_count": candle.get("bar_count"),
                 "last_price": candle.get("last_price"),

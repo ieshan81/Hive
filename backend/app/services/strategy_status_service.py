@@ -56,8 +56,10 @@ def strategy_status(session: Session, config: Optional[dict] = None) -> dict[str
             "Alpaca min notional or precision validation failure",
         ],
         "exit_triggers": [
-            "Profit target (push_pull.profit_target_bps)",
-            "ATR stop (push_pull.atr_stop_multiplier)",
+            "Dynamic take-profit bar (ATR, spread, push quality, edge)",
+            "Dynamic stop-loss bar (ATR, spread cushion, signal quality)",
+            "Dynamic trailing bar after favorable movement",
+            "Invalidation bar when the setup breaks before hard stop",
             "Timeout (push_pull.timeout_minutes)",
             "Stale quote exit",
             "Spread blowout exit",

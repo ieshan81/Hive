@@ -11,6 +11,7 @@ from sqlmodel import Session, select
 from app.database import PositionSnapshot, StrategyRegistry
 from app.services.bar_freshness_service import BarFreshnessService
 from app.services.config_manager import ConfigManager
+from app.services.dynamic_exit_levels_service import compute_dynamic_exit_levels
 from app.services.historical_data_service import HistoricalDataService
 from app.services.quote_freshness_service import QuoteFreshnessService
 from app.trading_cage.push_pull_engine import score_push_pull_setup
@@ -131,6 +132,28 @@ def score_symbol(
     pull_exit = scored.pull_exit_score if has_position else None
     version = _strategy_version(session)
     th = _thresholds(config)
+    dynamic_levels = None
+    entry_price = float(metrics.get("current_price") or quote.get("mid") or 0)
+    if entry_price > 0:
+        try:
+            dynamic_levels = compute_dynamic_exit_levels(
+                config,
+                symbol=symbol,
+                side="buy",
+                entry_price=entry_price,
+                current_price=entry_price,
+                bars=bars,
+                quote=quote,
+                signal_meta={
+                    "push_score": scored.push_score,
+                    "trade_quality_score": scored.trade_quality_score,
+                    "edge_after_cost_bps": scored.edge_after_cost_bps,
+                    "score_components": scored.evidence,
+                },
+                tier=tier,
+            ).to_dict()
+        except Exception as exc:
+            dynamic_levels = {"status": "unavailable", "error": type(exc).__name__}
     return {
         "symbol": symbol,
         "strategy_id": strategy_id,
@@ -145,6 +168,12 @@ def score_symbol(
         "no_trade_reason": scored.no_trade_reason,
         "gate_results": scored.gate_results,
         "score_components": scored.evidence,
+        "dynamic_exit_levels": dynamic_levels,
+        "stop_loss": (dynamic_levels or {}).get("stop_loss"),
+        "take_profit": (dynamic_levels or {}).get("take_profit"),
+        "trailing_stop": (dynamic_levels or {}).get("trailing_stop"),
+        "invalidation_price": (dynamic_levels or {}).get("invalidation_price"),
+        "risk_reward": (dynamic_levels or {}).get("risk_reward"),
         "threshold_values": th,
         "bar_freshness": bar_chk.get("bar_freshness"),
         "quote_freshness": quote_chk.get("quote_freshness"),

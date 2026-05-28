@@ -1,7 +1,7 @@
 """Default risk/config — all thresholds in DB, versioned via ConfigManager."""
 
 DEFAULT_CONFIG = {
-    "config_version": 4,
+    "config_version": 5,
     "max_risk_per_trade": 0.005,
     "max_position_size_pct": 1.0,
     "max_open_positions": 0,
@@ -63,6 +63,18 @@ DEFAULT_CONFIG = {
         "max_daily_loss_pct": 2.0,
         "max_strategy_drawdown_pct": 8.0,
         "max_rejection_rate": 0.5,
+        "dynamic_exits": {
+            "atr_period": 14,
+            "atr_stop_multiplier": 2.0,
+            "fallback_stop_pct": 0.02,
+            "min_stop_bps": 35.0,
+            "max_stop_bps": 500.0,
+            "spread_cushion_multiplier": 3.0,
+            "base_target_r_multiple": 1.35,
+            "max_target_r_multiple": 2.75,
+            "profit_target_bps": 300.0,
+            "trailing_giveback_bps": 100.0,
+        },
     },
     "allocator": {
         "paper_trade_notional_min_usd": 20.0,

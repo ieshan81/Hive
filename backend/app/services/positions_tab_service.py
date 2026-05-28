@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 
 from app.database import ExecutionLog, LessonNode, OrderRecord, PositionSnapshot, StrategySignal, TradeRecord
 from app.services.alpaca_adapter import AlpacaAdapter
+from app.services.symbol_normalize import symbols_match
 
 
 def current_positions(session: Session) -> list[dict[str, Any]]:
@@ -22,14 +23,16 @@ def current_positions(session: Session) -> list[dict[str, Any]]:
         seen.add(p.symbol)
         stop = None
         tp = None
-        sig = session.exec(
-            select(StrategySignal)
-            .where(StrategySignal.symbol == p.symbol)
-            .order_by(StrategySignal.created_at.desc())
-        ).first()
+        sig_rows = list(
+            session.exec(select(StrategySignal).order_by(StrategySignal.created_at.desc()).limit(100)).all()
+        )
+        sig = next((row for row in sig_rows if symbols_match(row.symbol, p.symbol)), None)
+        dynamic_levels = None
         if sig:
             stop = sig.stop_loss
             tp = sig.take_profit
+            meta = sig.signal_metadata if isinstance(sig.signal_metadata, dict) else {}
+            dynamic_levels = meta.get("dynamic_exit_levels") if isinstance(meta.get("dynamic_exit_levels"), dict) else None
         dist_stop = None
         dist_target = None
         if stop and p.current_price:
@@ -47,6 +50,9 @@ def current_positions(session: Session) -> list[dict[str, Any]]:
                 "unrealized_pl_pct": p.unrealized_pl_pct,
                 "stop_loss": stop,
                 "take_profit": tp,
+                "trailing_stop": (dynamic_levels or {}).get("trailing_stop"),
+                "invalidation_price": (dynamic_levels or {}).get("invalidation_price"),
+                "dynamic_exit_levels": dynamic_levels,
                 "distance_to_stop_pct": dist_stop,
                 "distance_to_target_pct": dist_target,
                 "max_hold_hours": None,

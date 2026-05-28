@@ -63,7 +63,9 @@ def build_enriched_state(session: Session, broker_sym: str, pos: dict[str, Any])
         stop = stop or sig.stop_loss
         take_profit = take_profit or sig.take_profit
 
-    meta = (sig.signal_metadata or {}) if sig else {}
+    meta_raw = (sig.signal_metadata or {}) if sig else {}
+    meta = meta_raw if isinstance(meta_raw, dict) else {}
+    dynamic_levels = meta.get("dynamic_exit_levels") if isinstance(meta.get("dynamic_exit_levels"), dict) else None
     entry_reason = meta.get("entry_reason") or meta.get("reason")
     invalidation = meta.get("invalidation_reason")
     expected_hold = meta.get("expected_hold_time") or "12h"
@@ -90,6 +92,9 @@ def build_enriched_state(session: Session, broker_sym: str, pos: dict[str, Any])
         "client_order_id": order.broker_client_order_id if order else (el.broker_client_order_id if el else None),
         "stop_loss": stop,
         "take_profit": take_profit,
+        "trailing_stop": (dynamic_levels or {}).get("trailing_stop"),
+        "invalidation_price": (dynamic_levels or {}).get("invalidation_price"),
+        "dynamic_exit_levels": dynamic_levels,
         "expected_hold_time": expected_hold,
         "max_hold_time": max_hold,
         "exit_strategy": "atr_stop_tp" if stop else None,

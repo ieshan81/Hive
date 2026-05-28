@@ -15,7 +15,7 @@ HOLD_SOURCES = (
     "order_filled_at",
     "order_submitted_at",
     "trade_opened_at",
-    "position_state_opened_at",
+    "position_opened_at",
     "broker_opened_at",
     "sync_fallback",
 )
@@ -64,7 +64,7 @@ def resolve_entry_time(
     elif enriched and enriched.get("opened_at"):
         entry_dt = _parse_iso(enriched["opened_at"])
         if entry_dt:
-            hold_time_source = "position_state_opened_at"
+            hold_time_source = "position_opened_at"
     elif broker_opened_at:
         entry_dt = _naive_utc(broker_opened_at)
         hold_time_source = "broker_opened_at"
