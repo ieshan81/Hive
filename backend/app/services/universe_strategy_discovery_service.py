@@ -22,6 +22,7 @@ from app.services.research_memory_service import ResearchMemoryService
 from app.services.research_performance import evaluate_metrics
 from app.services.symbol_normalize import symbol_variants
 from app.services import universe_ranking_service as urs
+from app.services.ratchet_exit_service import entry_min_bars, paper_ratchet_enabled, relax_entry_stale_bar
 
 ANCHOR_SYMBOLS = ["BTC/USD", "ETH/USD"]
 DEFAULT_TOP_N = 10
@@ -118,7 +119,7 @@ def evaluate_symbol_blocks(
             blocks.append("account_pair_eligibility")
 
     bar_5m = bar_svc.check_db_only(symbol, timeframe="5Min")
-    if not bar_5m.get("fresh"):
+    if not bar_5m.get("fresh") and not relax_entry_stale_bar(config):
         blocks.append("stale_bar")
     bar_1m = bar_svc.check_db_only(symbol, timeframe="1Min")
     require_1m = bool(cfg_get(config, "universe.require_1m_fresh_for_shortlist", False))
@@ -143,7 +144,8 @@ def evaluate_symbol_blocks(
     else:
         bars_5m = _db_bars_only(session, symbol, "5Min", 80)
         bar_meta = {} if len(bars_5m) >= 14 else {"error": f"Only {len(bars_5m)} cached 5Min bars"}
-    if bar_meta.get("error") or len(bars_5m) < 14:
+    min_hist = entry_min_bars(config) if paper_ratchet_enabled(config) else 14
+    if bar_meta.get("error") or len(bars_5m) < min_hist:
         blocks.append("insufficient_historical_bars")
     else:
         _reconcile_stale_bar_block(blocks, bars_5m, config)

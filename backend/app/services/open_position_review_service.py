@@ -11,7 +11,13 @@ from app.database import PositionSnapshot, StrategySignal
 from app.services.aggressive_paper_learning_service import AggressivePaperLearningService
 from app.services.engine_config import cfg_get
 from app.services.config_manager import ConfigManager
-from app.services.dynamic_exit_levels_service import compute_dynamic_exit_levels, exit_trigger_for_long
+from app.services.dynamic_exit_levels_service import compute_dynamic_exit_levels
+from app.services.ratchet_exit_service import (
+    exit_trigger_ratchet_long,
+    merge_ratchet_into_levels,
+    paper_ratchet_enabled,
+    update_ratchet_state,
+)
 from app.services.historical_data_service import HistoricalDataService
 from app.services.lesson_memory_service import LessonMemoryService
 from app.services.meme_volatility_spike_detector import MemeVolatilitySpikeDetector
@@ -47,6 +53,18 @@ class OpenPositionReviewService:
         signal_id = truth.get("signal_id")
         intent = self._strategy_intent(strategy, signal_id)
         dynamic_levels = self._dynamic_levels(symbol, pos, truth)
+        ratchet_state: dict[str, Any] = {}
+        if paper_ratchet_enabled(self.config) and dynamic_levels:
+            entry_px = float(pos.avg_entry_price or truth.get("avg_entry_price") or 0)
+            mark = float(pos.current_price or entry_px or 0)
+            ratchet_state = update_ratchet_state(
+                self.config,
+                entry_price=entry_px,
+                current_price=mark,
+                state=self._load_ratchet_state(symbol, truth),
+            )
+            dynamic_levels = merge_ratchet_into_levels(dynamic_levels, ratchet_state)
+            self._persist_ratchet_state(symbol, truth, ratchet_state)
 
         push_pull_max = int(
             self.pl_cfg.get("push_pull_max_hold_minutes")
@@ -84,10 +102,17 @@ class OpenPositionReviewService:
 
         exit_trigger = None
         if dynamic_levels and str(pos.side or "long").lower() != "short":
-            exit_trigger = exit_trigger_for_long(
-                current_price=float(pos.current_price or pos.avg_entry_price or 0),
-                levels=dynamic_levels,
-            )
+            mark = float(pos.current_price or pos.avg_entry_price or 0)
+            if paper_ratchet_enabled(self.config) and ratchet_state:
+                exit_trigger = exit_trigger_ratchet_long(
+                    current_price=mark,
+                    levels=dynamic_levels,
+                    ratchet=ratchet_state,
+                )
+            else:
+                from app.services.dynamic_exit_levels_service import exit_trigger_for_long
+
+                exit_trigger = exit_trigger_for_long(current_price=mark, levels=dynamic_levels)
             if exit_trigger:
                 action = "exit_recommended"
                 reason = str(exit_trigger.get("reason") or "dynamic_exit_level_hit")
@@ -139,6 +164,7 @@ class OpenPositionReviewService:
             "action": action,
             "reason": reason,
             "dynamic_exit_levels": dynamic_levels,
+            "ratchet_state": ratchet_state or None,
             "exit_trigger": exit_trigger,
             "unrealized_pl": upl,
             "unrealized_pl_pct": upl_pct,
@@ -218,6 +244,28 @@ class OpenPositionReviewService:
             ).to_dict()
         except Exception:
             return stored if isinstance(stored, dict) else None
+
+    def _load_ratchet_state(self, symbol: str, truth: dict[str, Any]) -> dict[str, Any]:
+        signal_id = truth.get("signal_id")
+        if not signal_id:
+            return {}
+        sig = self.session.get(StrategySignal, signal_id)
+        if not sig or not isinstance(sig.signal_metadata, dict):
+            return {}
+        stored = sig.signal_metadata.get("paper_ratchet_state")
+        return dict(stored) if isinstance(stored, dict) else {}
+
+    def _persist_ratchet_state(self, symbol: str, truth: dict[str, Any], state: dict[str, Any]) -> None:
+        signal_id = truth.get("signal_id")
+        if not signal_id or not state:
+            return
+        sig = self.session.get(StrategySignal, signal_id)
+        if not sig:
+            return
+        meta = dict(sig.signal_metadata or {})
+        meta["paper_ratchet_state"] = state
+        sig.signal_metadata = meta
+        self.session.add(sig)
 
     def _stale_memory(
         self, symbol: str, strategy: Optional[str], hold_min: float, max_hold: int, pos: PositionSnapshot

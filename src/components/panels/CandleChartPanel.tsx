@@ -38,6 +38,7 @@ type OverlaySummary = {
   entry?: number;
   stop_loss?: number;
   take_profit?: number;
+  ratchet_floor?: number;
   risk_reward?: number;
 };
 
@@ -56,6 +57,9 @@ function OverlayLegend({ summary, lines }: { summary?: OverlaySummary; lines?: P
           summary.entry != null ? { label: "Entry", value: summary.entry, color: "#00dbe9" } : null,
           summary.stop_loss != null ? { label: "Stop", value: summary.stop_loss, color: "#EF4444" } : null,
           summary.take_profit != null ? { label: "Target", value: summary.take_profit, color: "#00FF66" } : null,
+          summary.ratchet_floor != null
+            ? { label: "Ratchet", value: summary.ratchet_floor, color: "#f59e0b" }
+            : null,
         ].filter(Boolean)
       : (lines ?? []).map((l) => ({
           label: l.title,

@@ -53,6 +53,15 @@ def aggressive_config_patch() -> dict[str, Any]:
             "push_strength_min": 0.002,
             "long_structure": {"enabled": False},
         },
+        "paper_ratchet": {
+            "enabled": True,
+            "relax_entry_stale_bar": True,
+            "relax_entry_min_bars": 8,
+            "arm_trailing_after_profit_bps": 25.0,
+            "giveback_bps": 40.0,
+            "initial_stop_pct": 0.02,
+            "buy_low_pullback_bps": 80.0,
+        },
         "exploration": {
             "enabled": True,
             "dynamic_formula_mode": True,

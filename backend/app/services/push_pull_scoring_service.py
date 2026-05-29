@@ -14,6 +14,7 @@ from app.services.candlestick_pattern_engine import top_pattern
 from app.services.config_manager import ConfigManager
 from app.services.dynamic_exit_levels_service import compute_dynamic_exit_levels
 from app.services.engine_config import cfg_get
+from app.services.ratchet_exit_service import apply_paper_ratchet_entry, entry_min_bars, paper_ratchet_enabled
 from app.services.historical_data_service import HistoricalDataService
 from app.services.quote_freshness_service import QuoteFreshnessService
 from app.trading_cage.push_pull_engine import score_push_pull_setup
@@ -108,7 +109,7 @@ def _paper_probe_eligible(row: dict[str, Any], config: Optional[dict] = None) ->
         return False
 
     bar_ok = row.get("bar_freshness") == "fresh" or bool(gates.get("bar_fresh"))
-    if not bar_ok:
+    if not bar_ok and not (paper_ratchet_enabled(cfg) and int(row.get("bars_count") or 0) >= entry_min_bars(cfg)):
         return False
 
     if _trade_all_eligible_on(cfg):
@@ -331,7 +332,7 @@ def score_symbol(
             ).to_dict()
         except Exception as exc:
             dynamic_levels = {"status": "unavailable", "error": type(exc).__name__}
-    return {
+    row = {
         "symbol": symbol,
         "strategy_id": strategy_id,
         "asset_class": asset_class,
@@ -367,6 +368,8 @@ def score_symbol(
         "blocked_reason": (universe_row or {}).get("blocked_reason"),
         "thesis": _thesis_for(pattern, entry_allowed, no_trade_reason, pattern_direction),
     }
+    row = apply_paper_ratchet_entry(row, config, bars=bars)
+    return row
 
 
 def _thesis_for(pattern: dict[str, Any], entry_allowed: bool, reason: Optional[str], direction: str) -> str:

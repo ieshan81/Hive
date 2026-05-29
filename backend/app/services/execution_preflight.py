@@ -131,6 +131,8 @@ def _paper_exploration_cost_override(config: dict, meta: dict, *, formula_paper_
     marked_probe = bool(
         meta.get("paper_exploration_probe")
         or nested_score.get("paper_exploration_probe")
+        or meta.get("paper_ratchet_entry")
+        or nested_score.get("paper_ratchet_entry")
         or meta.get("paper_exploration")
         or nested_score.get("paper_exploration")
     )

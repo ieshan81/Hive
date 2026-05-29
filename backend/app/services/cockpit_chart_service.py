@@ -109,6 +109,24 @@ def _active_price_lines(
         )
         summary["take_profit"] = tp
 
+    ratchet_floor = None
+    if latest_signal and isinstance(latest_signal.signal_metadata, dict):
+        rs = latest_signal.signal_metadata.get("paper_ratchet_state") or {}
+        if isinstance(rs, dict) and rs.get("ratchet_floor"):
+            ratchet_floor = float(rs["ratchet_floor"])
+    if ratchet_floor and ratchet_floor > 0:
+        lines.append(
+            {
+                "price": ratchet_floor,
+                "color": "#f59e0b",
+                "title": "Ratchet",
+                "lineStyle": 0,
+                "kind": "ratchet",
+                "axisLabelVisible": False,
+            }
+        )
+        summary["ratchet_floor"] = ratchet_floor
+
     ref = last_close or (float(pos.current_price) if pos and pos.current_price else None)
     if ref and entry and sl and tp:
         risk = abs(entry - sl)

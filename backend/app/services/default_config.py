@@ -88,6 +88,15 @@ DEFAULT_CONFIG = {
             "max_negative_momentum_without_pattern": -0.0005,
         },
     },
+    "paper_ratchet": {
+        "enabled": True,
+        "relax_entry_stale_bar": True,
+        "relax_entry_min_bars": 8,
+        "arm_trailing_after_profit_bps": 25.0,
+        "giveback_bps": 40.0,
+        "initial_stop_pct": 0.02,
+        "buy_low_pullback_bps": 80.0,
+    },
     "allocator": {
         "paper_trade_notional_min_usd": 20.0,
         "paper_trade_notional_max_usd": 40.0,
