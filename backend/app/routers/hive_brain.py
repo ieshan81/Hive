@@ -10,6 +10,7 @@ from app.services.config_manager import ConfigManager
 from app.services.hive_brain_graph_service import HiveBrainGraphService
 from app.services.hive_brain_node_service import HiveBrainNodeService
 from app.services.memory_consolidation_service import MemoryConsolidationService
+from app.services.operator_auth import require_operator_token
 
 router = APIRouter(prefix="/api/hive-brain", tags=["hive-brain"])
 
@@ -62,13 +63,21 @@ def hive_brain_cluster(cluster_id: str, session: Session = Depends(get_session))
 
 
 @router.post("/rebuild")
-def hive_brain_rebuild(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def hive_brain_rebuild(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     cfg = ConfigManager(session).get_current()
     return HiveBrainGraphService(session, cfg).build_full(show_raw=bool(body.get("show_raw")))
 
 
 @router.post("/consolidate")
-def hive_brain_consolidate(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def hive_brain_consolidate(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     cfg = ConfigManager(session).get_current()
     out = MemoryConsolidationService(session, cfg).run(force=bool(body.get("force")))
     session.commit()
@@ -76,7 +85,10 @@ def hive_brain_consolidate(body: dict = Body(default={}), session: Session = Dep
 
 
 @router.post("/archive-raw")
-def hive_brain_archive_raw(session: Session = Depends(get_session)):
+def hive_brain_archive_raw(
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     cfg = ConfigManager(session).get_current()
     out = MemoryConsolidationService(session, cfg).archive_raw_duplicates()
     session.commit()

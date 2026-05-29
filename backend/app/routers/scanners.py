@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session
 
 from app.database import get_session
+from app.services.operator_auth import require_operator_token
 from app.services import scanner_stack
 
 router = APIRouter(prefix="/api/scanners", tags=["scanners"])
@@ -39,6 +40,7 @@ def errors():
 def run_once(
     symbols: str = Query(default="BTC/USD,ETH/USD,SOL/USD,DOGE/USD"),
     session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
 ):
     sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
     return scanner_stack.run_all(session, symbols=sym_list)

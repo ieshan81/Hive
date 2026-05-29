@@ -5,7 +5,7 @@ import { Wallet, RefreshCw } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PanelError } from "@/components/ui/PanelError";
-import { apiGet, apiPost, apiPostOperator } from "@/lib/apiClient";
+import { apiGet, apiPostOperator } from "@/lib/apiClient";
 import {
   normalizeOrders,
   normalizePositions,
@@ -112,7 +112,7 @@ export default function PositionsPage() {
   }, [load]);
 
   async function refresh() {
-    await apiPost("/api/positions/refresh");
+    await apiPostOperator("/api/positions/refresh", { actor: "positions_ui" });
     await load();
   }
 

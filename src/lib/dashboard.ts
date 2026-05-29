@@ -77,7 +77,7 @@ function emptyDashboard(message: string): DashboardData {
 
 export async function getDashboardData(): Promise<DashboardData> {
   const [cockpit, health, alpacaConnected] = await Promise.all([
-    apiGet<Record<string, unknown>>("/api/cockpit", {
+    apiGet<Record<string, unknown>>("/api/mission-control/status", {
       forServer: true,
       timeoutMs: 3500,
     }),

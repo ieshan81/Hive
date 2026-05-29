@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Brain, Trash2 } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
-import { apiGet, apiPost } from "@/lib/apiClient";
+import { apiGet, apiPostOperator } from "@/lib/apiClient";
 
 type LessonRow = {
   lesson_id?: number;
@@ -45,7 +45,7 @@ export function CleanMindPanel() {
   async function bulk(path: string, body: Record<string, unknown> = {}) {
     const ids = [...selected];
     if (!ids.length) return;
-    await apiPost(`/api/memory/bulk/${path}`, { lesson_ids: ids, ...body });
+    await apiPostOperator(`/api/memory/bulk/${path}`, { lesson_ids: ids, ...body });
     setSelected(new Set());
     await load();
   }

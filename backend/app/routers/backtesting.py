@@ -12,7 +12,6 @@ router = APIRouter(prefix="/api/backtesting", tags=["backtesting"])
 
 @router.get("/status")
 def backtesting_status(session: Session = Depends(get_session)):
-    ResearchLabService(session).ensure_library()
     out = ResearchLabService(session).status()
     return {"status": "ok", **out}
 

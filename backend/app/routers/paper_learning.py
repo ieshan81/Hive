@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 
 from app.database import OrderRecord, get_session
 from app.services.aggressive_paper_learning_service import AggressivePaperLearningService
+from app.services.operator_auth import require_operator_token
 
 router = APIRouter(prefix="/api/paper-learning", tags=["paper-learning"])
 
@@ -23,7 +24,11 @@ def paper_learning_status(session: Session = Depends(get_session)):
 
 
 @router.post("/enable")
-def paper_learning_enable(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def paper_learning_enable(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     _block_ai(body)
     out = AggressivePaperLearningService(session).enable(body.get("operator", "operator"))
     session.commit()
@@ -31,7 +36,11 @@ def paper_learning_enable(body: dict = Body(default={}), session: Session = Depe
 
 
 @router.post("/disable")
-def paper_learning_disable(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def paper_learning_disable(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     _block_ai(body)
     out = AggressivePaperLearningService(session).disable(body.get("operator", "operator"))
     session.commit()
@@ -45,7 +54,11 @@ def paper_learning_config(session: Session = Depends(get_session)):
 
 
 @router.post("/config/update")
-def paper_learning_config_update(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def paper_learning_config_update(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     _block_ai(body)
     patch = body.get("config") or body
     out = AggressivePaperLearningService(session).update_config(patch)
@@ -60,7 +73,11 @@ def paper_learning_eligible(session: Session = Depends(get_session)):
 
 
 @router.post("/evaluate")
-def paper_learning_evaluate(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def paper_learning_evaluate(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     _block_ai(body)
     orders_before = len(session.exec(select(OrderRecord)).all())
     svc = AggressivePaperLearningService(session)
@@ -76,7 +93,11 @@ def paper_learning_evaluate(body: dict = Body(default={}), session: Session = De
 
 
 @router.post("/run-cycle")
-def paper_learning_run_cycle(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def paper_learning_run_cycle(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     _block_ai(body)
     svc = AggressivePaperLearningService(session)
     if not svc.cfg.get("mode_enabled"):
@@ -102,7 +123,11 @@ def paper_learning_memories(session: Session = Depends(get_session)):
 
 
 @router.post("/run-training-cycle")
-def run_training_cycle(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def run_training_cycle(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     _block_ai(body)
     from app.services.training_execution_service import TrainingExecutionService
 
@@ -117,7 +142,11 @@ def run_training_cycle(body: dict = Body(default={}), session: Session = Depends
 
 
 @router.post("/execute-approved")
-def execute_approved(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def execute_approved(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     _block_ai(body)
     from app.services.training_execution_service import TrainingExecutionService
 
@@ -144,7 +173,11 @@ def open_training_positions(session: Session = Depends(get_session)):
 
 
 @router.post("/monitor-exits")
-def monitor_exits(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def monitor_exits(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     _block_ai(body)
     from app.services.training_execution_service import TrainingExecutionService
 

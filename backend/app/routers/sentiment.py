@@ -2,6 +2,7 @@ from fastapi import APIRouter, Body, Depends, Query
 from sqlmodel import Session
 
 from app.database import get_session
+from app.services.operator_auth import require_operator_token
 
 router = APIRouter(prefix="/api/sentiment", tags=["sentiment"])
 
@@ -39,7 +40,7 @@ def symbol_score(symbol: str, side: str = Query(default="buy")):
 
 
 @router.post("/refresh")
-def refresh(payload: dict = Body(default_factory=dict)):
+def refresh(payload: dict = Body(default_factory=dict), _op: str = Depends(require_operator_token)):
     """Force a sentiment recompute for given symbols (best-effort, cached internally)."""
     from app.services.sentiment_service import score_symbol_sentiment
 

@@ -1,10 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Brain, RefreshCw, Shield } from "lucide-react";
+import { Brain, FlaskConical, RefreshCw, Shield } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { TickerSymbol } from "@/components/ui/TickerSymbol";
-import { CandleChartPanel } from "@/components/panels/CandleChartPanel";
 import { CockpitFunnelBrain } from "@/components/cockpit/CockpitFunnelBrain";
 import { apiGet } from "@/lib/apiClient";
 import { dispatchCockpitRefresh } from "@/lib/cockpitEvents";
@@ -44,6 +43,19 @@ type Cockpit = {
   recent_trades?: Array<{ symbol: string; side: string; status: string }>;
   weights?: { universe_ranking?: Record<string, number>; min_rank_score?: number };
   ai_brain?: { active_lessons?: number; recent_lessons?: Array<{ title: string; memory_type?: string; symbol?: string }> };
+  research_os?: {
+    research_jobs_running?: number;
+    latest_backtest?: { run_id?: string; status?: string; metrics?: Record<string, unknown> } | null;
+    latest_strategy_proposal?: Record<string, unknown> | null;
+    latest_risk_audit?: { status?: string; pass_fail?: string; risk_score?: number } | null;
+    latest_promotion_proposal?: Record<string, unknown> | null;
+    paper_exploration_status?: string;
+    live_readiness_status?: { live_locked?: boolean; tiny_live_architecture_present?: boolean } | null;
+    code_proposal_pending_count?: number;
+    tradingview_status?: { mode?: string; execution_allowed?: boolean } | null;
+    agent_loop_status?: { latest_status?: string | null; orders_submitted?: number; live_flags_changed?: boolean } | null;
+    next_research_action?: string;
+  };
 };
 
 export function CockpitDashboard() {
@@ -53,7 +65,7 @@ export function CockpitDashboard() {
 
   const load = useCallback(async () => {
     setErr(null);
-    const r = await apiGet<Cockpit>("/api/cockpit", { timeoutMs: 5000 });
+    const r = await apiGet<Cockpit>("/api/mission-control/status", { timeoutMs: 5000 });
     if (r.ok && r.data) {
       setData(r.data);
       dispatchCockpitRefresh(r.data as Record<string, unknown>);
@@ -76,10 +88,6 @@ export function CockpitDashboard() {
     data?.eligible_trades ??
     data?.shortlist ??
     (data?.scores ?? []).filter((s) => s.entry_allowed);
-  const chartSymbol =
-    eligible[0]?.symbol ||
-    data?.scores?.find((s) => s.pass || s.entry_allowed)?.symbol ||
-    "BTC/USD";
 
   return (
     <div className="space-y-4 max-w-6xl">
@@ -100,8 +108,8 @@ export function CockpitDashboard() {
           <p className="text-xs text-amber-400 mt-2">
             {err}
             <span className="block text-slate-500 mt-1">
-              Top banner and cards use the same /api/cockpit source. If this fails, redeploy backend and frontend from
-              latest main.
+              Top banner and cards use /api/mission-control/status. If this fails, verify the backend deployment and
+              database migrations.
             </span>
           </p>
         )}
@@ -151,6 +159,34 @@ export function CockpitDashboard() {
 
       <CockpitFunnelBrain funnel={f} blockers={data?.why_zero_shortlist} aiNote={data?.ai_cockpit_message} />
 
+      {data?.research_os && (
+        <GlassPanel title="Research OS" icon={<FlaskConical className="h-4 w-4" />}>
+          <div className="grid gap-3 md:grid-cols-4 text-xs">
+            <div>
+              <p className="text-slate-500 uppercase text-[10px]">Research jobs</p>
+              <p className="text-white font-semibold">{data.research_os.research_jobs_running ?? 0}</p>
+            </div>
+            <div>
+              <p className="text-slate-500 uppercase text-[10px]">Latest backtest</p>
+              <p className="text-white font-semibold">{data.research_os.latest_backtest?.status ?? "none"}</p>
+            </div>
+            <div>
+              <p className="text-slate-500 uppercase text-[10px]">Code drafts</p>
+              <p className="text-white font-semibold">{data.research_os.code_proposal_pending_count ?? 0}</p>
+            </div>
+            <div>
+              <p className="text-slate-500 uppercase text-[10px]">Live readiness</p>
+              <p className="text-emerald-300 font-semibold">
+                {data.research_os.live_readiness_status?.live_locked === false ? "review" : "locked"}
+              </p>
+            </div>
+          </div>
+          <p className="mt-3 text-[11px] text-slate-400">
+            {data.research_os.next_research_action ?? "No research action queued."}
+          </p>
+        </GlassPanel>
+      )}
+
       {data?.ai_brain && (data.ai_brain.active_lessons ?? 0) > 0 && (
         <p className="text-[10px] text-violet-200/80">
           AI memory: {data.ai_brain.active_lessons} active lesson(s)
@@ -160,7 +196,18 @@ export function CockpitDashboard() {
         </p>
       )}
 
-      <CandleChartPanel defaultSymbol={chartSymbol} title="TradingView wrapper · AI-controlled overlays" />
+      <GlassPanel title="TradingView wrapper">
+        <p className="text-[11px] text-slate-400">
+          Chart overlays are display-only and live on the TradingView page. The cockpit stays on cached truth so opening
+          Mission Control does not fetch fresh bars or rescore the universe.
+        </p>
+        <a
+          href="/tradingview"
+          className="mt-3 inline-flex rounded-lg border border-hive-cyan/30 px-3 py-2 text-xs text-hive-cyan hover:bg-hive-cyan/10"
+        >
+          Open TradingView overlays
+        </a>
+      </GlassPanel>
 
       <GlassPanel title="Eligible trades (all pass gates — no shortlist cap)" icon={<Shield className="h-4 w-4" />}>
         {eligible.length === 0 ? (

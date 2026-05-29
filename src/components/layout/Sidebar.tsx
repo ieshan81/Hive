@@ -9,6 +9,7 @@ import {
   FileText,
   Shield,
   Hexagon,
+  LineChart,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +22,7 @@ const navItems = [
   { href: "/universe", label: "Universe Radar", icon: Globe },
   { href: "/ai-manager", label: "AI Manager", icon: Brain },
   { href: "/portfolio", label: "Portfolio", icon: Wallet },
+  { href: "/tradingview", label: "TradingView", icon: LineChart },
   { href: "/reports", label: "Reports", icon: FileText },
 ];
 

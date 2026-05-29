@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { FlaskConical, Play, RefreshCw } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { PanelError } from "@/components/ui/PanelError";
-import { apiGet, apiPost } from "@/lib/apiClient";
+import { apiGet, apiPostOperator } from "@/lib/apiClient";
 import type { PanelLoadMeta } from "@/types/api";
 
 type LabStatus = {
@@ -71,7 +71,7 @@ export function ResearchLabPanel() {
 
   async function runBacktest() {
     setBusy(true);
-    await apiPost("/api/lab/backtest/run", {
+    await apiPostOperator("/api/lab/backtest/run", {
       strategy_id: strategyId,
       symbols: symbols.split(",").map((s) => s.trim()).filter(Boolean),
     });
@@ -81,7 +81,7 @@ export function ResearchLabPanel() {
 
   async function runBatch() {
     setBusy(true);
-    const res = await apiPost<Record<string, unknown>>("/api/lab/backtest/batch-run", {
+    const res = await apiPostOperator<Record<string, unknown>>("/api/lab/backtest/batch-run", {
       strategy_family: strategyId,
       symbols: symbols.split(",").map((s) => s.trim()).filter(Boolean),
       timeframe: "1h",
@@ -100,7 +100,7 @@ export function ResearchLabPanel() {
 
   async function runResearchNow() {
     setBusy(true);
-    const res = await apiPost("/api/lab/research/run", {
+    const res = await apiPostOperator("/api/lab/research/run", {
       strategy_families: [strategyId],
       symbols: symbols.split(",").map((s) => s.trim()).filter(Boolean),
       force: true,
@@ -112,26 +112,26 @@ export function ResearchLabPanel() {
 
   async function fetchData() {
     setBusy(true);
-    await apiPost("/api/lab/data/fetch", {
+    await apiPostOperator("/api/lab/data/fetch", {
       symbols: symbols.split(",").map((s) => s.trim()).filter(Boolean),
       timeframes: ["1h"],
       lookback_days: 90,
     });
-    await apiPost("/api/lab/strategies/seed", {});
+    await apiPostOperator("/api/lab/strategies/seed", {});
     await load();
     setBusy(false);
   }
 
   async function seedStrategies() {
     setBusy(true);
-    await apiPost("/api/lab/strategies/seed", {});
+    await apiPostOperator("/api/lab/strategies/seed", {});
     await load();
     setBusy(false);
   }
 
   async function runWalkForward() {
     setBusy(true);
-    await apiPost("/api/lab/walk-forward/run", {
+    await apiPostOperator("/api/lab/walk-forward/run", {
       strategy_id: strategyId,
       symbols: symbols.split(",").map((s) => s.trim()).filter(Boolean),
     });

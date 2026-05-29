@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlmodel import Session, select
@@ -153,8 +153,6 @@ class PaperExecutionService:
         quote_sym = normalize_crypto_symbol(cand.symbol)
         initial = self.alpaca.get_quote(quote_sym, "crypto") or {}
         if initial and not initial.get("quote_timestamp"):
-            from datetime import datetime, timezone
-
             initial["quote_timestamp"] = datetime.now(timezone.utc).isoformat()
         refresh = PreSubmitQuoteService(self.session, self.config).refresh_for_submit(
             cand.symbol, asset_class="crypto", initial_quote=initial

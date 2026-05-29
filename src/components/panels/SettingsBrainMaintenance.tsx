@@ -3,15 +3,8 @@
 import { useEffect, useState } from "react";
 import { Brain, RefreshCw, Shield } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
-import { apiGet, apiPost, apiPostOperator, checkServerOperatorProxy } from "@/lib/apiClient";
+import { apiGet, apiPostOperator, checkServerOperatorProxy } from "@/lib/apiClient";
 import { OperatorAuthPanel } from "@/components/panels/OperatorAuthPanel";
-
-const DANGEROUS = new Set([
-  "/api/fast-training/disable",
-  "/api/fast-training/exit-only/disable",
-  "/api/settings/clear-ghost-rows",
-  "/api/memory/consolidation/archive-raw",
-]);
 
 export function SettingsBrainMaintenance() {
   const [msg, setMsg] = useState<string | null>(null);
@@ -32,10 +25,7 @@ export function SettingsBrainMaintenance() {
   async function act(path: string, label: string, confirm?: string) {
     if (confirm && !window.confirm(confirm)) return;
     setBusy(true);
-    const useOperator = DANGEROUS.has(path) || path.includes("fast-training") || path.includes("exit-only");
-    const r = useOperator
-      ? await apiPostOperator(path, { actor: "operator" })
-      : await apiPost(path, { actor: "operator" });
+    const r = await apiPostOperator(path, { actor: "operator" });
     const detail = (r.data as { message?: string })?.message;
     setMsg(r.ok ? `${label}: ${detail || "ok"}` : `${label}: ${r.error}`);
     await loadTripwire();

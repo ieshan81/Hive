@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Shield, RefreshCw, Layers, AlertTriangle } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
-import { apiGet, apiPost } from "@/lib/apiClient";
+import { apiGet, apiPostOperator } from "@/lib/apiClient";
 
 type RegistryRow = Record<string, unknown>;
 type Snapshot = {
@@ -63,10 +63,10 @@ export function StrategyRegistryPanel() {
 
   async function syncAndValidate() {
     setBusy(true);
-    await apiPost("/api/strategies/registry/sync-from-lab", {});
-    await apiPost("/api/strategies/memories/validate", {});
-    await apiPost("/api/strategies/validate", { actor: "operator" });
-    await apiPost("/api/strategies/promote-candidates", { actor: "operator" });
+    await apiPostOperator("/api/strategies/registry/sync-from-lab", {});
+    await apiPostOperator("/api/strategies/memories/validate", {});
+    await apiPostOperator("/api/strategies/validate", { actor: "operator" });
+    await apiPostOperator("/api/strategies/promote-candidates", { actor: "operator" });
     setMsg("Registry synced and validation gate run");
     await load();
     setBusy(false);
@@ -128,7 +128,7 @@ export function StrategyRegistryPanel() {
             className="text-[10px] border border-amber-500/40 text-amber-300 rounded px-2 py-0.5"
             onClick={async () => {
               setBusy(true);
-              await apiPost("/api/paper-learning/enable", { operator: "operator" });
+              await apiPostOperator("/api/paper-learning/enable", { operator: "operator" });
               setMsg("Paper learning enabled (caged — no live)");
               await load();
               setBusy(false);
@@ -142,7 +142,7 @@ export function StrategyRegistryPanel() {
             className="text-[10px] border border-white/10 text-slate-400 rounded px-2 py-0.5"
             onClick={async () => {
               setBusy(true);
-              await apiPost("/api/paper-learning/disable", { operator: "operator" });
+              await apiPostOperator("/api/paper-learning/disable", { operator: "operator" });
               setMsg("Paper learning disabled");
               await load();
               setBusy(false);
@@ -156,7 +156,7 @@ export function StrategyRegistryPanel() {
             className="text-[10px] border border-hive-cyan/30 text-hive-cyan rounded px-2 py-0.5"
             onClick={async () => {
               setBusy(true);
-              await apiPost("/api/strategies/experiment-eligibility/scan", {});
+              await apiPostOperator("/api/strategies/experiment-eligibility/scan", {});
               await load();
               setBusy(false);
             }}

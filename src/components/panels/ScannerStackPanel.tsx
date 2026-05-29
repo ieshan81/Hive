@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Cpu, RefreshCw } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
-import { apiGet, apiPost } from "@/lib/apiClient";
+import { apiGet, apiPostOperator } from "@/lib/apiClient";
 
 type Scanner = {
   id: string;
@@ -20,8 +20,6 @@ export function ScannerStackPanel() {
   const [latest, setLatest] = useState<Latest | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
-  const autoRan = useRef(false);
-
   const load = useCallback(async () => {
     const [statusR, latestR] = await Promise.all([
       apiGet<{ scanners: Scanner[] }>("/api/scanners/status"),
@@ -33,7 +31,7 @@ export function ScannerStackPanel() {
 
   const runScanners = useCallback(async () => {
     setRunning(true);
-    await apiPost("/api/scanners/run-once?symbols=BTC/USD,ETH/USD,SOL/USD,DOGE/USD");
+    await apiPostOperator("/api/scanners/run-once?symbols=BTC/USD,ETH/USD,SOL/USD,DOGE/USD");
     await load();
     setRunning(false);
   }, [load]);
@@ -42,10 +40,6 @@ export function ScannerStackPanel() {
     (async () => {
       setLoading(true);
       await load();
-      if (!autoRan.current) {
-        autoRan.current = true;
-        await runScanners();
-      }
       setLoading(false);
     })();
   }, [load, runScanners]);

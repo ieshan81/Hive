@@ -1,7 +1,9 @@
 import logging
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlmodel import Session
 
 from app.config import settings
@@ -46,6 +48,9 @@ from app.routers import (
     research_experiments,
     market_sessions,
     diagnostics_export,
+    research,
+    tradingview,
+    live_flags,
 )
 from app.services.database_bootstrap_service import repair_database_bootstrap
 from app.services.startup import bootstrap_database
@@ -66,6 +71,33 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def require_operator_for_api_mutations(request, call_next):
+    """Public API mutation guard; internal service calls do not pass through HTTP."""
+
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path.startswith("/api/"):
+        secret = (settings.operator_secret or "").strip()
+        if not secret:
+            if os.environ.get("HIVE_ALLOW_UNAUTHENTICATED_DEV") == "1":
+                return await call_next(request)
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "blocked",
+                    "message": "Operator secret not configured - mutating actions disabled.",
+                    "action_required": "Set OPERATOR_SECRET on Railway backend and matching token in frontend.",
+                },
+            )
+        token = (request.headers.get("X-Operator-Token") or "").strip()
+        if token != secret:
+            return JSONResponse(
+                status_code=403,
+                content={"status": "forbidden", "message": "Invalid or missing operator token."},
+            )
+    return await call_next(request)
+
 
 app.include_router(api.router)
 app.include_router(strategy_registry.router)
@@ -106,6 +138,9 @@ app.include_router(news.router)
 app.include_router(research_experiments.router)
 app.include_router(market_sessions.router)
 app.include_router(diagnostics_export.router)
+app.include_router(research.router)
+app.include_router(tradingview.router)
+app.include_router(live_flags.router)
 
 
 @app.on_event("startup")
