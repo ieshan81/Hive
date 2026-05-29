@@ -90,7 +90,7 @@ export function UniversePanel() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const timeoutMs = 35000;
+    const timeoutMs = 5000;
     const [statusRes, eligibleRes, radarRes] = await Promise.all([
       apiGet<UniverseStatusPayload>("/api/universe/status", { timeoutMs }),
       apiGet<Record<string, unknown>>("/api/universe/eligible-trades", { timeoutMs }),

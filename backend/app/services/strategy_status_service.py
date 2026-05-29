@@ -14,8 +14,10 @@ from app.services.session_engine import SessionEngine
 
 
 def strategy_status(session: Session, config: Optional[dict] = None) -> dict[str, Any]:
-    cfg = config or ConfigManager(session).get_current()
-    pp = PushPullEngineService(session, cfg).status()
+    from app.services.mission_control_read_model import build_mission_control_status
+
+    st = build_mission_control_status(session)
+    pp = st.get("push_pull") or {}
     sess = SessionEngine().detect()
     reg = session.exec(
         select(StrategyRegistry).where(StrategyRegistry.strategy_id == "crypto_push_pull_baseline")
@@ -78,21 +80,24 @@ def strategy_status(session: Session, config: Optional[dict] = None) -> dict[str
 
 
 def candidate_rankings(session: Session, config: Optional[dict] = None) -> dict[str, Any]:
-    from app.services.push_pull_scoring_service import score_active_universe
+    from app.services.mission_control_read_model import build_mission_control_status
 
-    cfg = config or ConfigManager(session).get_current()
-    scored = score_active_universe(session, cfg)
-    ranked = scored.get("scores") or []
+    st = build_mission_control_status(session)
+    universe = st.get("universe") or {}
+    ranked = universe.get("top_candidates") or []
     return {
-        "status": "ok",
+        "status": st.get("status"),
         "generated_at_utc": datetime.utcnow().isoformat() + "Z",
-        "scoring_model": scored.get("scoring_model"),
-        "strategy_version": scored.get("strategy_version"),
+        "scoring_model": "persisted_latest_scan",
+        "strategy_version": None,
         "top_ranked": ranked[:10],
-        "selected_candidate": scored.get("selected_candidate"),
-        "rejected_candidates": scored.get("rejected_candidates", [])[:10],
+        "selected_candidate": ranked[0] if ranked else None,
+        "rejected_candidates": [],
         "active_count": len(ranked),
-        "no_trade_reason_breakdown": scored.get("no_trade_reason_breakdown"),
+        "no_trade_reason_breakdown": {
+            b.get("code"): b.get("count") for b in universe.get("top_blockers") or [] if b.get("code")
+        },
+        "read_model_only": True,
     }
 
 

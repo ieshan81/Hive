@@ -11,32 +11,65 @@ router = APIRouter(prefix="/api", tags=["cockpit"])
 
 @router.get("/cockpit")
 def get_cockpit(session: Session = Depends(get_session), details: bool = Query(False)):
-    from app.v2.cockpit_service import build_cockpit, build_cockpit_summary
-
     if details:
+        from app.v2.cockpit_service import build_cockpit
+
         return build_cockpit(session)
-    return build_cockpit_summary(session)
+    from app.services.mission_control_read_model import build_mission_control_status
+
+    # READ ONLY: must not fetch provider data, score universe, call Gemini, or mutate DB.
+    return build_mission_control_status(session)
 
 
 @router.get("/cockpit/summary")
 def get_cockpit_summary(session: Session = Depends(get_session)):
-    from app.v2.cockpit_service import build_cockpit_summary
+    from app.services.mission_control_read_model import build_mission_control_status
 
-    return build_cockpit_summary(session)
+    # READ ONLY: canonical dashboard payload.
+    return build_mission_control_status(session)
+
+
+@router.get("/mission-control/status")
+def get_mission_control_status(session: Session = Depends(get_session)):
+    from app.services.mission_control_read_model import build_mission_control_status
+
+    # READ ONLY: canonical dashboard payload.
+    return build_mission_control_status(session)
 
 
 @router.get("/watchlist")
 def get_watchlist(session: Session = Depends(get_session)):
-    from app.v2.watchlist import live_full_watchlist
+    from app.services.mission_control_read_model import build_mission_control_status
 
-    return live_full_watchlist(session, force=True)
+    # READ ONLY compatibility alias. Use POST /api/universe/refresh for live rebuilds.
+    st = build_mission_control_status(session)
+    candidates = (st.get("universe") or {}).get("top_candidates") or []
+    return {
+        "status": st.get("status"),
+        "source": "mission_control_read_model",
+        "generated_at_utc": st.get("generated_at_utc"),
+        "all_symbols": [{"symbol": c.get("symbol"), "asset_type": c.get("asset_class")} for c in candidates if c.get("symbol")],
+        "total": len(candidates),
+    }
 
 
 @router.get("/funnel")
 def get_funnel(session: Session = Depends(get_session)):
-    from app.v2.live_pipeline import live_funnel
+    from app.services.mission_control_read_model import build_mission_control_status
 
-    return live_funnel(session)
+    # READ ONLY compatibility alias. Use POST /api/universe/refresh for live rebuilds.
+    st = build_mission_control_status(session)
+    universe = st.get("universe") or {}
+    return {
+        "status": st.get("status"),
+        "generated_at_utc": st.get("generated_at_utc"),
+        "funnel": universe.get("funnel"),
+        "shortlist": (st.get("eligible_entries_summary") or {}).get("top_candidates") or [],
+        "block_breakdown": {
+            b.get("code"): b.get("count") for b in universe.get("top_blockers") or [] if b.get("code")
+        },
+        "why_zero_shortlist": (st.get("why_no_trade_summary") or {}).get("plain"),
+    }
 
 
 @router.post("/rebuild")

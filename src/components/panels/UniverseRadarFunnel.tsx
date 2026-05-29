@@ -43,7 +43,7 @@ export function UniverseRadarFunnel() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const timeoutMs = 35000;
+    const timeoutMs = 5000;
     const [radarRes, eligibleRes] = await Promise.all([
       apiGet<Record<string, unknown>>("/api/universe/radar", { timeoutMs }),
       apiGet<Record<string, unknown>>("/api/universe/eligible-trades", { timeoutMs }),

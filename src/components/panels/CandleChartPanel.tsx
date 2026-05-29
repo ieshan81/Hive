@@ -198,11 +198,11 @@ export function CandleChartPanel({
     const [r, ctxRes] = await Promise.all([
       apiGet<OhlcPayload>(
         `/api/market-data/ohlc?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}&limit=180`,
-        { timeoutMs: 25000 }
+        { timeoutMs: 8000 }
       ),
       apiGet<ChartContextPayload>(
         `/api/market-data/chart-context?symbol=${encodeURIComponent(symbol)}`,
-        { timeoutMs: 12000 }
+        { timeoutMs: 8000 }
       ),
     ]);
     if (!r.ok || !r.data || r.data.status !== "ok" || !r.data.candles?.length) {

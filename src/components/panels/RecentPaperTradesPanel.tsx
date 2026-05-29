@@ -25,7 +25,7 @@ export function RecentPaperTradesPanel() {
   const load = useCallback(async () => {
     const r = await apiGet<{ execution_logs?: LogRow[]; orders?: LogRow[] }>(
       "/api/execution/logs?scope=recent&limit=12",
-      { timeoutMs: 15000 }
+      { timeoutMs: 8000 }
     );
     const list = r.data?.execution_logs ?? r.data?.orders ?? [];
     setRows(Array.isArray(list) ? list.slice(0, 12) : []);

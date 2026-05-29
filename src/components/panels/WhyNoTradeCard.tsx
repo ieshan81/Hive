@@ -1,80 +1,96 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
 import { ShieldAlert } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { TickerSymbol } from "@/components/ui/TickerSymbol";
-import { apiGet } from "@/lib/apiClient";
 
-export function WhyNoTradeCard() {
-  const [payload, setPayload] = useState<Record<string, unknown> | null>(null);
+type Blocker = { code?: string; count?: number; label?: string };
+type Candidate = {
+  symbol?: string;
+  trade_quality_score?: number;
+  quality_score?: number;
+  no_trade_reason?: string;
+};
 
-  const load = useCallback(async () => {
-    const [cockpit, shortlist] = await Promise.all([
-      apiGet<Record<string, unknown>>("/api/cockpit", { timeoutMs: 90000 }),
-      apiGet<Record<string, unknown>>("/api/universe/execution-shortlist"),
-    ]);
-    const c = cockpit.data || {};
-    const ctrl = (c.control as Record<string, unknown>) || {};
-    const scores = (c.scores as Record<string, unknown>[]) || [];
-    const top = scores[0];
-    setPayload({
-      execution_shortlist_count: shortlist.data?.execution_shortlist_count ?? (c.funnel as Record<string, number>)?.shortlist ?? 0,
-      eligible_count: shortlist.data?.eligible_count ?? c.passed_count ?? 0,
-      funnel_answer: c.why_zero_shortlist || c.ai_cockpit_message,
-      strategy_verdict: ctrl.bot_can_place ? "ready" : "blocked",
-      should_paper_trade_now: Boolean(ctrl.can_place_paper_orders && ctrl.paper_learning_on),
-      open_positions: c.positions,
-      last_tick_reason: Array.isArray(ctrl.blockers) ? ctrl.blockers.join(", ") : c.ai_cockpit_message,
-      top_candidate: top ? { symbol: top.symbol, trade_quality_score: top.quality_score } : undefined,
-      next_experiment: null,
-    });
-  }, []);
+type WhyNoTradeCardProps = {
+  plain?: string | null;
+  topBlockers?: Blocker[];
+  topCandidate?: Candidate | null;
+  shortlisted?: number;
+  eligible?: number;
+  canPlacePaperOrders?: boolean;
+  pushPullStatus?: string | null;
+};
 
-  useEffect(() => {
-    load();
-    const t = setInterval(load, 45000);
-    return () => clearInterval(t);
-  }, [load]);
+function label(value: unknown): string {
+  return String(value ?? "-").replace(/_/g, " ");
+}
 
-  const top = payload?.top_candidate as Record<string, unknown> | undefined;
-  const survival = payload?.open_positions as Record<string, unknown> | undefined;
+function pctScore(value: unknown): string {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "-";
+  return n <= 1 ? `${Math.round(n * 100)}` : `${Math.round(n)}`;
+}
 
+export function WhyNoTradeCard({
+  plain,
+  topBlockers = [],
+  topCandidate,
+  shortlisted = 0,
+  eligible = 0,
+  canPlacePaperOrders,
+  pushPullStatus,
+}: WhyNoTradeCardProps) {
   return (
-    <GlassPanel title="Why no quick paper trade?" icon={<ShieldAlert className="h-4 w-4 text-amber-400" />}>
-      <ul className="text-[11px] text-slate-400 space-y-1.5">
-        <li>
-          Execution shortlist: <span className="text-white">{String(payload?.execution_shortlist_count ?? "—")}</span>
-        </li>
-        <li>
-          Strategy verdict:{" "}
-          <span className="text-amber-300 capitalize">{String(payload?.strategy_verdict ?? "—")}</span>
-        </li>
-        <li>
-          Paper trade now: {payload?.should_paper_trade_now ? "yes" : "no"}
-        </li>
-        <li>Last tick: {String(payload?.last_tick_reason ?? "—").replace(/_/g, " ")}</li>
-        {top?.symbol ? (
-          <li className="flex items-center gap-2 flex-wrap">
-            <span>Top scored:</span>
-            <TickerSymbol symbol={String(top.symbol)} size="sm" labelClassName="text-amber-200" />
-            <span>(quality {String(top.trade_quality_score ?? "—")})</span>
-          </li>
-        ) : null}
-        {survival && Number(survival.open_positions_value ?? 0) > 0 ? (
-          <li>Open broker exposure — duplicate-entry protection may block new entries.</li>
-        ) : null}
-      </ul>
-      {payload?.funnel_answer ? (
-        <p className="text-[10px] text-slate-500 mt-3 border-t border-white/5 pt-2">
-          {String(payload.funnel_answer).slice(0, 320)}
-        </p>
+    <GlassPanel title="Why no trade?" icon={<ShieldAlert className="h-4 w-4 text-amber-400" />}>
+      <div className="grid grid-cols-3 gap-2 text-[11px]">
+        <div className="rounded border border-white/10 bg-black/20 p-2">
+          <p className="text-slate-500">Eligible</p>
+          <p className="text-white font-semibold">{eligible}</p>
+        </div>
+        <div className="rounded border border-white/10 bg-black/20 p-2">
+          <p className="text-slate-500">Shortlisted</p>
+          <p className="text-white font-semibold">{shortlisted}</p>
+        </div>
+        <div className="rounded border border-white/10 bg-black/20 p-2">
+          <p className="text-slate-500">Paper orders</p>
+          <p className={canPlacePaperOrders ? "text-emerald-300 font-semibold" : "text-amber-300 font-semibold"}>
+            {canPlacePaperOrders ? "Ready" : "Blocked"}
+          </p>
+        </div>
+      </div>
+
+      {plain ? <p className="mt-3 text-xs text-slate-300">{plain}</p> : null}
+
+      {topCandidate?.symbol ? (
+        <div className="mt-3 rounded border border-cyan-300/15 bg-cyan-300/[0.04] p-3 text-[11px]">
+          <p className="mb-1 text-slate-500">Top candidate from latest persisted scan</p>
+          <div className="flex items-center justify-between gap-3">
+            <TickerSymbol symbol={String(topCandidate.symbol)} size="sm" labelClassName="text-sm text-white" />
+            <span className="text-hive-cyan">Q{pctScore(topCandidate.trade_quality_score ?? topCandidate.quality_score)}</span>
+          </div>
+          {topCandidate.no_trade_reason ? (
+            <p className="mt-1 text-amber-200">Blocker: {label(topCandidate.no_trade_reason)}</p>
+          ) : null}
+        </div>
       ) : null}
-      {payload?.next_experiment ? (
-        <p className="text-[10px] text-hive-cyan mt-2">
-          Research next: {String(payload.next_experiment)}
-        </p>
-      ) : null}
+
+      {topBlockers.length > 0 ? (
+        <div className="mt-3">
+          <p className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">Top blockers</p>
+          <div className="flex flex-wrap gap-1.5">
+            {topBlockers.slice(0, 6).map((b) => (
+              <span key={String(b.code)} className="rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1 text-[11px] text-amber-200">
+                {label(b.label ?? b.code)}: {Number(b.count ?? 0)}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <p className="mt-3 text-[11px] text-slate-500">No blocker breakdown has been persisted yet.</p>
+      )}
+
+      {pushPullStatus ? <p className="mt-3 text-[11px] text-slate-500">Push-pull status: {label(pushPullStatus)}</p> : null}
     </GlassPanel>
   );
 }

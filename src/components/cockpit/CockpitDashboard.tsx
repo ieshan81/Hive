@@ -50,22 +50,14 @@ export function CockpitDashboard() {
   const [data, setData] = useState<Cockpit | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [detailsLoading, setDetailsLoading] = useState(false);
 
   const load = useCallback(async () => {
     setErr(null);
-    const r = await apiGet<Cockpit>("/api/cockpit", { timeoutMs: 9000 });
+    const r = await apiGet<Cockpit>("/api/cockpit", { timeoutMs: 5000 });
     if (r.ok && r.data) {
       setData(r.data);
       dispatchCockpitRefresh(r.data as Record<string, unknown>);
       setLoading(false);
-      setDetailsLoading(true);
-      const full = await apiGet<Cockpit>("/api/cockpit?details=1", { timeoutMs: 12000 });
-      if (full.ok && full.data) {
-        setData((prev) => ({ ...prev, ...full.data, control: full.data?.control ?? prev?.control }));
-        dispatchCockpitRefresh(full.data as Record<string, unknown>);
-      }
-      setDetailsLoading(false);
     } else {
       setErr(r.error || "Cockpit unavailable - check API_URL on Railway frontend");
       setLoading(false);
@@ -97,7 +89,7 @@ export function CockpitDashboard() {
           AI Trading Cockpit
         </h1>
         <p className="text-sm text-slate-400 mt-1">
-          Research v2 - live Alpaca crypto + stocks, dynamic SL/TP, aggressive paper cycles. No snapshot cache.
+          Cached product truth - paper-only execution, dynamic SL/TP, and operator-triggered heavy refreshes.
         </p>
         {data?.ai_cockpit_message && (
           <p className="text-xs text-hive-cyan/90 mt-2 border border-hive-cyan/20 rounded-lg px-3 py-2 bg-hive-cyan/5">
@@ -113,7 +105,6 @@ export function CockpitDashboard() {
             </span>
           </p>
         )}
-        {detailsLoading && <p className="text-[10px] text-slate-500 mt-1">Loading live scores...</p>}
       </header>
 
       <div className="flex flex-wrap gap-2">

@@ -41,25 +41,25 @@ def pp_candidates(session: Session = Depends(get_session)):
 
 @router.get("/push-pull/no-trade-reasons")
 def pp_reasons(session: Session = Depends(get_session)):
-    from app.routers.push_pull import no_trade_reasons
-    from app.services.universe_strategy_discovery_service import build_funnel_breakdown
+    from app.services.mission_control_read_model import build_mission_control_status
 
-    live = no_trade_reasons(session)
-    funnel = build_funnel_breakdown(session, max_evaluate=36, fetch_quotes=True)
+    st = build_mission_control_status(session)
+    universe = st.get("universe") or {}
+    breakdown = {b.get("code"): b.get("count") for b in universe.get("top_blockers") or [] if b.get("code")}
     return {
-        "status": "ok",
-        "generated_at_utc": funnel.get("generated_at_utc"),
-        "universe_funnel_answer": funnel.get("answer"),
-        "universe_block_breakdown": funnel.get("block_breakdown"),
-        "universe_funnel": funnel.get("funnel"),
-        "available_symbols": funnel.get("available_symbols"),
-        "evaluated_symbols": funnel.get("evaluated_symbols"),
-        "eligible_count": funnel.get("eligible_count"),
-        "live_scoring": live,
-        "reason_breakdown": live.get("reason_breakdown"),
-        "by_symbol": live.get("by_symbol"),
+        "status": st.get("status"),
+        "generated_at_utc": st.get("generated_at_utc"),
+        "universe_funnel_answer": (st.get("why_no_trade_summary") or {}).get("plain"),
+        "universe_block_breakdown": breakdown,
+        "universe_funnel": universe.get("funnel"),
+        "available_symbols": (universe.get("funnel") or {}).get("available", 0),
+        "evaluated_symbols": (universe.get("funnel") or {}).get("scored", 0),
+        "eligible_count": (universe.get("funnel") or {}).get("eligible", 0),
+        "live_scoring": {"status": "read_model_only"},
+        "reason_breakdown": breakdown,
+        "by_symbol": {},
+        "read_model_only": True,
     }
-
 
 @router.get("/push-pull/latest")
 def pp_latest(session: Session = Depends(get_session)):

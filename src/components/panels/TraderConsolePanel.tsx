@@ -130,7 +130,7 @@ export function TraderConsolePanel() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const res = await apiGet<Record<string, unknown>>("/api/cockpit", { timeoutMs: 90000 });
+    const res = await apiGet<Record<string, unknown>>("/api/cockpit", { timeoutMs: 5000 });
     if (res.ok && res.data) {
       const c = res.data;
       const ctrl = (c.control as Record<string, unknown>) || {};

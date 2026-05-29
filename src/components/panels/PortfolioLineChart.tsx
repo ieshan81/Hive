@@ -65,7 +65,7 @@ export function PortfolioLineChart({
     const [ohlc, ctx] = await Promise.all([
       apiGet<OhlcPayload>(
         `/api/market-data/ohlc?symbol=${encodeURIComponent(symbol)}&timeframe=5Min&limit=72`,
-        { timeoutMs: 15000 }
+        { timeoutMs: 8000 }
       ),
       apiGet<ChartContextPayload>(
         `/api/market-data/chart-context?symbol=${encodeURIComponent(symbol)}`,

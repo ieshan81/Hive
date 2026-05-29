@@ -107,7 +107,61 @@ def _ai_payload(review: AIReview | None) -> dict[str, Any] | None:
     }
 
 
-def trader_console_status(session: Session, *, force: bool = False) -> dict[str, Any]:
+def trader_console_read_status(session: Session) -> dict[str, Any]:
+    """READ ONLY: DB/cache-only trader console status for dashboards."""
+    from app.services.mission_control_read_model import build_mission_control_status
+
+    st = build_mission_control_status(session)
+    account = st.get("account") or {}
+    execution = st.get("paper_execution") or {}
+    universe = st.get("universe") or {}
+    eligible = (st.get("eligible_entries_summary") or {}).get("top_candidates") or []
+    return {
+        "status": st.get("status"),
+        "generated_at_utc": st.get("generated_at_utc"),
+        "schema_version": "trader_console_read.v1",
+        "paper_only": True,
+        "paper_broker": execution.get("paper_broker"),
+        "live_trading_locked": execution.get("live_trading_locked"),
+        "live_lock": st.get("live_lock"),
+        "autopilot": {
+            "paper_learning": execution.get("paper_learning_on"),
+            "scheduler_enabled": execution.get("scheduler_enabled"),
+            "can_place_paper_orders_now": execution.get("can_place_paper_orders_now"),
+            "paper_orders_enabled": execution.get("paper_orders_enabled"),
+            "blockers": execution.get("blockers") or [],
+        },
+        "account": {
+            "alpaca_configured": account.get("alpaca_configured"),
+            "alpaca_connected": account.get("alpaca_connected"),
+            "cash": account.get("cash"),
+            "equity": account.get("equity"),
+            "buying_power": account.get("buying_power"),
+            "daily_pl": account.get("daily_pl"),
+            "daily_pl_pct": account.get("daily_pl_pct"),
+            "synced_at": account.get("last_sync_at"),
+            "message": account.get("message"),
+        },
+        "positions": [],
+        "open_positions_count": (st.get("open_positions_summary") or {}).get("count", 0),
+        "eligible_trades": eligible,
+        "eligible_count": (universe.get("funnel") or {}).get("eligible", 0),
+        "fresh_count": (universe.get("funnel") or {}).get("fresh", 0),
+        "shortlist": eligible,
+        "shortlist_count": (universe.get("funnel") or {}).get("shortlisted", 0),
+        "scored_symbols": (universe.get("funnel") or {}).get("scored", 0),
+        "no_trade_reason_breakdown": {
+            b.get("code"): b.get("count") for b in universe.get("top_blockers") or [] if b.get("code")
+        },
+        "latest_decision": (st.get("latest_order_summary") or {}).get("latest_decision"),
+        "latest_ai_nudge": None,
+        "paper_execution": execution,
+        "message": st.get("next_recommended_operator_action"),
+    }
+
+
+def trader_console_refresh_status(session: Session, *, force: bool = True) -> dict[str, Any]:
+    """OPERATOR/WORKER ACTION: may sync broker data, review positions, and score universe."""
     cached_at = _STATUS_CACHE.get("cached_at")
     if not force and cached_at and datetime.utcnow() - cached_at < _STATUS_CACHE_TTL:
         payload = dict(_STATUS_CACHE.get("payload") or {})
@@ -176,6 +230,12 @@ def trader_console_status(session: Session, *, force: bool = False) -> dict[str,
     _STATUS_CACHE["cached_at"] = datetime.utcnow()
     _STATUS_CACHE["payload"] = payload
     return payload
+
+
+def trader_console_status(session: Session, *, force: bool = False) -> dict[str, Any]:
+    if force:
+        return trader_console_refresh_status(session, force=True)
+    return trader_console_read_status(session)
 
 
 def manual_paper_buy(session: Session, body: dict[str, Any], *, actor: str) -> dict[str, Any]:

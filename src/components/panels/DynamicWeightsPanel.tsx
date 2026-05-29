@@ -28,7 +28,7 @@ export function DynamicWeightsPanel() {
   const [rebalancing, setRebalancing] = useState(false);
 
   const load = useCallback(async () => {
-    const r = await apiGet<WeightsPayload>("/api/weights", { timeoutMs: 12000 });
+    const r = await apiGet<WeightsPayload>("/api/weights", { timeoutMs: 5000 });
     if (r.ok && r.data) setData(r.data);
     setLoading(false);
   }, []);

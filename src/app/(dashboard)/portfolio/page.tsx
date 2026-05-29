@@ -38,7 +38,7 @@ export default function PortfolioPage() {
   const load = useCallback(async () => {
     setLoading(true);
     const [cockpitRes, oRes, reconRes] = await Promise.all([
-      apiGet<Record<string, unknown>>("/api/cockpit", { timeoutMs: 90000 }),
+      apiGet<Record<string, unknown>>("/api/cockpit", { timeoutMs: 5000 }),
       apiGet("/api/orders"),
       apiGet("/api/portfolio/reconciliation"),
     ]);

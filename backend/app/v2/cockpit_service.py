@@ -29,6 +29,9 @@ def _control_from_truth(truth: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_cockpit_summary(session: Session) -> dict[str, Any]:
+    from app.services.mission_control_read_model import build_mission_control_status
+
+    return build_mission_control_status(session)
     """Fast cockpit (<5s) — single source of truth for UI cards + banner."""
     cfg = ConfigManager(session).get_current()
     generated = datetime.utcnow().isoformat() + "Z"

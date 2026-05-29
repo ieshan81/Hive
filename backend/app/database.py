@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlmodel import Field, SQLModel, create_engine, Session
-from sqlalchemy import Column, JSON, Text
+from sqlalchemy import Column, JSON, LargeBinary, Text
 
 from app.config import settings
 
@@ -537,6 +537,24 @@ class SettingsActionAudit(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class DiagnosticExportJob(SQLModel, table=True):
+    """Persistent diagnostic export job metadata and optional ZIP payload."""
+
+    __tablename__ = "diagnostic_export_jobs"
+    job_id: str = Field(primary_key=True, index=True)
+    status: str = Field(default="queued", index=True)  # queued|running|complete|failed
+    progress_pct: int = 0
+    started_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    completed_at: Optional[datetime] = Field(default=None, index=True)
+    filename: Optional[str] = None
+    file_count: int = 0
+    failed_sections: Optional[list] = Field(default=None, sa_column=Column(JSON))
+    error: Optional[str] = None
+    storage_path: Optional[str] = None
+    zip_size_bytes: int = 0
+    zip_bytes: Optional[bytes] = Field(default=None, sa_column=Column(LargeBinary))
+
+
 class MemoryEdge(SQLModel, table=True):
     __tablename__ = "memory_edges"
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -1061,7 +1079,13 @@ engine = _create_db_engine()
 
 
 def _migrate_columns() -> None:
-    """Add columns introduced after initial deploy (idempotent)."""
+    """Legacy compatibility only.
+
+    Keep this idempotent and non-destructive for existing Railway databases.
+    New schema work should use SQLModel models plus Alembic migrations; avoid
+    adding more ad-hoc ALTER TABLE blocks unless a production compatibility
+    patch absolutely requires it.
+    """
     from sqlalchemy import inspect, text
 
     insp = inspect(engine)

@@ -1,385 +1,287 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import {
-  Activity,
-  Brain,
-  Hexagon,
-  Shield,
-  TrendingUp,
-  Wallet,
-  Zap,
-  AlertTriangle,
-  Radar,
-} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Activity, AlertTriangle, Database, FileArchive, RefreshCw, Shield, TrendingUp, Wallet, Zap } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
-import { WhyNoTradeCard } from "@/components/panels/WhyNoTradeCard";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { apiGet } from "@/lib/apiClient";
-import { TickerSymbol } from "@/components/ui/TickerSymbol";
+import { WhyNoTradeCard } from "@/components/panels/WhyNoTradeCard";
+import { apiGet, apiPostOperator } from "@/lib/apiClient";
 
-type Cockpit = {
+type Blocker = { code?: string; count?: number; label?: string };
+type Candidate = Record<string, unknown> & { symbol?: string };
+
+type MissionControlStatus = {
   status?: string;
-  snapshot_age_seconds?: number;
-  data_freshness?: string;
-  refresh_in_progress?: boolean;
-  degraded?: boolean;
-  warnings?: string[];
-  last_successful_refresh?: string;
-  next_refresh_at?: string;
-  finbert?: { active?: boolean; fresh?: boolean };
-  universe?: { status?: string; available_symbols?: number; cached_data_used?: boolean };
-  crypto?: { status?: string; paper_trade_allowed?: boolean; reason?: string };
-  cockpit_bar?: Record<string, string | boolean | number | null | undefined>;
-  mission_summary?: Record<string, string | boolean | number | null | undefined>;
-  hive_brain_preview?: {
-    meaningful_memory_count?: number;
-    validated_count?: number;
-    consolidated_count?: number;
-    categories?: Record<string, number>;
-    latest_lesson?: { title?: string; summary?: string };
+  generated_at_utc?: string;
+  freshness?: {
+    snapshot_age_seconds?: number | null;
+    stale?: boolean;
+    degraded?: boolean;
+    warnings?: string[];
   };
-  account_survival?: Record<string, number | string | null | undefined>;
-  capital_allocator?: {
-    detail?: Record<string, number | null | undefined>;
-    sparkline?: number[];
-    headline?: string;
-    status?: string;
+  account?: Record<string, unknown>;
+  paper_execution?: Record<string, unknown>;
+  universe?: {
+    last_scan_at?: string | null;
+    stale_reason?: string | null;
+    funnel?: Record<string, number>;
+    top_blockers?: Blocker[];
+    top_candidates?: Candidate[];
   };
-  ai_fund_manager?: {
-    active?: boolean;
-    configured?: boolean;
-    current_decision?: string;
-    confidence?: number;
-    reason_summary?: string;
-    sentiment_engines?: Record<string, { active?: boolean; wired?: boolean; reason?: string }>;
+  why_no_trade_summary?: {
+    plain?: string | null;
+    top_blockers?: Blocker[];
   };
-  push_pull_engine?: Record<string, unknown>;
-  strategy_status?: { active?: boolean; signal_formula_summary?: string; entry_blocks?: string[] };
-  paper_learning?: Record<string, unknown>;
-  latest_insight?: { narrative?: string; tick?: Record<string, unknown> };
-  risk_cage?: Record<string, unknown>;
-  capital_graph?: { points?: { t?: string; equity?: number }[] };
-  market_radar?: {
-    top_active_candidates?: { symbol?: string; status?: string; blocked_reason?: string }[];
-  };
-  universe_mode?: { mode_label?: string; stocks_session_note?: string };
-  exit_monitor?: { open_positions_count?: number; plain?: string };
-  can_place_paper_orders?: boolean;
-  primary_blocker_plain?: string;
+  push_pull?: Record<string, unknown>;
+  memory?: Record<string, unknown>;
+  diagnostics?: Record<string, unknown>;
+  worker?: Record<string, unknown>;
+  latest_order_summary?: Record<string, unknown>;
+  next_recommended_operator_action?: string;
+  system_warnings?: string[];
 };
 
-function Stat({ label, value, reason }: { label: string; value: string; reason?: string | null }) {
+function numberValue(value: unknown): number | null {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function money(value: unknown): string {
+  const n = numberValue(value);
+  return n === null ? "-" : `$${n.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
+}
+
+function label(value: unknown): string {
+  return String(value ?? "-").replace(/_/g, " ");
+}
+
+function age(value: unknown): string {
+  const n = numberValue(value);
+  if (n === null) return "unknown age";
+  if (n < 60) return `${Math.round(n)}s old`;
+  if (n < 3600) return `${Math.round(n / 60)}m old`;
+  return `${Math.round(n / 3600)}h old`;
+}
+
+function shortTime(value: unknown): string {
+  if (!value) return "-";
+  return String(value).replace("T", " ").replace("Z", "").slice(0, 19);
+}
+
+function Stat({ labelText, value, tone }: { labelText: string; value: string; tone?: string }) {
   return (
-    <div className="rounded-lg border border-white/5 bg-black/20 px-3 py-2">
-      <p className="text-[9px] uppercase tracking-wider text-slate-500">{label}</p>
-      <p className="text-sm font-semibold text-white mt-0.5 truncate">{value}</p>
-      {reason && value === "—" && (
-        <p className="text-[9px] text-amber-300/80 mt-0.5 line-clamp-2">{reason}</p>
-      )}
+    <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+      <p className="text-[10px] uppercase tracking-wide text-slate-500">{labelText}</p>
+      <p className={`mt-1 text-lg font-semibold ${tone ?? "text-white"}`}>{value}</p>
     </div>
   );
 }
 
-function HoneycombBg() {
-  return (
-    <div
-      className="pointer-events-none absolute inset-0 opacity-[0.07]"
-      style={{
-        backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100'%3E%3Cpath d='M28 0 L56 16 L56 48 L28 64 L0 48 L0 16 Z' fill='none' stroke='%2300d1ff' stroke-width='1'/%3E%3C/svg%3E")`,
-        backgroundSize: "56px 100px",
-      }}
-    />
-  );
-}
-
 export function MissionControlPanel() {
-  const [data, setData] = useState<Cockpit | null>(null);
+  const [data, setData] = useState<MissionControlStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [actionMsg, setActionMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const res = await apiGet<Record<string, unknown>>("/api/cockpit", { timeoutMs: 90000 });
+    const res = await apiGet<MissionControlStatus>("/api/mission-control/status", { timeoutMs: 5000 });
     if (res.ok && res.data) {
-      const c = res.data;
-      const ctrl = (c.control as Record<string, unknown>) || {};
-      const acct = (c.account as Record<string, unknown>) || {};
-      const funnel = (c.funnel as Record<string, number>) || {};
-      const shortlist = (c.shortlist as { symbol?: string }[]) || [];
-      setData({
-        status: "ok",
-        data_freshness: "live",
-        live_truth: c.live_truth,
-        mission_summary: {
-          headline: String(c.ai_cockpit_message || "Live cockpit"),
-          engine_doing: "V2 agent · bars → funnel → score → paper",
-        },
-        account_survival: {
-          current_paper_equity: acct.equity,
-          today_pl: acct.daily_pl,
-          broker_sync_status: acct.connected ? "synced" : "offline",
-        },
-        can_place_paper_orders: ctrl.can_place_paper_orders,
-        primary_blocker_plain: Array.isArray(ctrl.blockers) ? String(ctrl.blockers[0] || "") : "",
-        cockpit_bar: {
-          shortlist: funnel.shortlist ?? 0,
-          ranked: funnel.ranked ?? 0,
-          passed: Number(c.passed_count ?? 0),
-          paper: ctrl.paper_learning_on ? "ON" : "OFF",
-        },
-        market_radar: {
-          top_active_candidates: shortlist.map((s) => ({
-            symbol: s.symbol,
-            status: "shortlist",
-          })),
-        },
-        latest_insight: { narrative: c.ai_cockpit_message },
-        strategy_status: { active: Boolean(ctrl.paper_learning_on), signal_formula_summary: "Live push-pull scoring" },
-      } as Cockpit);
+      setData(res.data);
       setError(null);
     } else {
-      setError(res.error || `HTTP ${res.status}`);
+      setError(res.error || `Mission Control unavailable (${res.status})`);
     }
     setLoading(false);
   }, []);
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 15000);
+    const t = setInterval(load, 30000);
     return () => clearInterval(t);
   }, [load]);
 
-  if (loading) return <EmptyState message="Loading Mission Control cockpit…" className="min-h-[320px]" />;
-
-  const isDegraded = data?.status === "degraded" || data?.degraded;
-  const freshness = data?.data_freshness ?? "unknown";
-  const ageSec = data?.snapshot_age_seconds;
-
-  if (!data && !error) {
-    return <EmptyState message="No Mission Control data yet." className="min-h-[200px]" />;
+  async function runAction(key: string, endpoint: string, body: Record<string, unknown> = {}) {
+    setBusy(key);
+    setActionMsg(null);
+    const res = await apiPostOperator<Record<string, unknown>>(endpoint, { operator: "mission_control", ...body }, { timeoutMs: 120000 });
+    setActionMsg(res.ok ? `${label(key)} started.` : res.error || `${label(key)} failed.`);
+    setBusy(null);
+    await load();
   }
 
-  const bar = data?.cockpit_bar ?? {};
-  const acct = data?.account_survival ?? {};
-  const alloc = data?.capital_allocator?.detail ?? {};
-  const spark = data?.capital_allocator?.sparkline ?? [];
-  const maxSpark = Math.max(...spark, (acct.current_paper_equity as number) ?? 1, 1);
-  const graph = data?.capital_graph?.points ?? [];
-  const maxEq = Math.max(...graph.map((p) => p.equity ?? 0), 1);
-  const hive = data?.hive_brain_preview ?? {};
-  const ai = data?.ai_fund_manager ?? {};
-  const radar = data?.market_radar?.top_active_candidates ?? [];
+  const account = data?.account ?? {};
+  const safety = data?.paper_execution ?? {};
+  const universe = data?.universe ?? {};
+  const funnel = universe.funnel ?? {};
+  const diagnostics = data?.diagnostics ?? {};
+  const memory = data?.memory ?? {};
+  const pushPull = data?.push_pull ?? {};
+  const latestOrder = (data?.latest_order_summary?.latest_order ?? null) as Record<string, unknown> | null;
+  const topCandidate = useMemo(() => (universe.top_candidates ?? [])[0] ?? null, [universe.top_candidates]);
+  const warnings = [...(data?.freshness?.warnings ?? []), ...(data?.system_warnings ?? [])].filter(Boolean);
+  const degraded = data?.status === "degraded" || data?.freshness?.degraded;
+
+  if (loading) return <EmptyState message="Loading Mission Control..." className="min-h-[260px]" />;
 
   return (
-    <section className="relative space-y-4 max-w-6xl">
-      <HoneycombBg />
-
-      {(isDegraded || data?.refresh_in_progress) && (
-        <div
-          className={`relative rounded-xl border px-4 py-3 text-sm ${
-            data?.refresh_in_progress
-              ? "border-hive-cyan/30 bg-hive-cyan/5 text-cyan-100"
-              : "border-amber-500/30 bg-amber-500/5 text-amber-100"
-          }`}
-        >
-          <p className="font-medium flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 shrink-0" />
-            {data?.refresh_in_progress
-              ? "Refresh in progress — showing last snapshot"
-              : "Using cached snapshot — some subsystems degraded"}
-          </p>
-          <p className="text-xs mt-1 opacity-90">
-            System alive · Live locked · Paper broker · Hybrid radar · FinBERT{" "}
-            {data?.finbert?.active ? "active" : "check status"}
-            {ageSec != null && ` · Last updated ${Math.round(ageSec)}s ago`}
-            {freshness !== "fresh" && ` · Data freshness: ${freshness}`}
-          </p>
-          {(data?.warnings?.length ?? 0) > 0 && (
-            <ul className="text-[11px] mt-2 space-y-0.5 list-disc list-inside opacity-80">
-              {data!.warnings!.slice(0, 4).map((w, i) => (
-                <li key={i}>{w}</li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-
-      {error && (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-amber-200 text-sm">
-          Mission Control unavailable: {error}
-        </div>
-      )}
-
-      <header className="relative rounded-2xl border border-hive-cyan/20 bg-gradient-to-br from-hive-cyan/10 via-violet-950/20 to-black/40 p-5 overflow-hidden">
-        <div className="flex items-start justify-between gap-4 flex-wrap">
+    <section className="max-w-6xl space-y-4">
+      <header className="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-              <Hexagon className="h-7 w-7 text-hive-cyan" />
-              Mission Control
-            </h1>
-            <p className="text-sm text-slate-300 mt-1 max-w-2xl">{data?.mission_summary?.headline as string}</p>
-            <p className="text-xs text-slate-500 mt-1">{data?.mission_summary?.engine_doing as string}</p>
+            <p className="text-[11px] uppercase tracking-wide text-hive-cyan">Mission Control</p>
+            <h1 className="mt-1 text-2xl font-semibold text-white">Product Truth</h1>
+            <p className="mt-1 text-sm text-slate-400">
+              One cached read model for dashboard state. Heavy refreshes run only through operator actions.
+            </p>
+            <p className="mt-2 text-[11px] text-slate-500">
+              Snapshot: {shortTime(data?.generated_at_utc)} · {age(data?.freshness?.snapshot_age_seconds)}
+            </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {Object.entries(bar).slice(0, 6).map(([k, v]) => (
-              <span key={k} className="text-[10px] px-2 py-1 rounded-full border border-white/10 bg-black/30 text-slate-300">
-                {k.replace(/_/g, " ")}: <span className="text-hive-cyan">{String(v)}</span>
-              </span>
-            ))}
+            <span className="rounded border border-emerald-300/25 bg-emerald-300/10 px-3 py-1 text-xs text-emerald-200">
+              Live locked
+            </span>
+            <span className={safety.paper_broker ? "rounded border border-emerald-300/25 bg-emerald-300/10 px-3 py-1 text-xs text-emerald-200" : "rounded border border-amber-300/25 bg-amber-300/10 px-3 py-1 text-xs text-amber-200"}>
+              Paper broker {safety.paper_broker ? "yes" : "check"}
+            </span>
+            <span className={degraded ? "rounded border border-amber-300/25 bg-amber-300/10 px-3 py-1 text-xs text-amber-200" : "rounded border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-slate-300"}>
+              {degraded ? "Degraded" : "Stable"}
+            </span>
           </div>
         </div>
-        {!data?.can_place_paper_orders && data?.primary_blocker_plain && (
-          <p className="text-sm text-amber-200 mt-3 flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4" /> {data.primary_blocker_plain}
-          </p>
-        )}
+        {error ? <p className="mt-3 text-sm text-amber-300">{error}</p> : null}
+        {warnings.length > 0 ? (
+          <div className="mt-3 rounded-lg border border-amber-300/20 bg-amber-300/10 p-3 text-xs text-amber-100">
+            <p className="mb-1 flex items-center gap-2 font-medium"><AlertTriangle className="h-4 w-4" /> Subsystem warnings</p>
+            <ul className="space-y-0.5">
+              {warnings.slice(0, 5).map((w) => <li key={w}>{w}</li>)}
+            </ul>
+          </div>
+        ) : null}
       </header>
 
-      <div className="relative grid gap-4 lg:grid-cols-3">
-        <GlassPanel title="Account survival" icon={<Wallet className="h-4 w-4" />} className="lg:col-span-1">
-          <div className="grid grid-cols-2 gap-2">
-            <Stat label="Equity" value={`$${Number(acct.current_paper_equity ?? 0).toFixed(2)}`} />
-            <Stat label="Buying power" value={`$${Number(acct.buying_power ?? 0).toFixed(2)}`} />
-            <Stat label="Open P/L" value={`$${Number(acct.unrealized_pl ?? 0).toFixed(2)}`} />
-            <Stat label="Today P/L" value={`$${Number(acct.today_pl ?? 0).toFixed(2)}`} />
-            <Stat label="Total P/L" value={`$${Number(acct.total_pl ?? 0).toFixed(2)}`} />
-            <Stat label="Sync" value={String(acct.broker_sync_status ?? "—")} />
-          </div>
-        </GlassPanel>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <Stat labelText="Equity" value={money(account.equity)} />
+        <Stat labelText="Cash" value={money(account.cash)} />
+        <Stat labelText="Buying Power" value={money(account.buying_power)} />
+        <Stat labelText="Open P/L" value={money(account.open_pl)} tone={Number(account.open_pl ?? 0) >= 0 ? "text-emerald-300" : "text-rose-300"} />
+      </div>
 
-        <GlassPanel title="Capital allocator" icon={<TrendingUp className="h-4 w-4" />} className="lg:col-span-1">
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            <Stat
-              label="Deployable"
-              value={alloc.deployable_capital != null ? `$${alloc.deployable_capital}` : "—"}
-              reason={(data as { cards?: Record<string, { reason?: string }> })?.cards?.deployable?.reason}
-            />
-            <Stat
-              label="Cash reserve"
-              value={alloc.cash_reserve != null ? `$${alloc.cash_reserve}` : "—"}
-              reason={(data as { cards?: Record<string, { reason?: string }> })?.cards?.cash_reserve?.reason}
-            />
-            <Stat
-              label="Crypto budget"
-              value={alloc.crypto_budget != null ? `$${alloc.crypto_budget}` : "—"}
-              reason={(data as { cards?: Record<string, { reason?: string }> })?.cards?.crypto_budget?.reason}
-            />
-            <Stat
-              label="Stock budget"
-              value={alloc.stock_budget != null ? `$${alloc.stock_budget}` : "—"}
-              reason={(data as { cards?: Record<string, { reason?: string }> })?.cards?.stock_budget?.reason}
-            />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <GlassPanel title="Execution safety" icon={<Shield className="h-4 w-4" />}>
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <Stat labelText="Paper orders" value={safety.paper_orders_enabled ? "Enabled" : "Disabled"} tone={safety.paper_orders_enabled ? "text-emerald-300" : "text-amber-300"} />
+            <Stat labelText="Can place now" value={safety.can_place_paper_orders_now ? "Yes" : "No"} tone={safety.can_place_paper_orders_now ? "text-emerald-300" : "text-amber-300"} />
+            <Stat labelText="Paper learning" value={safety.paper_learning_on ? "On" : "Off"} />
+            <Stat labelText="Scheduler" value={safety.scheduler_enabled ? "On" : "Off"} />
           </div>
-          {spark.length > 0 && (
-            <div className="flex items-end gap-0.5 h-10 mt-3">
-              {spark.map((v, i) => (
-                <div
-                  key={i}
-                  className="flex-1 bg-violet-500/50 rounded-t min-w-[2px]"
-                  style={{ height: `${Math.max(8, (v / maxSpark) * 100)}%` }}
-                />
+          {(safety.blockers as string[] | undefined)?.length ? (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {(safety.blockers as string[]).slice(0, 6).map((b) => (
+                <span key={b} className="rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1 text-[11px] text-amber-200">
+                  {b}
+                </span>
               ))}
             </div>
-          )}
+          ) : null}
         </GlassPanel>
 
-        <GlassPanel title="Hive brain preview" icon={<Brain className="h-4 w-4" />} className="lg:col-span-1">
-          <p className="text-xs text-slate-400">
-            Meaningful: {hive.meaningful_memory_count ?? 0} · Validated: {hive.validated_count ?? 0} · Consolidated:{" "}
-            {hive.consolidated_count ?? 0}
-          </p>
-          <div className="grid grid-cols-2 gap-1 mt-2 text-[10px] text-slate-500">
-            {Object.entries(hive.categories ?? {}).map(([k, v]) => (
-              <span key={k}>
-                {k}: <span className="text-slate-300">{v}</span>
-              </span>
-            ))}
+        <GlassPanel title="Universe funnel" icon={<Database className="h-4 w-4" />}>
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              ["Available", funnel.available],
+              ["Cached", funnel.cached],
+              ["Fresh", funnel.fresh],
+              ["Scored", funnel.scored],
+              ["Eligible", funnel.eligible],
+              ["Shortlist", funnel.shortlisted],
+            ].map(([k, v]) => <Stat key={String(k)} labelText={String(k)} value={String(v ?? 0)} />)}
           </div>
-          {hive.latest_lesson?.summary && (
-            <p className="text-[11px] text-cyan-200/90 mt-2 line-clamp-3">{hive.latest_lesson.summary}</p>
-          )}
+          <p className="mt-3 text-[11px] text-slate-500">
+            Last scan: {shortTime(universe.last_scan_at)}. {universe.stale_reason ?? "Using latest persisted scan result."}
+          </p>
         </GlassPanel>
       </div>
 
-      <div className="relative grid gap-4 lg:grid-cols-2">
-        <WhyNoTradeCard />
-        <GlassPanel title="AI fund manager" icon={<Brain className="h-4 w-4" />}>
-          <p className="text-xs text-slate-400 mb-2">
-            Status:{" "}
-            <span className={ai.active ? "text-emerald-400" : "text-amber-400"}>
-              {ai.active ? "Gemini advisor active (advisory only)" : "Inactive or not configured"}
-            </span>
-          </p>
-          <p className="text-sm text-white">Decision: {ai.current_decision ?? "—"}</p>
-          <p className="text-[11px] text-slate-500 mt-1 line-clamp-3">{ai.reason_summary}</p>
-          <div className="mt-2 space-y-1">
-            {Object.entries(ai.sentiment_engines ?? {})
-              .slice(0, 4)
-              .map(([k, v]) => (
-                <p key={k} className="text-[10px] text-slate-500">
-                  {k}: {v?.active ? "active" : "inactive"} — {v?.reason?.slice(0, 60)}
-                </p>
-              ))}
-          </div>
-        </GlassPanel>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <WhyNoTradeCard
+          plain={data?.why_no_trade_summary?.plain}
+          topBlockers={universe.top_blockers ?? data?.why_no_trade_summary?.top_blockers ?? []}
+          topCandidate={topCandidate}
+          shortlisted={funnel.shortlisted ?? 0}
+          eligible={funnel.eligible ?? 0}
+          canPlacePaperOrders={Boolean(safety.can_place_paper_orders_now)}
+          pushPullStatus={String(pushPull.last_result ?? pushPull.status ?? "")}
+        />
 
         <GlassPanel title="Push-pull engine" icon={<Zap className="h-4 w-4" />}>
-          <p className="text-sm text-white">{String((data?.push_pull_engine as { market_mode_label?: string })?.market_mode_label ?? "—")}</p>
-          <p className="text-[11px] text-slate-500 mt-1">{data?.strategy_status?.signal_formula_summary}</p>
-          <p className="text-[10px] text-slate-600 mt-2">
-            Strategy active: {data?.strategy_status?.active ? "yes" : "no"} · Exit monitor:{" "}
-            {data?.exit_monitor?.plain ?? "idle"}
+          <p className="text-sm text-white">{label(pushPull.last_result ?? pushPull.status)}</p>
+          <p className="mt-1 text-xs text-slate-400">{String(pushPull.plain_summary ?? "No latest tick summary persisted yet.")}</p>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <Stat labelText="Last tick" value={shortTime(pushPull.last_tick_at)} />
+            <Stat labelText="Data stale" value={pushPull.data_stale ? "Yes" : "No"} tone={pushPull.data_stale ? "text-amber-300" : "text-emerald-300"} />
+          </div>
+        </GlassPanel>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <GlassPanel title="Latest execution" icon={<Activity className="h-4 w-4" />}>
+          {latestOrder ? (
+            <div className="text-xs text-slate-300">
+              <p className="text-white">{String(latestOrder.symbol)} · {label(latestOrder.side)} · {label(latestOrder.status)}</p>
+              <p className="mt-1 text-slate-500">{shortTime(latestOrder.submitted_at)}</p>
+            </div>
+          ) : (
+            <p className="text-xs text-slate-500">No paper order record yet.</p>
+          )}
+        </GlassPanel>
+
+        <GlassPanel title="Hive memory" icon={<TrendingUp className="h-4 w-4" />}>
+          <div className="grid grid-cols-3 gap-2">
+            <Stat labelText="Active" value={String(memory.active_lessons ?? 0)} />
+            <Stat labelText="Validated" value={String(memory.validated_lessons ?? 0)} />
+            <Stat labelText="Consolidated" value={String(memory.consolidated_lessons ?? 0)} />
+          </div>
+          <p className="mt-2 text-[11px] text-slate-500">{String((memory.latest_lesson as Record<string, unknown> | undefined)?.summary ?? "No latest lesson.")}</p>
+        </GlassPanel>
+
+        <GlassPanel title="Diagnostics" icon={<FileArchive className="h-4 w-4" />}>
+          <p className="text-sm text-white">{label(diagnostics.status)}</p>
+          <p className="mt-1 text-xs text-slate-400">
+            Last completed: {shortTime((diagnostics.last_completed as Record<string, unknown> | null)?.completed_at)}
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            Running: {diagnostics.export_in_progress ? "yes" : "no"}
           </p>
         </GlassPanel>
       </div>
 
-      <GlassPanel title="Capital graph" icon={<TrendingUp className="h-4 w-4" />}>
-        {graph.length === 0 ? (
-          <p className="text-sm text-slate-500">Equity curve populates after broker sync snapshots.</p>
-        ) : (
-          <div className="flex items-end gap-0.5 h-32">
-            {graph.slice(-40).map((p, i) => (
-              <div
-                key={`${p.t}-${i}`}
-                className="flex-1 bg-gradient-to-t from-hive-cyan/20 to-hive-cyan/70 rounded-t min-w-[3px]"
-                style={{ height: `${Math.max(6, ((p.equity ?? 0) / maxEq) * 100)}%` }}
-                title={`${p.t}: $${p.equity?.toFixed(2)}`}
-              />
-            ))}
-          </div>
-        )}
-        <p className="text-[10px] text-slate-500 mt-2">
-          Current equity: ${Number(acct.current_paper_equity ?? 0).toFixed(2)} · Mode: {data?.universe_mode?.mode_label}
-        </p>
-      </GlassPanel>
-
-      <GlassPanel title="Market radar" icon={<Radar className="h-4 w-4" />}>
-        {radar.length === 0 ? (
-          <p className="text-sm text-slate-500">No active candidates right now. {data?.universe_mode?.stocks_session_note}</p>
-        ) : (
-          <ul className="space-y-2">
-            {radar.map((c) => (
-                <li key={c.symbol} className="flex items-center gap-3 text-sm border-b border-white/5 pb-2">
-                  <TickerSymbol symbol={String(c.symbol ?? "")} size="md" labelClassName="text-sm font-medium text-white" />
-                  <p className="text-[10px] text-slate-500">{c.status}</p>
-                </li>
-              ))}
-          </ul>
-        )}
-      </GlassPanel>
-
-      <GlassPanel title="Latest insight" icon={<Activity className="h-4 w-4" />}>
-        <p className="text-sm text-white">{data?.latest_insight?.narrative ?? "Waiting for next scheduler tick."}</p>
-        <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
-          <span className="text-slate-500">Risk cage: live locked</span>
-          <span className="text-slate-500">Stale data guard: on</span>
-          <span className="text-slate-500">Duplicate entry protection: on</span>
+      <GlassPanel title="Operator actions" icon={<RefreshCw className="h-4 w-4" />}>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" disabled={busy !== null} onClick={() => runAction("refresh market data", "/api/market-data/refresh-bars", { asset_type: "crypto", timeframe: "5Min" })} className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white disabled:opacity-50">
+            Refresh market data
+          </button>
+          <button type="button" disabled={busy !== null} onClick={() => runAction("run universe scan", "/api/universe/refresh")} className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white disabled:opacity-50">
+            Run universe scan
+          </button>
+          <button type="button" disabled={busy !== null} onClick={() => runAction("run paper learning cycle", "/api/autonomous-paper-learning/run-one-cycle")} className="rounded-lg border border-hive-cyan/30 bg-hive-cyan/10 px-3 py-2 text-xs text-hive-cyan disabled:opacity-50">
+            Run paper-learning cycle
+          </button>
+          <button type="button" disabled={busy !== null} onClick={() => runAction("start diagnostic export", "/api/diagnostics/export/run")} className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white disabled:opacity-50">
+            Start diagnostic export
+          </button>
         </div>
+        <p className="mt-3 text-xs text-slate-400">
+          Recommended next action: {data?.next_recommended_operator_action ?? "Wait for next tick."}
+        </p>
+        {busy ? <p className="mt-2 text-xs text-hive-cyan">Running {label(busy)}...</p> : null}
+        {actionMsg ? <p className="mt-2 text-xs text-slate-300">{actionMsg}</p> : null}
       </GlassPanel>
 
-      <div className="relative flex items-center gap-2 text-[10px] text-emerald-400/80">
-        <Shield className="h-3.5 w-3.5" />
-        Paper only · Live trading locked · Engine live-ready in discipline, paper-only at runtime
+      <div className="flex items-center gap-2 text-[11px] text-emerald-400/80">
+        <Wallet className="h-3.5 w-3.5" />
+        Paper only. Live trading remains locked. Dashboard reads do not run scans, provider calls, Gemini, or orders.
       </div>
     </section>
   );

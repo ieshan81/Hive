@@ -17,12 +17,14 @@ router = APIRouter(prefix="/api/diagnostics/export", tags=["diagnostics-export"]
 
 @router.post("/run")
 def run_export(_op: str = Depends(require_operator_token)):
+    """OPERATOR ACTION: starts heavy diagnostic export work in background."""
     return start_export_job()
 
 
 @router.get("/status")
-def status():
-    return export_job_status()
+def status(session: Session = Depends(get_session)):
+    """READ ONLY: returns persisted diagnostic job metadata only."""
+    return export_job_status(session)
 
 
 @router.get("/download/{job_id}")
@@ -32,6 +34,13 @@ def download(job_id: str):
         return {"status": "error", "message": "Job not found"}
     if reason == "not_ready":
         return {"status": "pending", "message": "Export not ready yet"}
+    if reason in ("file_unavailable_after_restart", "download_unavailable"):
+        return {
+            "status": "error",
+            "message": "Diagnostic metadata exists, but the ZIP file is unavailable after restart or storage cleanup.",
+            "reason": reason,
+            "filename": filename,
+        }
     return Response(
         content=data,
         media_type="application/zip",
