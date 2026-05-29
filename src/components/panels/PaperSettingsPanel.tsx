@@ -47,9 +47,51 @@ type Readiness = {
   kill_switch_reason?: string;
   bot_can_trade?: boolean;
   next_action?: string;
+  drawdown?: {
+    daily_pl_pct?: number | null;
+    drawdown_pct?: number | null;
+    daily_limit_pct?: number;
+    max_limit_pct?: number;
+    weekly_limit_pct?: number;
+  };
   live_trading_unchanged?: boolean;
   submitted_order?: boolean;
 };
+
+/**
+ * GET /api/settings/paper-trading/readiness returns a flat Readiness.
+ * POST /api/execution/paper/readiness-check returns a wrapper:
+ *   { status, dry_run, submitted_order, paper_entry_allowed, readiness, next_action, generated_at_utc }
+ * Normalize both shapes into the flat Readiness our card renders. Tolerate any
+ * future wrapper shape that puts the canonical fields under "readiness".
+ */
+function normalizeReadiness(raw: unknown): Readiness | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  const nested = obj.readiness;
+  const flat: Record<string, unknown> = {
+    ...obj,
+    ...(nested && typeof nested === "object" ? (nested as Record<string, unknown>) : {}),
+  };
+
+  // Map canonical Mission Control names → the Settings card's field names.
+  if (flat.paper_learning_on !== undefined && flat.paper_learning_enabled === undefined) {
+    flat.paper_learning_enabled = flat.paper_learning_on;
+  }
+  if (flat.can_place_paper_orders_now !== undefined && flat.bot_can_trade === undefined) {
+    flat.bot_can_trade = flat.can_place_paper_orders_now;
+  }
+  if (flat.paper_broker !== undefined && flat.paper_broker_connected === undefined) {
+    flat.paper_broker_connected = flat.paper_broker;
+  }
+  if (obj.next_action !== undefined && flat.next_action === undefined) {
+    flat.next_action = obj.next_action;
+  }
+  if (typeof obj.paper_entry_allowed === "boolean" && flat.bot_can_trade === undefined) {
+    flat.bot_can_trade = obj.paper_entry_allowed;
+  }
+  return flat as Readiness;
+}
 
 type DryRunResult = {
   status: string;
@@ -87,9 +129,13 @@ const PAPER_KEY_LABELS: Record<string, string> = {
   "portfolio.max_concurrent_positions": "Max concurrent positions",
   "portfolio.max_total_exposure_pct": "Max total exposure (%)",
   "portfolio.reserve_cash_pct": "Reserve cash (%)",
-  "risk.daily_drawdown_pct": "Daily drawdown limit (%)",
-  "risk.max_drawdown_pct": "Max drawdown limit (%)",
+  "risk.daily_drawdown_pct": "Daily drawdown (risk model, %)",
+  "risk.max_drawdown_pct": "Max drawdown (risk model, %)",
   "risk.max_exposure_per_symbol_pct": "Max exposure per symbol (%)",
+  // Entry kill-switch keys (canonical config the cage actually reads).
+  "kill.daily_drawdown_pct": "Daily drawdown (entry kill switch, %)",
+  "kill.weekly_drawdown_pct": "Weekly drawdown (entry kill switch, %)",
+  "kill.max_drawdown_pct": "Max drawdown (entry kill switch, %)",
   "min_edge_after_cost_bps": "Min edge after cost (bps)",
 };
 
@@ -105,6 +151,11 @@ const PAPER_CONTROL_KEYS = [
   "execution.duplicate_symbol_protection_enabled",
 ];
 const PAPER_RISK_KEYS = [
+  // Entry kill-switch settings — these are what the cage actually reads.
+  "kill.daily_drawdown_pct",
+  "kill.weekly_drawdown_pct",
+  "kill.max_drawdown_pct",
+  // Risk model thresholds — used by allocator / preflight reporting.
   "risk.daily_drawdown_pct",
   "risk.max_drawdown_pct",
   "risk.max_exposure_per_symbol_pct",
@@ -134,15 +185,21 @@ export function PaperSettingsPanel() {
   const [dryRunResult, setDryRunResult] = useState<DryRunResult | null>(null);
   const [confirmInput, setConfirmInput] = useState("");
   const [showTech, setShowTech] = useState(false);
+  // Explicit, separate drawdown action state.
+  const [drawdownInput, setDrawdownInput] = useState<string>("3.0");
+  const [drawdownConfirm, setDrawdownConfirm] = useState<string>("");
 
   const load = useCallback(async () => {
     setLoading(true);
     const [s, r] = await Promise.all([
       apiGet<SettingsStatus>("/api/settings/status", { timeoutMs: 5000 }),
-      apiGet<Readiness>("/api/settings/paper-trading/readiness", { timeoutMs: 5000 }),
+      apiGet<unknown>("/api/settings/paper-trading/readiness", { timeoutMs: 5000 }),
     ]);
     if (s.ok && s.data) setStatus(s.data);
-    if (r.ok && r.data) setReadiness(r.data);
+    if (r.ok) {
+      const norm = normalizeReadiness(r.data);
+      if (norm) setReadiness(norm);
+    }
     setLoading(false);
   }, []);
 
@@ -153,16 +210,61 @@ export function PaperSettingsPanel() {
   async function runReadinessCheck() {
     setBusy(true);
     setMsg(null);
-    const r = await apiPostOperator<Readiness>("/api/execution/paper/readiness-check", {});
-    if (r.ok && r.data) {
-      setReadiness(r.data);
-      setMsg(
-        r.data.bot_can_trade
-          ? "Readiness check passed — operator may run a controlled paper cycle from Cockpit."
-          : `Readiness check complete — ${r.data.blockers_count ?? 0} blocker(s).`,
-      );
+    // POST /api/execution/paper/readiness-check returns a wrapper:
+    //   { status, dry_run, submitted_order, paper_entry_allowed,
+    //     readiness: {...canonical Mission Control paper_execution...},
+    //     next_action, generated_at_utc }
+    // normalizeReadiness() unpacks either shape into the flat Readiness we render.
+    const r = await apiPostOperator<unknown>("/api/execution/paper/readiness-check", {});
+    if (r.ok) {
+      const norm = normalizeReadiness(r.data);
+      if (norm) {
+        setReadiness(norm);
+        setMsg(
+          norm.bot_can_trade
+            ? "Readiness check passed — operator may run a controlled paper cycle from Cockpit."
+            : `Readiness check complete — ${norm.blockers_count ?? norm.blockers?.length ?? 0} blocker(s).`,
+        );
+      } else {
+        setMsg("Readiness check returned an unexpected shape.");
+      }
     } else {
       setMsg(r.error ?? "Readiness check failed.");
+    }
+    setBusy(false);
+  }
+
+  async function applyDrawdownLimit() {
+    if (drawdownConfirm.trim().toUpperCase() !== "SET PAPER DAILY DRAWDOWN") {
+      setMsg('Type "SET PAPER DAILY DRAWDOWN" to confirm.');
+      return;
+    }
+    const parsed = parseFloat(drawdownInput);
+    if (!isFinite(parsed) || parsed < 0.25 || parsed > 10) {
+      setMsg("Daily drawdown limit must be between 0.25% and 10%.");
+      return;
+    }
+    setBusy(true);
+    setMsg(null);
+    const r = await apiPostOperator<DryRunResult & { readiness_after_change?: unknown }>(
+      "/api/settings/paper-trading/set-drawdown-limit",
+      {
+        daily_drawdown_pct: parsed,
+        confirmation: "SET PAPER DAILY DRAWDOWN",
+      },
+    );
+    if (r.ok && r.data && r.data.status === "ok") {
+      const updated = normalizeReadiness(r.data.readiness_after_change);
+      if (updated) setReadiness(updated);
+      setMsg(
+        `Daily drawdown limit set to ${parsed}%. Live trading unchanged. No order submitted.`,
+      );
+      setDrawdownConfirm("");
+      await load();
+    } else if (r.ok && r.data) {
+      setMsg(`Drawdown change rejected: ${(r.data as Record<string, unknown>).reason ?? "unknown"}`);
+    } else {
+      setMsg(r.error ?? "Drawdown change failed.");
     }
     setBusy(false);
   }
@@ -306,6 +408,99 @@ export function PaperSettingsPanel() {
         </button>
       </article>
 
+      {/* 4b. Dedicated paper drawdown limit action — separate from the preset */}
+      <article className="rounded-xl border border-amber-400/15 bg-amber-400/[0.03] p-5">
+        <h2 className="mb-2 flex items-center gap-2 text-base font-semibold text-white">
+          <AlertTriangle className="h-4 w-4 text-amber-300" /> Set Paper Daily Drawdown Limit
+        </h2>
+        <p className="mb-3 text-xs text-slate-400">
+          Mutates only <code className="font-mono text-amber-200">kill.daily_drawdown_pct</code>.
+          Paper Learning Preset never touches this key — this action is intentionally separate.
+          Live trading remains locked. No order is submitted.
+        </p>
+
+        <div className="grid gap-2 md:grid-cols-3 text-[11px] mb-3">
+          <Field
+            label="Current daily limit"
+            value={
+              readiness?.drawdown?.daily_limit_pct !== undefined
+                ? `${readiness.drawdown.daily_limit_pct}%`
+                : "—"
+            }
+            highlight="warn"
+          />
+          <Field
+            label="Account daily P/L"
+            value={
+              typeof readiness?.drawdown?.daily_pl_pct === "number"
+                ? `${(readiness.drawdown.daily_pl_pct as number).toFixed(2)}%`
+                : "—"
+            }
+          />
+          <Field
+            label="Account drawdown"
+            value={
+              typeof readiness?.drawdown?.drawdown_pct === "number"
+                ? `${(readiness.drawdown.drawdown_pct as number).toFixed(2)}%`
+                : "—"
+            }
+          />
+        </div>
+
+        {readiness?.kill_switch_active && readiness?.kill_switch_reason ? (
+          <p className="mb-3 rounded border border-amber-400/30 bg-amber-400/5 px-3 py-2 text-[11px] text-amber-200 font-mono">
+            {readiness.kill_switch_reason}
+          </p>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-2 mb-2">
+          <label className="text-[11px] text-slate-300">
+            New daily limit (%):
+            <input
+              type="number"
+              step="0.25"
+              min={0.25}
+              max={10}
+              value={drawdownInput}
+              onChange={(e) => setDrawdownInput(e.target.value)}
+              className="ml-2 w-24 rounded border border-white/10 bg-black/40 px-2 py-1.5 text-xs text-white font-mono"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => setDrawdownInput("3.0")}
+            className="text-[10px] text-hive-cyan underline"
+          >
+            suggest 3.0%
+          </button>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <input
+            type="text"
+            value={drawdownConfirm}
+            onChange={(e) => setDrawdownConfirm(e.target.value)}
+            placeholder="Type: SET PAPER DAILY DRAWDOWN"
+            className="flex-1 min-w-[260px] rounded border border-white/10 bg-black/40 px-2 py-1.5 text-xs text-white placeholder-slate-500 font-mono"
+          />
+          <button
+            type="button"
+            disabled={
+              busy ||
+              drawdownConfirm.trim().toUpperCase() !== "SET PAPER DAILY DRAWDOWN"
+            }
+            onClick={applyDrawdownLimit}
+            className="inline-flex items-center gap-1 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 text-xs text-amber-200 hover:bg-amber-400/20 disabled:opacity-40"
+          >
+            <CheckCircle2 className="h-3.5 w-3.5" /> Apply drawdown limit
+          </button>
+        </div>
+
+        <p className="mt-2 text-[10px] text-slate-500">
+          Allowed range: 0.25% – 10%. Mutates one config key. Audit log is written.
+        </p>
+      </article>
+
       {/* 5. Operator Actions / Paper Learning Preset */}
       <article className="rounded-xl border border-white/10 bg-white/[0.03] p-5">
         <h2 className="mb-2 flex items-center gap-2 text-base font-semibold text-white">
@@ -412,10 +607,13 @@ export function PaperSettingsPanel() {
               key={k}
               label={labelFor(k)}
               value={formatValue(paperSubset[k])}
-              highlight={k === "risk.daily_drawdown_pct" ? "warn" : undefined}
+              highlight={k === "kill.daily_drawdown_pct" ? "warn" : undefined}
             />
           ))}
         </div>
+        <p className="mt-2 text-[10px] text-slate-500">
+          Use &quot;Set Paper Daily Drawdown Limit&quot; above to change <code className="font-mono">kill.daily_drawdown_pct</code> safely.
+        </p>
       </article>
 
       {/* 6. Technical Config Drawer */}
