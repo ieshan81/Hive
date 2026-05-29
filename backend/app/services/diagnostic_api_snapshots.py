@@ -92,9 +92,15 @@ def _collect_health() -> dict[str, Any]:
 
 
 def _collect_mission_control_status(session: Session) -> dict[str, Any]:
+    """
+    Canonical /api/mission-control/status payload.
+
+    Uses build_mission_control_status (the real exported function — there is
+    no build_mission_control_read_model, the prior name was a typo bug).
+    """
     try:
-        from app.services.mission_control_read_model import build_mission_control_read_model
-        return build_mission_control_read_model(session)
+        from app.services.mission_control_read_model import build_mission_control_status
+        return build_mission_control_status(session)
     except Exception:
         # Fallback to cockpit service
         try:

@@ -140,5 +140,24 @@ def paper_trading_disable_orders(
     return out
 
 
+@router.post("/paper-trading/set-drawdown-limit")
+def paper_trading_set_drawdown_limit(
+    body: dict = Body(default_factory=dict),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
+    """
+    OPERATOR ACTION (paper-only): mutate kill.daily_drawdown_pct.
+    Separate from the Paper Learning Preset; the preset never touches this key.
+    """
+    actor, actor_type = _actor_from_body(body)
+    if actor_type.lower() == "ai":
+        raise HTTPException(403, "AI cannot change paper drawdown limit")
+    out = svc.set_paper_daily_drawdown(session, body, actor=actor, actor_type=actor_type)
+    if out.get("status") == "ok":
+        session.commit()
+    return out
+
+
 # NOTE: /api/execution/paper/{status,readiness-check} are intentionally NOT
 # defined here — they live in routers/api.py.
