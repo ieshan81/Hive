@@ -7,7 +7,7 @@ import { TickerSymbol } from "@/components/ui/TickerSymbol";
 import { apiGet } from "@/lib/apiClient";
 import { formatDisplaySymbol } from "@/lib/assetIcons";
 
-type Point = { time: number; value: number };
+type Point = { time: import("lightweight-charts").UTCTimestamp; value: number };
 
 type OhlcPayload = {
   status: string;
