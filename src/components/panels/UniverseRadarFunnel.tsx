@@ -35,6 +35,22 @@ function humanizeBlocker(key: string): string {
   return key.replace(/_/g, " ");
 }
 
+function symbolKey(symbol: string): string {
+  return String(symbol || "").toUpperCase().replace(/[/-]/g, "");
+}
+
+function dedupeBySymbol(rows: EligibleRow[]): EligibleRow[] {
+  const best = new Map<string, EligibleRow>();
+  for (const row of rows.filter((r) => r.symbol)) {
+    const key = symbolKey(row.symbol);
+    const prev = best.get(key);
+    const prevScore = Number(prev?.trade_quality_score ?? prev?.universe_rank_score ?? 0);
+    const nextScore = Number(row.trade_quality_score ?? row.universe_rank_score ?? 0);
+    if (!prev || nextScore >= prevScore) best.set(key, row);
+  }
+  return Array.from(best.values());
+}
+
 /** Compact radar strip — used on dashboards that embed funnel without full Universe page. */
 export function UniverseRadarFunnel() {
   const [data, setData] = useState<Payload | null>(null);
@@ -52,7 +68,7 @@ export function UniverseRadarFunnel() {
     const eligibleData = eligibleRes.ok ? eligibleRes.data : null;
     const radarFunnel = (radarData?.funnel ?? {}) as Record<string, number>;
     const radarCounts = (radarData?.counts ?? {}) as Record<string, number>;
-    const rows = (eligibleData?.eligible_trades ?? eligibleData?.shortlist ?? []) as EligibleRow[];
+    const rows = dedupeBySymbol((eligibleData?.eligible_trades ?? eligibleData?.shortlist ?? []) as EligibleRow[]);
 
     setEligible(rows);
     setData({

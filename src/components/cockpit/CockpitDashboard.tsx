@@ -5,7 +5,7 @@ import { Brain, FlaskConical, RefreshCw, Shield } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { TickerSymbol } from "@/components/ui/TickerSymbol";
 import { CockpitFunnelBrain } from "@/components/cockpit/CockpitFunnelBrain";
-import { apiGet } from "@/lib/apiClient";
+import { apiGet, apiPostOperator } from "@/lib/apiClient";
 import { dispatchCockpitRefresh } from "@/lib/cockpitEvents";
 
 type Cockpit = {
@@ -56,12 +56,46 @@ type Cockpit = {
     agent_loop_status?: { latest_status?: string | null; orders_submitted?: number; live_flags_changed?: boolean } | null;
     next_research_action?: string;
   };
+  paper_execution?: {
+    paper_broker_connected?: boolean;
+    paper_broker?: boolean;
+    paper_orders_enabled?: boolean;
+    paper_learning_on?: boolean;
+    scheduler_enabled?: boolean;
+    kill_switch_active?: boolean;
+    drawdown_blocker?: { message?: string; switch_name?: string } | null;
+    open_positions_count?: number;
+    active_orders_count?: number;
+    can_place_paper_orders_now?: boolean;
+    bot_can_submit_paper_entries_now?: boolean;
+    blockers?: string[];
+    next_action?: string;
+    kill_switch?: { account_daily_pl_pct?: number | null; account_drawdown_pct?: number | null; state?: string };
+  };
 };
+
+function symbolKey(symbol: string): string {
+  return String(symbol || "").toUpperCase().replace(/[/-]/g, "");
+}
+
+function dedupeEligible<T extends { symbol: string; trade_quality_score?: number; universe_rank_score?: number; quality_score?: number }>(rows: T[]): T[] {
+  const best = new Map<string, T>();
+  for (const row of rows.filter((r) => r.symbol)) {
+    const key = symbolKey(row.symbol);
+    const prev = best.get(key);
+    const prevScore = Number(prev?.universe_rank_score ?? prev?.trade_quality_score ?? prev?.quality_score ?? 0);
+    const nextScore = Number(row.universe_rank_score ?? row.trade_quality_score ?? row.quality_score ?? 0);
+    if (!prev || nextScore >= prevScore) best.set(key, row);
+  }
+  return Array.from(best.values());
+}
 
 export function CockpitDashboard() {
   const [data, setData] = useState<Cockpit | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [readinessMsg, setReadinessMsg] = useState<string | null>(null);
+  const [checkingReadiness, setCheckingReadiness] = useState(false);
 
   const load = useCallback(async () => {
     setErr(null);
@@ -84,10 +118,37 @@ export function CockpitDashboard() {
 
   const f = data?.funnel ?? {};
   const ctrl = data?.control ?? {};
-  const eligible =
+  const paper = data?.paper_execution ?? {};
+  const eligible = dedupeEligible(
     data?.eligible_trades ??
     data?.shortlist ??
-    (data?.scores ?? []).filter((s) => s.entry_allowed);
+    (data?.scores ?? []).filter((s) => s.entry_allowed)
+  );
+  const canSubmitEntries = Boolean(paper.bot_can_submit_paper_entries_now ?? paper.can_place_paper_orders_now ?? ctrl.bot_can_place);
+  const drawdownReason = paper.drawdown_blocker?.message;
+
+  async function checkPaperReadiness() {
+    setCheckingReadiness(true);
+    setReadinessMsg(null);
+    const res = await apiPostOperator<{ paper_entry_allowed?: boolean; next_action?: string; readiness?: { blockers?: string[] } }>(
+      "/api/execution/paper/readiness-check",
+      { actor: "cockpit_ui" },
+      { timeoutMs: 10000 }
+    );
+    if (res.ok) {
+      const allowed = Boolean(res.data?.paper_entry_allowed);
+      const blockers = res.data?.readiness?.blockers ?? [];
+      setReadinessMsg(
+        allowed
+          ? "Paper entries are allowed when a candidate passes the cage."
+          : String(res.data?.next_action ?? blockers[0] ?? "Paper entries are currently blocked.")
+      );
+    } else {
+      setReadinessMsg(res.error || "Readiness check failed.");
+    }
+    setCheckingReadiness(false);
+    await load();
+  }
 
   return (
     <div className="space-y-4 max-w-6xl">
@@ -130,7 +191,7 @@ export function CockpitDashboard() {
       <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
         {[
           ["Paper learning", ctrl.paper_learning_on ? "ON" : "OFF", ctrl.paper_learning_on ? "#00FF66" : "#F59E0B"],
-          ["Bot can trade", ctrl.bot_can_place ? "YES" : "NO", ctrl.bot_can_place ? "#00FF66" : "#F59E0B"],
+          ["Bot can trade", canSubmitEntries ? "YES" : "NO", canSubmitEntries ? "#00FF66" : "#F59E0B"],
           ["Equity", data?.account?.equity != null ? `$${data.account.equity.toFixed(2)}` : "-", "#fff"],
           [
             "Crypto pairs",
@@ -158,6 +219,44 @@ export function CockpitDashboard() {
       </div>
 
       <CockpitFunnelBrain funnel={f} blockers={data?.why_zero_shortlist} aiNote={data?.ai_cockpit_message} />
+
+      <GlassPanel title="Paper Trading Readiness" icon={<Shield className="h-4 w-4" />}>
+        <div className="grid gap-2 text-xs md:grid-cols-3 lg:grid-cols-5">
+          {[
+            ["Paper broker connected", paper.paper_broker_connected ?? paper.paper_broker ? "Yes" : "No", paper.paper_broker_connected ?? paper.paper_broker],
+            ["Paper orders enabled", paper.paper_orders_enabled ? "Yes" : "No", paper.paper_orders_enabled],
+            ["Paper learning enabled", paper.paper_learning_on ? "Yes" : "No", paper.paper_learning_on],
+            ["Scheduler enabled", paper.scheduler_enabled ? "Yes" : "No", paper.scheduler_enabled],
+            ["Kill switch active", paper.kill_switch_active ? "Yes" : "No", !paper.kill_switch_active],
+            ["Open positions", String(paper.open_positions_count ?? data?.positions?.length ?? 0), true],
+            ["Active orders", String(paper.active_orders_count ?? 0), true],
+            ["Can submit entries", canSubmitEntries ? "Yes" : "No", canSubmitEntries],
+          ].map(([label, value, ok]) => (
+            <div key={String(label)} className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+              <p className="text-[10px] uppercase text-slate-500">{label}</p>
+              <p className={`mt-1 font-semibold ${ok ? "text-emerald-300" : "text-amber-300"}`}>{String(value)}</p>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 rounded-lg border border-amber-300/20 bg-amber-300/10 p-3 text-[11px] text-amber-100">
+          {drawdownReason ? (
+            <p>Paper entries blocked by daily drawdown kill switch. Wait for window reset or intentionally change risk config. Detail: {drawdownReason}</p>
+          ) : canSubmitEntries ? (
+            <p>Paper entries can submit only when a candidate passes the deterministic execution cage.</p>
+          ) : (
+            <p>{paper.next_action ?? paper.blockers?.[0] ?? "Paper entries are currently blocked; check operator controls and latest scan freshness."}</p>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={checkPaperReadiness}
+          disabled={checkingReadiness}
+          className="mt-3 rounded-lg border border-hive-cyan/30 px-3 py-2 text-xs text-hive-cyan hover:bg-hive-cyan/10 disabled:opacity-50"
+        >
+          {checkingReadiness ? "Checking..." : "Check paper-entry readiness"}
+        </button>
+        {readinessMsg && <p className="mt-2 text-[11px] text-slate-400">{readinessMsg}</p>}
+      </GlassPanel>
 
       {data?.research_os && (
         <GlassPanel title="Research OS" icon={<FlaskConical className="h-4 w-4" />}>

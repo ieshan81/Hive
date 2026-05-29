@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 from sqlmodel import Session, select
 
-from app.database import AccountSnapshot, KillSwitchEvent, SystemHealth
+from app.database import AccountSnapshot, ExecutionLog, KillSwitchEvent, SystemHealth
 from app.services.engine_config import cfg_get
 
 
@@ -75,13 +75,54 @@ class KillSwitchService:
         entries_allowed = len(switches) == 0
         return entries_allowed, switches
 
+    def _latest_account(self) -> AccountSnapshot | None:
+        return self.session.exec(select(AccountSnapshot).order_by(AccountSnapshot.synced_at.desc())).first()
+
+    def _latest_preflight_block(self) -> ExecutionLog | None:
+        return self.session.exec(
+            select(ExecutionLog)
+            .where(
+                ExecutionLog.status == "preflight_blocked",
+                ExecutionLog.reject_reason == "KILL_SWITCH_ACTIVE",
+            )
+            .order_by(ExecutionLog.created_at.desc())
+        ).first()
+
     def status(self) -> dict[str, Any]:
-        entries_ok, active = self.evaluate(equity=0, daily_pl_pct=0, drawdown_pct=0)
-        snap = self.session.exec(select(AccountSnapshot).order_by(AccountSnapshot.synced_at.desc())).first()
+        snap = self._latest_account()
+        entries_ok, active = self.evaluate(
+            equity=float(snap.equity or 0) if snap else 0,
+            daily_pl_pct=float(snap.daily_pl_pct or 0) if snap else 0,
+            drawdown_pct=float(snap.drawdown_pct or 0) if snap else 0,
+        )
+        latest_block = self._latest_preflight_block()
+        now = datetime.utcnow()
+        recently_blocked = bool(latest_block and latest_block.created_at >= now - timedelta(hours=24))
+        last_block = None
+        if latest_block:
+            failed = latest_block.gates_failed_json if isinstance(latest_block.gates_failed_json, dict) else {}
+            last_block = {
+                "event_id": latest_block.event_id,
+                "symbol": latest_block.symbol,
+                "side": latest_block.side,
+                "created_at": latest_block.created_at.isoformat() + "Z",
+                "reject_reason": latest_block.reject_reason,
+                "human_reason": failed.get("reason") or latest_block.reject_reason,
+            }
+        snapshot_age = None
+        if snap and snap.synced_at:
+            snapshot_age = max(0, int((now - snap.synced_at).total_seconds()))
         return {
             "entries_allowed": entries_ok,
             "active_switches": active,
+            "state": "active" if not entries_ok else "cleared_recently" if recently_blocked else "clear",
             "manual_master": bool(cfg_get(self.config, "kill.manual_master_active", False)),
             "account_equity": snap.equity if snap else None,
-            "updated_at": datetime.utcnow().isoformat() + "Z",
+            "account_daily_pl_pct": snap.daily_pl_pct if snap else None,
+            "account_drawdown_pct": snap.drawdown_pct if snap else None,
+            "account_synced_at": snap.synced_at.isoformat() + "Z" if snap and snap.synced_at else None,
+            "account_snapshot_age_seconds": snapshot_age,
+            "recently_blocked": recently_blocked,
+            "last_preflight_block": last_block,
+            "updated_at": now.isoformat() + "Z",
         }

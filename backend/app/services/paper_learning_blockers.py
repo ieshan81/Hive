@@ -26,6 +26,7 @@ BLOCKER_LABELS: dict[str, str] = {
     "broker_sync_rate_limited": "Broker sync is rate-limited — wait and retry.",
     "allocator_degraded": "Capital allocator degraded — broker data stale or buying power unknown.",
     "live_trading_flag_set": "Live trading flag must stay false.",
+    "kill_switch_active": "Paper entries are blocked by the kill switch.",
 }
 
 
@@ -42,6 +43,7 @@ def compute_push_pull_blockers(session: Session, config: Optional[dict] = None) 
     from app.services.autonomous_paper_scheduler import AutonomousPaperScheduler
     from app.services.broker_reconciliation_service import BrokerReconciliationService
     from app.services.capital_allocator import CapitalAllocatorService
+    from app.services.kill_switch_service import KillSwitchService
     from app.services.live_lock_tripwire import live_lock_tripwire_status
 
     cfg = config or ConfigManager(session).get_current()
@@ -75,6 +77,10 @@ def compute_push_pull_blockers(session: Session, config: Optional[dict] = None) 
     if bool(cfg.get("live_trading_enabled", False)):
         blockers.append("live_trading_flag_set")
 
+    kill = KillSwitchService(session, cfg).status()
+    if not bool(kill.get("entries_allowed")):
+        blockers.append("kill_switch_active")
+
     ghosts = BrokerReconciliationService(session, cfg).ghost_position_candidates()
     if ghosts:
         blockers.append("ghost_positions")
@@ -95,6 +101,7 @@ def compute_push_pull_blockers(session: Session, config: Optional[dict] = None) 
         and paper_orders
         and not env["any_env_pause"]
         and trip.get("live_lock_status") == "locked"
+        and bool(kill.get("entries_allowed"))
         and not ghosts
         and "broker_sync_rate_limited" not in blockers
         and "allocator_degraded" not in blockers
@@ -104,6 +111,7 @@ def compute_push_pull_blockers(session: Session, config: Optional[dict] = None) 
         "blockers": blockers,
         "blockers_plain": [friendly_blocker(b) for b in blockers],
         "can_place_paper_orders": can_place,
+        "kill_switch": kill,
         "mode_enabled": mode_on,
         "paper_orders_enabled": paper_orders,
         "scheduler_enabled": scheduler_on,
@@ -134,6 +142,7 @@ def resolve_primary_blocker(blockers: list[str], env: dict[str, Any]) -> dict[st
         "scheduler_off",
         "scheduler_paused",
         "ghost_positions",
+        "kill_switch_active",
         "broker_sync_rate_limited",
         "allocator_degraded",
         "live_lock_not_locked",

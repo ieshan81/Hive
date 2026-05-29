@@ -31,6 +31,7 @@ from app.services.broker_safety import is_paper_broker_url, live_lock_status
 from app.services.config_manager import ConfigManager
 from app.services.engine_config import cfg_get
 from app.services.env_pause_service import env_pause_status
+from app.services.kill_switch_service import KillSwitchService
 from app.services.paper_learning_blockers import friendly_blocker
 
 
@@ -72,6 +73,54 @@ def _latest_audit(session: Session, action: str) -> SettingsActionAudit | None:
 
 def _latest_account(session: Session) -> AccountSnapshot | None:
     return session.exec(select(AccountSnapshot).order_by(AccountSnapshot.synced_at.desc())).first()
+
+
+def _symbol_key(value: Any) -> str:
+    return str(value or "").upper().replace("/", "").replace("-", "").strip()
+
+
+def _candidate_score(row: dict[str, Any]) -> float:
+    for key in (
+        "trade_quality_score",
+        "universe_rank_score",
+        "quality_score",
+        "push_score",
+        "ranking_score",
+    ):
+        try:
+            if row.get(key) is not None:
+                return float(row.get(key) or 0)
+        except (TypeError, ValueError):
+            continue
+    return 0.0
+
+
+def _dedupe_symbol_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_symbol: dict[str, dict[str, Any]] = {}
+    duplicate_counts: dict[str, int] = {}
+    for row in rows:
+        if not isinstance(row, dict) or not row.get("symbol"):
+            continue
+        key = _symbol_key(row.get("symbol"))
+        duplicate_counts[key] = duplicate_counts.get(key, 0) + 1
+        existing = by_symbol.get(key)
+        if not existing:
+            by_symbol[key] = dict(row)
+            continue
+        existing_score = _candidate_score(existing)
+        new_score = _candidate_score(row)
+        existing_time = str(existing.get("scanned_at") or existing.get("created_at") or "")
+        new_time = str(row.get("scanned_at") or row.get("created_at") or "")
+        if new_score > existing_score or (new_score == existing_score and new_time > existing_time):
+            by_symbol[key] = dict(row)
+    out: list[dict[str, Any]] = []
+    for row in by_symbol.values():
+        key = _symbol_key(row.get("symbol"))
+        count = duplicate_counts.get(key, 1)
+        if count > 1:
+            row["duplicate_candidates_collapsed"] = count
+        out.append(row)
+    return sorted(out, key=_candidate_score, reverse=True)
 
 
 def _account_summary(session: Session) -> dict[str, Any]:
@@ -125,6 +174,7 @@ def _account_summary(session: Session) -> dict[str, Any]:
 def _execution_safety(session: Session, cfg: dict) -> dict[str, Any]:
     env = env_pause_status()
     live = live_lock_status(cfg)
+    kill = KillSwitchService(session, cfg).status()
     paper_broker = is_paper_broker_url()
     paper_orders_enabled = bool(cfg_get(cfg, "execution.paper_orders_enabled", False))
     live_orders_enabled = bool(cfg_get(cfg, "execution.live_orders_enabled", False)) or bool(
@@ -133,6 +183,16 @@ def _execution_safety(session: Session, cfg: dict) -> dict[str, Any]:
     learning_cfg = dict(cfg.get("autonomous_paper_learning") or {})
     paper_learning_on = bool(learning_cfg.get("mode_enabled"))
     scheduler_enabled = bool(learning_cfg.get("scheduler_enabled"))
+    open_positions_count = int(
+        session.exec(select(func.count()).select_from(PositionSnapshot).where(PositionSnapshot.qty > 0)).one() or 0
+    )
+    active_order_statuses = ["pending", "submitted", "accepted", "new", "partially_filled"]
+    active_orders_count = int(
+        session.exec(
+            select(func.count()).select_from(OrderRecord).where(OrderRecord.status.in_(active_order_statuses))
+        ).one()
+        or 0
+    )
     blockers: list[str] = []
     if not paper_broker:
         blockers.append("broker_not_paper")
@@ -150,6 +210,8 @@ def _execution_safety(session: Session, cfg: dict) -> dict[str, Any]:
         blockers.append("env_pause_paper_trading")
     if env.get("autonomous_learning_paused_by_env"):
         blockers.append("env_pause_learning")
+    if not bool(kill.get("entries_allowed")):
+        blockers.append("kill_switch_active")
     can_place = (
         paper_broker
         and live.get("live_lock_status") == "locked"
@@ -157,10 +219,35 @@ def _execution_safety(session: Session, cfg: dict) -> dict[str, Any]:
         and paper_learning_on
         and not live_orders_enabled
         and not env.get("any_env_pause")
+        and bool(kill.get("entries_allowed"))
+    )
+    plain_blockers = [friendly_blocker(b) for b in blockers if b != "kill_switch_active"]
+    if not bool(kill.get("entries_allowed")):
+        switches = kill.get("active_switches") or []
+        message = None
+        if switches and isinstance(switches[0], dict):
+            message = switches[0].get("message")
+        plain_blockers.insert(0, str(message or "Paper entries are blocked by the kill switch."))
+    switches = kill.get("active_switches") or []
+    drawdown_blocker = next(
+        (
+            s
+            for s in switches
+            if isinstance(s, dict) and str(s.get("switch_name") or "").lower() in {"daily_drawdown", "max_drawdown"}
+        ),
+        None,
+    )
+    next_action = (
+        "Wait for drawdown window reset or intentionally change risk config."
+        if drawdown_blocker
+        else plain_blockers[0]
+        if plain_blockers
+        else "Paper entries may submit when a candidate passes the cage."
     )
     return {
         "status": "ok" if not blockers else "blocked",
         "paper_broker": paper_broker,
+        "paper_broker_connected": paper_broker,
         "broker_mode": "paper" if paper_broker else "unknown",
         "live_lock_status": live.get("live_lock_status"),
         "live_trading_locked": live.get("live_lock_status") == "locked",
@@ -169,8 +256,15 @@ def _execution_safety(session: Session, cfg: dict) -> dict[str, Any]:
         "paper_learning_on": paper_learning_on,
         "scheduler_enabled": scheduler_enabled,
         "can_place_paper_orders_now": can_place,
+        "bot_can_submit_paper_entries_now": can_place,
+        "kill_switch_active": not bool(kill.get("entries_allowed")),
+        "drawdown_blocker": drawdown_blocker,
+        "open_positions_count": open_positions_count,
+        "active_orders_count": active_orders_count,
+        "next_action": next_action,
         "blocker_codes": blockers,
-        "blockers": [friendly_blocker(b) for b in blockers],
+        "blockers": plain_blockers,
+        "kill_switch": kill,
     }
 
 
@@ -220,6 +314,7 @@ def _universe_summary(session: Session) -> dict[str, Any]:
             }
             for r in rows
         ]
+    top_candidates = _dedupe_symbol_rows(top_candidates)
 
     available = int(details.get("symbols_scanned_count") or symbol_count or 0)
     fresh = int(details.get("fresh_bar_count") or 0)
@@ -498,11 +593,24 @@ def build_mission_control_status(session: Session) -> dict[str, Any]:
         next_action = "Refresh market data, then run agent cycle"
     universe_funnel = universe.get("funnel") or {}
     top_candidates = universe.get("top_candidates") or []
+    eligible_candidates = (
+        top_candidates
+        if int(universe_funnel.get("eligible") or 0) > 0 or int(universe_funnel.get("shortlisted") or 0) > 0
+        else []
+    )
     block_breakdown = {b.get("code"): b.get("count") for b in universe.get("top_blockers") or [] if b.get("code")}
+    cleared_note = ""
+    kill_status = execution.get("kill_switch") if isinstance(execution.get("kill_switch"), dict) else {}
+    if kill_status.get("state") == "cleared_recently" and isinstance(kill_status.get("last_preflight_block"), dict):
+        last_block = kill_status["last_preflight_block"]
+        cleared_note = (
+            f" Recently blocked by {last_block.get('human_reason') or last_block.get('reject_reason')}; "
+            "current kill-switch status is clear."
+        )
     cockpit_message = (
         f"Cached product truth: {universe_funnel.get('available', 0)} available, "
         f"{universe_funnel.get('eligible', 0)} eligible, {universe_funnel.get('shortlisted', 0)} shortlisted. "
-        f"{next_action}"
+        f"{next_action}.{cleared_note}"
     )
     return {
         "status": "degraded" if degraded else "ok",
@@ -534,7 +642,7 @@ def build_mission_control_status(session: Session) -> dict[str, Any]:
         "eligible_entries_summary": {
             "count": (universe.get("funnel") or {}).get("eligible", 0),
             "shortlisted": (universe.get("funnel") or {}).get("shortlisted", 0),
-            "top_candidates": universe.get("top_candidates") or [],
+            "top_candidates": eligible_candidates,
         },
         "why_no_trade_summary": {
             "top_blockers": top_blockers,
@@ -570,9 +678,9 @@ def build_mission_control_status(session: Session) -> dict[str, Any]:
             "ranked": universe_funnel.get("scored", 0),
             "shortlist": universe_funnel.get("shortlisted", 0),
         },
-        "eligible_trades": top_candidates,
-        "shortlist": top_candidates,
-        "why_zero_shortlist": universe.get("stale_reason") if not top_candidates else None,
+        "eligible_trades": eligible_candidates,
+        "shortlist": eligible_candidates,
+        "why_zero_shortlist": universe.get("stale_reason") if not eligible_candidates else None,
         "block_breakdown": block_breakdown,
         "watchlist": {
             "total": universe_funnel.get("available", 0),

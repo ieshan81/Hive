@@ -286,6 +286,28 @@ def validate_paper_order(
     return PaperExecutionService(session).validate_order_dry_run(body)
 
 
+@router.post("/execution/paper/readiness-check")
+def paper_entry_readiness_check(
+    body: dict = Body(default_factory=dict),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
+    """OPERATOR DRY-RUN: report current paper-entry readiness; never submits orders."""
+    from app.services.mission_control_read_model import build_mission_control_status
+
+    status = build_mission_control_status(session)
+    readiness = status.get("paper_execution") or {}
+    return {
+        "status": "ok" if readiness.get("can_place_paper_orders_now") else "blocked",
+        "dry_run": True,
+        "submitted_order": False,
+        "paper_entry_allowed": bool(readiness.get("can_place_paper_orders_now")),
+        "readiness": readiness,
+        "next_action": readiness.get("next_action") or status.get("next_recommended_operator_action"),
+        "generated_at_utc": status.get("generated_at_utc"),
+    }
+
+
 @router.get("/orders")
 def get_orders(cycle_run_id: str = "latest", limit: int = 50, session: Session = Depends(get_session)):
     from app.services.positions_tab_service import orders_history

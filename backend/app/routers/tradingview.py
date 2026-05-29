@@ -24,6 +24,21 @@ def overlays(session: Session = Depends(get_session)):
     return TradingViewIntegrationService(session).overlays()
 
 
+@router.get("/chart")
+def chart(
+    symbol: str = "BTC/USD",
+    timeframe: str = "5Min",
+    limit: int = 120,
+    session: Session = Depends(get_session),
+):
+    """READ ONLY: cached chart bars for display fallback; no provider fetches."""
+    return TradingViewIntegrationService(session).chart(
+        symbol=symbol,
+        timeframe=timeframe,
+        limit=min(max(limit, 20), 300),
+    )
+
+
 @router.post("/webhook")
 def webhook(
     body: dict = Body(default_factory=dict),

@@ -23,6 +23,7 @@ from app.services.config_manager import ConfigManager
 from app.services.cooldown_service import CooldownService
 from app.services.engine_config import cfg_get
 from app.services.execution_preflight import build_client_order_id
+from app.services.kill_switch_service import KillSwitchService
 from app.services.order_reconciliation import reconcile_order
 from app.services.portfolio_gate import ApprovedCandidate
 from app.services.symbol_tier_service import EngineBoundaryBlocked, SymbolTierService
@@ -55,6 +56,10 @@ class PaperExecutionService:
 
     def status(self) -> dict[str, Any]:
         blockers = paper_execution_blockers(self.config, alpaca_configured=self.alpaca.configured)
+        kill = KillSwitchService(self.session, self.config).status()
+        entry_blockers = list(blockers)
+        if not bool(kill.get("entries_allowed")):
+            entry_blockers.append("KILL_SWITCH_ACTIVE")
         paper_on = bool(cfg_get(self.config, "execution.paper_orders_enabled", False))
         return {
             "status": "ok",
@@ -64,6 +69,9 @@ class PaperExecutionService:
             "broker_mode_detected": "paper" if is_paper_broker_url() else "live_or_unknown",
             "paper_execution_ready": paper_on and not blockers,
             "paper_execution_blockers": blockers,
+            "paper_entry_ready": paper_on and not entry_blockers,
+            "paper_entry_blockers": entry_blockers,
+            "kill_switch": kill,
             **live_lock_status(self.config),
         }
 

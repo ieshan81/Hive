@@ -73,6 +73,22 @@ function humanize(key: string): string {
   return known[key] ?? key.replace(/_/g, " ");
 }
 
+function symbolKey(symbol: string): string {
+  return String(symbol || "").toUpperCase().replace(/[/-]/g, "");
+}
+
+function dedupeBySymbol<T extends { symbol: string; trade_quality_score?: number; universe_rank_score?: number }>(rows: T[]): T[] {
+  const best = new Map<string, T>();
+  for (const row of rows.filter((r) => r.symbol)) {
+    const key = symbolKey(row.symbol);
+    const prev = best.get(key);
+    const prevScore = Number(prev?.trade_quality_score ?? prev?.universe_rank_score ?? 0);
+    const nextScore = Number(row.trade_quality_score ?? row.universe_rank_score ?? 0);
+    if (!prev || nextScore >= prevScore) best.set(key, row);
+  }
+  return Array.from(best.values());
+}
+
 export function UniversePanel() {
   const [symbols, setSymbols] = useState<SymbolRow[]>([]);
   const [eligibleTrades, setEligibleTrades] = useState<EligibleRow[]>([]);
@@ -101,12 +117,14 @@ export function UniversePanel() {
     const eligibleData = eligibleRes.ok ? eligibleRes.data : null;
     const radarData = radarRes.ok ? radarRes.data : null;
 
-    const statusSymbols = [
+    const statusSymbols = dedupeBySymbol([
       ...(statusData?.groups?.crypto_universe ?? []),
       ...(statusData?.groups?.stock_universe ?? []),
-    ].filter((s) => s.symbol);
+    ].filter((s) => s.symbol));
 
-    const eligibleRows = (eligibleData?.eligible_trades ?? eligibleData?.shortlist ?? []) as EligibleRow[];
+    const eligibleRows = dedupeBySymbol(
+      ((eligibleData?.eligible_trades ?? eligibleData?.shortlist ?? []) as EligibleRow[])
+    );
     setEligibleTrades(eligibleRows);
 
     const statusSourceCounts = statusData?.sources_summary?.source_counts ?? {};

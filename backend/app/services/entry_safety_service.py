@@ -11,6 +11,7 @@ from app.database import SymbolCandidate
 from app.services.config_manager import ConfigManager
 from app.services.env_pause_service import env_pause_status
 from app.services.engine_config import cfg_get
+from app.services.kill_switch_service import KillSwitchService
 from app.services.live_lock_tripwire import live_lock_tripwire_status
 from app.services.mission_control_snapshot_service import _CACHE, _data_freshness_label, _snapshot_age_seconds
 from app.services.radar_resilience import last_successful_scan
@@ -35,6 +36,13 @@ def entry_safety_status(session: Session, config: Optional[dict] = None) -> dict
         blockers.append("paper_orders_disabled")
     if env.get("any_env_pause"):
         blockers.append("env_pause_active")
+
+    kill = KillSwitchService(session, cfg).status()
+    if not bool(kill.get("entries_allowed")):
+        blockers.append("kill_switch_active")
+        switches = kill.get("active_switches") or []
+        if switches and isinstance(switches[0], dict):
+            warnings.append(str(switches[0].get("message") or "Kill switch active"))
 
     if pool.get("degraded"):
         blockers.append("db_pool_degraded")
@@ -74,6 +82,7 @@ def entry_safety_status(session: Session, config: Optional[dict] = None) -> dict
         "paper_broker": bool(lock.get("paper_broker")),
         "blockers": blockers,
         "warnings": warnings,
+        "kill_switch": kill,
         "snapshot_age_seconds": round(age, 1) if age is not None else None,
         "data_freshness": freshness,
         "operator_message": (

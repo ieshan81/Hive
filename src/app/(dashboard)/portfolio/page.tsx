@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Wallet, RefreshCw, AlertTriangle, Info } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -39,7 +39,7 @@ export default function PortfolioPage() {
     setLoading(true);
     const [cockpitRes, oRes, reconRes] = await Promise.all([
       apiGet<Record<string, unknown>>("/api/mission-control/status", { timeoutMs: 5000 }),
-      apiGet("/api/orders"),
+      apiGet("/api/orders?limit=50"),
       apiGet("/api/portfolio/reconciliation"),
     ]);
 
@@ -93,6 +93,23 @@ export default function PortfolioPage() {
   const positionSymbols = brokerRows.map((p) => formatDisplaySymbol(String(p.symbol ?? "")));
   const warning = recon?.reconciliation_warning as string | undefined;
   const isInfoNote = Boolean(brokerRows.some((p) => p.local_history_note));
+  const visibleOrders = orders.slice(0, 25);
+  const derivedOrderSummary = useMemo<OrderSummaryCounts>(() => {
+    const rejected = orders.filter((o) => String(o.status ?? "").toLowerCase().includes("reject")).length;
+    const filled = orders.filter((o) => String(o.status ?? "").toLowerCase() === "filled").length;
+    const sent = orders.filter((o) => Boolean(o.broker_order_id ?? o.alpaca_order_id)).length;
+    return {
+      orders_attempted: orders.length,
+      orders_sent_to_broker: sent,
+      orders_filled: filled,
+      orders_rejected: rejected,
+      orders_blocked_preflight: 0,
+      last_order_user_message:
+        orders.length > visibleOrders.length
+          ? `Showing latest ${visibleOrders.length} of ${orders.length} order rows.`
+          : undefined,
+    };
+  }, [orders, visibleOrders.length]);
 
   return (
     <section className="max-w-5xl space-y-4">
@@ -183,11 +200,11 @@ export default function PortfolioPage() {
           </GlassPanel>
 
           <GlassPanel title="Orders">
-            <OrderMetricsBar summary={orderSummary} compact />
+            <OrderMetricsBar summary={orderSummary ?? derivedOrderSummary} compact />
             {orders.length === 0 ? (
               <EmptyState message="No orders on record yet." />
             ) : (
-              <ExecutionOrdersTable rows={orders as unknown as Record<string, unknown>[]} mode="order" />
+              <ExecutionOrdersTable rows={visibleOrders as unknown as Record<string, unknown>[]} mode="order" />
             )}
           </GlassPanel>
 
