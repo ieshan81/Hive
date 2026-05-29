@@ -10,6 +10,7 @@ import {
   Shield,
   Hexagon,
   LineChart,
+  Settings as SettingsIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -24,6 +25,7 @@ const navItems = [
   { href: "/portfolio", label: "Portfolio", icon: Wallet },
   { href: "/tradingview", label: "TradingView", icon: LineChart },
   { href: "/reports", label: "Reports", icon: FileText },
+  { href: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 
 interface SidebarProps {

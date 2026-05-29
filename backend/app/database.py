@@ -544,6 +544,9 @@ class DiagnosticExportJob(SQLModel, table=True):
     job_id: str = Field(primary_key=True, index=True)
     status: str = Field(default="queued", index=True)  # queued|running|complete|failed
     progress_pct: int = 0
+    # Human-readable step shown in the Reports UI while running.
+    current_step: Optional[str] = Field(default=None)
+    last_completed_file: Optional[str] = Field(default=None)
     started_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     completed_at: Optional[datetime] = Field(default=None, index=True)
     filename: Optional[str] = None
@@ -1274,6 +1277,15 @@ def _migrate_columns() -> None:
                 conn.execute(text("ALTER TABLE symbol_candidates ADD COLUMN asset_class VARCHAR DEFAULT 'stock'"))
             if "spread_display" not in sym_cols:
                 conn.execute(text("ALTER TABLE symbol_candidates ADD COLUMN spread_display VARCHAR"))
+
+    # Diagnostic export job progress fields (Phase 4 — non-destructive).
+    if insp.has_table("diagnostic_export_jobs"):
+        job_cols = {c["name"] for c in insp.get_columns("diagnostic_export_jobs")}
+        with engine.begin() as conn:
+            if "current_step" not in job_cols:
+                conn.execute(text("ALTER TABLE diagnostic_export_jobs ADD COLUMN current_step VARCHAR"))
+            if "last_completed_file" not in job_cols:
+                conn.execute(text("ALTER TABLE diagnostic_export_jobs ADD COLUMN last_completed_file VARCHAR"))
 
     if insp.has_table("strategy_states"):
         state_cols = {c["name"] for c in insp.get_columns("strategy_states")}

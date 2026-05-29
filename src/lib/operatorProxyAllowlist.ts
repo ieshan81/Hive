@@ -39,6 +39,9 @@ export const ALLOWED_POST_PREFIXES = [
   "/api/settings/export-brain-bundle",
   "/api/strategies/",
   "/api/settings/resync-broker-truth",
+  // Paper-trading settings operator panel (Phase 5/6).
+  // Live trading flags cannot be touched by these endpoints — server enforces.
+  "/api/settings/paper-trading/",
 ] as const;
 
 /** Only POST is proxied; callers must not forward GET/DELETE. */

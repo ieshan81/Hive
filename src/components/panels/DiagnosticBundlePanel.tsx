@@ -8,6 +8,8 @@ type DiagnosticJob = {
   job_id?: string;
   status?: string;
   progress_pct?: number;
+  current_step?: string | null;
+  last_completed_file?: string | null;
   filename?: string;
   file_count?: number;
   completed_at?: string;
@@ -16,6 +18,13 @@ type DiagnosticJob = {
   error?: string;
   download_available?: boolean;
 };
+
+function prettyStep(step?: string | null): string {
+  if (!step) return "";
+  return step
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 type DiagnosticStatus = {
   status?: string;
@@ -124,7 +133,19 @@ export function DiagnosticBundlePanel() {
           <div className="rounded border border-white/10 bg-black/20 p-3">
             <p className="text-slate-500">Current</p>
             <p className="font-medium text-white">{current ? label(current.status) : "Idle"}</p>
-            {current ? <p className="text-[11px] text-slate-500">{current.progress_pct ?? 0}%</p> : null}
+            {current ? (
+              <>
+                <p className="text-[11px] text-slate-500">{current.progress_pct ?? 0}%</p>
+                {current.current_step ? (
+                  <p className="text-[10px] text-hive-cyan/80 mt-0.5">{prettyStep(current.current_step)}</p>
+                ) : null}
+                {current.last_completed_file ? (
+                  <p className="text-[10px] text-slate-500 mt-0.5 truncate">
+                    last file: <span className="font-mono">{current.last_completed_file}</span>
+                  </p>
+                ) : null}
+              </>
+            ) : null}
           </div>
           <div className="rounded border border-white/10 bg-black/20 p-3">
             <p className="text-slate-500">Last completed</p>
@@ -136,6 +157,31 @@ export function DiagnosticBundlePanel() {
             <p className={failed ? "font-medium text-amber-200" : "font-medium text-white"}>{failed ? label(failed.error ?? failed.status) : "None"}</p>
           </div>
         </div>
+
+        {/* Progress bar — only visible while a job is queued or running */}
+        {current && (current.status === "queued" || current.status === "running") ? (
+          <div className="mt-3">
+            <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
+              <span className="label-caps">
+                {prettyStep(current.current_step) || (current.status === "queued" ? "Queued" : "Running")}
+              </span>
+              <span className="font-mono">{current.progress_pct ?? 0}%</span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/5">
+              <div
+                className="h-full rounded-full transition-all"
+                style={{
+                  width: `${Math.max(2, Math.min(100, current.progress_pct ?? 0))}%`,
+                  background: "linear-gradient(90deg, rgba(0,219,233,0.9), rgba(0,255,102,0.9))",
+                  boxShadow: "0 0 8px rgba(0,219,233,0.45)",
+                }}
+              />
+            </div>
+            {current.file_count ? (
+              <p className="text-[10px] text-slate-500 mt-1">{current.file_count} files captured so far</p>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="mt-4 flex flex-wrap gap-2">
           <button

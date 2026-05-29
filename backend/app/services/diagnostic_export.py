@@ -1002,7 +1002,11 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         )
         from app.services.strategy_registry_service import StrategyRegistryService
 
-        from app.database import PaperExperimentConfig, PaperExperimentDecision, PaperExperimentOutcome
+        # PaperExperimentDecision is already imported at module level (line 24);
+        # re-importing here shadowed it and caused UnboundLocalError for the
+        # uses earlier in this function (lines ~404, ~662). Keep only the
+        # symbols that are NOT already at module level.
+        from app.database import PaperExperimentConfig, PaperExperimentOutcome
         from app.services.aggressive_paper_learning_service import AggressivePaperLearningService
         from app.services.strategy_registry_export import (
             ensure_strategy_rejection_records,
@@ -2107,6 +2111,35 @@ def finalize_diagnostic_bundle(session: Session, bundle: dict[str, Any]) -> dict
             }
         )
 
+    # Safe READ-ONLY API endpoint snapshots (Phase 2). No POST, no provider fetch.
+    try:
+        from app.services.diagnostic_api_snapshots import collect_api_snapshots
+        bundle.update(collect_api_snapshots(session))
+    except Exception as exc:
+        errors.append(
+            {
+                "section": "api_snapshots",
+                "error_type": type(exc).__name__,
+                "message": str(exc)[:500],
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+            }
+        )
+
+    # Optional screenshots (Phase 3). Always non-fatal: if browser tooling is
+    # unavailable, emits screenshots/screenshots_unavailable.json explaining why.
+    try:
+        from app.services.diagnostic_screenshots import collect_screenshots
+        bundle.update(collect_screenshots())
+    except Exception as exc:
+        errors.append(
+            {
+                "section": "screenshots",
+                "error_type": type(exc).__name__,
+                "message": str(exc)[:500],
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+            }
+        )
+
     try:
         bundle["bundle_manifest.json"] = build_bundle_manifest(session, bundle)
     except Exception as exc:
@@ -2505,8 +2538,15 @@ def bundle_dict_as_zip_bytes(bundle: dict[str, Any]) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, content in bundle.items():
-            if name.endswith(".md"):
+            # Binary payloads (PNG screenshots, etc.) — pass raw bytes through.
+            if isinstance(content, (bytes, bytearray)):
+                zf.writestr(name, bytes(content))
+            elif name.endswith(".md"):
                 zf.writestr(name, str(content))
+            elif name.endswith(".png") or name.endswith(".jpg") or name.endswith(".jpeg"):
+                # If a screenshot field somehow lacks bytes, skip silently — never crash.
+                if isinstance(content, (bytes, bytearray)):
+                    zf.writestr(name, bytes(content))
             else:
                 zf.writestr(name, json.dumps(json_safe(content), indent=2))
         if ai_bundle:
