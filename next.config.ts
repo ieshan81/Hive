@@ -14,10 +14,7 @@ const nextConfig: NextConfig = {
     VITE_API_BASE_URL: process.env.VITE_API_BASE_URL || BACKEND_URL,
   },
   async rewrites() {
-    return [
-      { source: "/health", destination: `${BACKEND_URL}/health` },
-      { source: "/api/:path*", destination: `${BACKEND_URL}/api/:path*` },
-    ];
+    return [{ source: "/api/:path*", destination: `${BACKEND_URL}/api/:path*` }];
   },
 };
 
