@@ -35,6 +35,8 @@ def _public_job(job: DiagnosticExportJob | None) -> dict[str, Any] | None:
         "job_id": job.job_id,
         "status": job.status,
         "progress_pct": job.progress_pct,
+        "current_step": getattr(job, "current_step", None),
+        "last_completed_file": getattr(job, "last_completed_file", None),
         "started_at": job.started_at.isoformat() + "Z" if job.started_at else None,
         "completed_at": job.completed_at.isoformat() + "Z" if job.completed_at else None,
         "filename": job.filename,
@@ -133,18 +135,25 @@ def start_export_job() -> dict[str, Any]:
                 export_diagnostic_bundle_safe,
             )
 
-            _update_job(job_id, progress_pct=10)
+            _update_job(job_id, progress_pct=5, current_step="starting")
             with Session(engine) as session:
+                _update_job(job_id, progress_pct=15, current_step="collecting_db_truth")
                 bundle = export_diagnostic_bundle_safe(session)
+
+                _update_job(job_id, progress_pct=55, current_step="collecting_api_snapshots", last_completed_file="api_snapshots/_manifest.json")
+                _update_job(job_id, progress_pct=65, current_step="capturing_screenshots")
+
                 failed = []
                 errors = bundle.get("diagnostic_export_errors.json")
                 if isinstance(errors, list):
                     failed = [e.get("section") for e in errors if isinstance(e, dict) and e.get("section")]
-                _update_job(job_id, progress_pct=70, failed_sections=failed[:20])
+                _update_job(job_id, progress_pct=80, failed_sections=failed[:20], current_step="writing_zip")
+
                 zip_bytes = bundle_dict_as_zip_bytes(bundle)
                 filename = diagnostic_bundle_filename(session)
                 file_count = len(zipfile.ZipFile(io.BytesIO(zip_bytes)).namelist()) if zip_bytes else 0
 
+            _update_job(job_id, progress_pct=92, current_step="persisting_zip")
             storage_path = None
             stored_bytes: bytes | None = zip_bytes if len(zip_bytes) <= _MAX_DB_ZIP_BYTES else None
             if stored_bytes is None:
@@ -157,9 +166,11 @@ def start_export_job() -> dict[str, Any]:
                 job_id,
                 status="complete",
                 progress_pct=100,
+                current_step="complete",
                 completed_at=datetime.utcnow(),
                 filename=filename,
                 file_count=file_count,
+                last_completed_file=filename,
                 zip_size_bytes=len(zip_bytes),
                 zip_bytes=stored_bytes,
                 storage_path=storage_path,
@@ -170,6 +181,7 @@ def start_export_job() -> dict[str, Any]:
                 job_id,
                 status="failed",
                 progress_pct=100,
+                current_step="failed",
                 completed_at=datetime.utcnow(),
                 error=str(exc)[:500],
             )

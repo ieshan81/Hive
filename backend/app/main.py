@@ -43,6 +43,7 @@ from app.routers import (
     ai_advisor,
     scanners,
     symbol_identity,
+    settings_paper,
     social_reddit,
     news,
     research_experiments,
@@ -133,6 +134,7 @@ app.include_router(sentiment.router)
 app.include_router(ai_advisor.router)
 app.include_router(scanners.router)
 app.include_router(symbol_identity.router)
+app.include_router(settings_paper.router)
 app.include_router(social_reddit.router)
 app.include_router(news.router)
 app.include_router(research_experiments.router)
