@@ -6,7 +6,10 @@ import { buildApiUrl, getApiBaseUrl } from "../src/lib/apiClient";
 
 function run() {
   const serverBase = getApiBaseUrl({ forServer: true });
-  assert.ok(serverBase.includes("railway.app") || serverBase.includes("localhost"), "server base set");
+  assert.ok(
+    serverBase.includes("railway.app") || serverBase.includes("localhost") || serverBase.includes("127.0.0.1"),
+    "server base set"
+  );
 
   const rel = buildApiUrl("/api/positions", false);
   assert.strictEqual(rel, "/api/positions", "browser uses relative path");

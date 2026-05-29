@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Wallet, RefreshCw, AlertTriangle, Info } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { apiGet, apiPost, apiPostOperator } from "@/lib/apiClient";
+import { apiGet, apiPostOperator } from "@/lib/apiClient";
 import { normalizeOrders } from "@/lib/apiNormalize";
 import { OrderMetricsBar } from "@/components/ui/OrderMetricsBar";
 import { ExecutionOrdersTable } from "@/components/ui/ExecutionOrdersTable";
@@ -38,7 +38,7 @@ export default function PortfolioPage() {
   const load = useCallback(async () => {
     setLoading(true);
     const [cockpitRes, oRes, reconRes] = await Promise.all([
-      apiGet<Record<string, unknown>>("/api/cockpit", { timeoutMs: 5000 }),
+      apiGet<Record<string, unknown>>("/api/mission-control/status", { timeoutMs: 5000 }),
       apiGet("/api/orders"),
       apiGet("/api/portfolio/reconciliation"),
     ]);
@@ -62,7 +62,7 @@ export default function PortfolioPage() {
   }, [load]);
 
   async function refresh() {
-    await apiPost("/api/positions/refresh");
+    await apiPostOperator("/api/positions/refresh", { actor: "portfolio_ui" });
     await load();
   }
 

@@ -24,7 +24,7 @@ export function ControlCenterPanel() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    void apiGet<Record<string, unknown>>("/api/cockpit", { timeoutMs: 5000 }).then((res) => {
+    void apiGet<Record<string, unknown>>("/api/mission-control/status", { timeoutMs: 5000 }).then((res) => {
       if (res.ok && res.data) {
         const c = res.data;
         const ctrl = (c.control as Record<string, unknown>) || {};

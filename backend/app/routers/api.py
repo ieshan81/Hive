@@ -984,12 +984,15 @@ def get_symbol_memory(session: Session = Depends(get_session)):
 
 @router.get("/lab/status")
 def lab_status(session: Session = Depends(get_session)):
-    ResearchLabService(session).ensure_library()
     return ResearchLabService(session).status()
 
 
 @router.post("/lab/research/run")
-def lab_research_run(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def lab_research_run(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     return ResearchLabService(session).run_research_batch(body)
 
 
@@ -998,6 +1001,7 @@ def lab_backtest_run(
     body: dict = Body(default={}),
     symbol: str | None = None,
     session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
 ):
     if symbol and not body.get("symbols"):
         body = {**body, "symbols": [symbol], "strategy_id": body.get("strategy_id", "crypto_push_pull")}
@@ -1007,7 +1011,11 @@ def lab_backtest_run(
 
 
 @router.post("/lab/backtest/batch-run")
-def lab_backtest_batch(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def lab_backtest_batch(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     return ResearchLabService(session).batch_backtest(body)
 
 
@@ -1062,7 +1070,10 @@ def lab_leaderboard(session: Session = Depends(get_session)):
 
 
 @router.post("/lab/strategies/seed")
-def lab_strategies_seed(session: Session = Depends(get_session)):
+def lab_strategies_seed(
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     n = ResearchLabService(session).ensure_library()
     from app.services.strategy_library import seed_strategy_library
 
@@ -1075,12 +1086,15 @@ def lab_strategies_seed(session: Session = Depends(get_session)):
 def lab_strategy_definitions(session: Session = Depends(get_session)):
     from app.services.strategy_library import list_strategies
 
-    ResearchLabService(session).ensure_library()
     return {"status": "ok", "strategies": list_strategies(session)}
 
 
 @router.post("/lab/data/fetch")
-def lab_data_fetch(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def lab_data_fetch(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     out = ResearchLabService(session).fetch_historical_data(body)
     session.commit()
     return out
@@ -1095,23 +1109,36 @@ def lab_historical_coverage(session: Session = Depends(get_session)):
 
 
 @router.post("/lab/walk-forward/run")
-def lab_walk_forward(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def lab_walk_forward(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     return ResearchLabService(session).run_walk_forward(body)
 
 
 @router.post("/lab/strategy/{strategy_id}/promote-to-paper-candidate")
-def lab_promote(strategy_id: str, body: dict = Body(default={}), session: Session = Depends(get_session)):
+def lab_promote(
+    strategy_id: str,
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     return ResearchLabService(session).promote_to_paper_candidate(strategy_id, body)
 
 
 @router.post("/lab/strategy/{strategy_id}/reject")
-def lab_reject_strategy(strategy_id: str, body: dict = Body(default={}), session: Session = Depends(get_session)):
+def lab_reject_strategy(
+    strategy_id: str,
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     return ResearchLabService(session).reject_strategy(strategy_id, body)
 
 
 @router.get("/lab/strategies")
 def lab_strategies(session: Session = Depends(get_session)):
-    ResearchLabService(session).ensure_library()
     return {"status": "ok", "strategies": list_strategies(session)}
 
 

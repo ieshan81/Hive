@@ -1061,6 +1061,183 @@ class StrategyCandidate(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class StrategySpecRecord(SQLModel, table=True):
+    """Research OS strategy contract.
+
+    Existing StrategyDefinition remains the lightweight registry/library table.
+    This record stores the richer, versioned StrategySpec payload used by the
+    Research OS without replacing the current strategy registry.
+    """
+
+    __tablename__ = "strategy_specs"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    strategy_id: str = Field(index=True)
+    name: str
+    version: str = "1.0.0"
+    family: str = Field(index=True)
+    asset_classes: list = Field(default_factory=list, sa_column=Column(JSON))
+    timeframes: list = Field(default_factory=list, sa_column=Column(JSON))
+    entry_logic_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    exit_logic_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    risk_logic_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    sizing_logic_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    required_features_json: list = Field(default_factory=list, sa_column=Column(JSON))
+    constraints_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    source: str = "research_os"
+    status: str = Field(default="draft", index=True)
+    created_by: str = "operator"
+    fingerprint: Optional[str] = Field(default=None, index=True)
+    notes: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ResearchJob(SQLModel, table=True):
+    __tablename__ = "research_jobs"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    job_id: str = Field(index=True, unique=True)
+    job_type: str = Field(index=True)
+    status: str = Field(default="queued", index=True)
+    priority: int = 50
+    requested_by: str = "operator"
+    agent_name: Optional[str] = Field(default=None, index=True)
+    input_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    output_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    error: Optional[str] = None
+    progress_pct: int = 0
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class OptimizationRun(SQLModel, table=True):
+    __tablename__ = "optimization_runs"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    optimization_id: str = Field(index=True, unique=True)
+    strategy_id: str = Field(index=True)
+    optimizer_type: str = "grid"
+    objective: str = "expectancy"
+    trials_count: int = 0
+    tried_params_json: Optional[list] = Field(default=None, sa_column=Column(JSON))
+    best_params_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    best_metrics_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    status: str = Field(default="queued", index=True)
+    error: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: Optional[datetime] = None
+
+
+class RiskAuditReport(SQLModel, table=True):
+    __tablename__ = "risk_audit_reports"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    report_id: str = Field(index=True, unique=True)
+    strategy_id: str = Field(index=True)
+    backtest_run_id: Optional[str] = Field(default=None, index=True)
+    validation_report_id: Optional[str] = None
+    risk_score: float = 0.0
+    drawdown_metrics_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    tail_risk_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    liquidity_metrics_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    concentration_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    correlation_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    pass_fail: str = Field(default="unknown", index=True)
+    veto_reason: Optional[str] = None
+    reasons_json: Optional[list] = Field(default=None, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AIAgentRun(SQLModel, table=True):
+    __tablename__ = "ai_agent_runs"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    graph_run_id: str = Field(index=True)
+    agent_name: str = Field(index=True)
+    node_name: str = Field(index=True)
+    status: str = Field(default="queued", index=True)
+    input_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    output_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    tool_calls_json: Optional[list] = Field(default=None, sa_column=Column(JSON))
+    cost_estimate: Optional[float] = None
+    model_name: Optional[str] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    error: Optional[str] = None
+
+
+class CodeProposal(SQLModel, table=True):
+    __tablename__ = "code_proposals"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    proposal_id: str = Field(index=True, unique=True)
+    title: str
+    description: Optional[str] = None
+    proposed_by_agent: str = "research_os"
+    affected_files_json: list = Field(default_factory=list, sa_column=Column(JSON))
+    diff_text: Optional[str] = Field(default=None, sa_column=Column(Text))
+    patch_ref: Optional[str] = None
+    tests_required_json: list = Field(default_factory=list, sa_column=Column(JSON))
+    risk_assessment_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    status: str = Field(default="draft", index=True)
+    branch_name: Optional[str] = None
+    pr_url: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    reviewed_at: Optional[datetime] = None
+
+
+class LiveReadinessReview(SQLModel, table=True):
+    __tablename__ = "live_readiness_reviews"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    stage: str = Field(index=True)
+    status: str = Field(default="locked", index=True)
+    account_snapshot_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    paper_performance_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    risk_evidence_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    reconciliation_status_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    kill_switch_status_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    approval_required: bool = True
+    approved_by: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class TradingViewIntegration(SQLModel, table=True):
+    __tablename__ = "tradingview_integrations"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(index=True)
+    status: str = Field(default="display_only", index=True)
+    webhook_secret_hash: Optional[str] = None
+    allowed_actions: list = Field(default_factory=lambda: ["display_overlay"], sa_column=Column(JSON))
+    display_config_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    last_event_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class TradingViewEvent(SQLModel, table=True):
+    __tablename__ = "tradingview_events"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    integration_id: Optional[int] = Field(default=None, index=True)
+    event_type: str = Field(default="signal", index=True)
+    payload_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    mapped_signal_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    accepted_for_display: bool = True
+    execution_blocked_reason: str = "display_only_execution_blocked"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class LiveFlagChangeRequest(SQLModel, table=True):
+    __tablename__ = "live_flag_change_requests"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    requested_by: str = "operator"
+    actor_type: str = Field(default="operator", index=True)
+    current_flags_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    requested_flags_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    status: str = Field(default="requested", index=True)
+    confirmation_phrase_ok: bool = False
+    approval_stage: str = "dry_run_required"
+    dry_run_result_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    audit_log_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    approved_at: Optional[datetime] = None
+    rejected_reason: Optional[str] = None
+
+
 def _create_db_engine():
     url = settings.resolve_database_url()
     kwargs: dict = {"echo": False}

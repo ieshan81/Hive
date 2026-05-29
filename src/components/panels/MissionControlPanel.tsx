@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, Database, FileArchive, RefreshCw, Shield, TrendingUp, Wallet, Zap } from "lucide-react";
+import { Activity, AlertTriangle, Database, FileArchive, FlaskConical, RefreshCw, Shield, TrendingUp, Wallet, Zap } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { WhyNoTradeCard } from "@/components/panels/WhyNoTradeCard";
@@ -36,6 +36,7 @@ type MissionControlStatus = {
   memory?: Record<string, unknown>;
   diagnostics?: Record<string, unknown>;
   worker?: Record<string, unknown>;
+  research_os?: Record<string, unknown>;
   latest_order_summary?: Record<string, unknown>;
   next_recommended_operator_action?: string;
   system_warnings?: string[];
@@ -115,6 +116,7 @@ export function MissionControlPanel() {
   const universe = data?.universe ?? {};
   const funnel = universe.funnel ?? {};
   const diagnostics = data?.diagnostics ?? {};
+  const researchOs = data?.research_os ?? {};
   const memory = data?.memory ?? {};
   const pushPull = data?.push_pull ?? {};
   const latestOrder = (data?.latest_order_summary?.latest_order ?? null) as Record<string, unknown> | null;
@@ -226,6 +228,18 @@ export function MissionControlPanel() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
+        <GlassPanel title="Research OS" icon={<FlaskConical className="h-4 w-4" />}>
+          <div className="grid grid-cols-3 gap-2">
+            <Stat labelText="Jobs" value={String(researchOs.research_jobs_running ?? 0)} />
+            <Stat labelText="Code" value={String(researchOs.code_proposal_pending_count ?? 0)} />
+            <Stat labelText="Live" value={String((researchOs.live_readiness_status as Record<string, unknown> | undefined)?.latest_status ?? "locked")} tone="text-emerald-300" />
+          </div>
+          <p className="mt-2 text-[11px] text-slate-500">
+            Latest backtest: {String((researchOs.latest_backtest as Record<string, unknown> | undefined)?.status ?? "none")}.{" "}
+            Next: {String(researchOs.next_research_action ?? "Run a research backtest.")}
+          </p>
+        </GlassPanel>
+
         <GlassPanel title="Latest execution" icon={<Activity className="h-4 w-4" />}>
           {latestOrder ? (
             <div className="text-xs text-slate-300">

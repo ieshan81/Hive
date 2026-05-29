@@ -2,6 +2,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlmodel import Session
 
 from app.database import get_session
+from app.services.operator_auth import require_operator_token
 
 router = APIRouter(prefix="/api/ai-advisor", tags=["ai-advisor"])
 
@@ -71,7 +72,12 @@ def list_proposals(session: Session = Depends(get_session)):
 
 
 @router.post("/proposals/{pid}/approve")
-def approve_proposal(pid: int, body: dict = Body(default_factory=dict), session: Session = Depends(get_session)):
+def approve_proposal(
+    pid: int,
+    body: dict = Body(default_factory=dict),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     """Operator approves an AI proposal. Validator must pass before any config change is applied."""
     actor = (body or {}).get("actor", "operator")
     if str(actor).lower() in ("ai", "gemini", "ai_advisor"):
@@ -86,7 +92,11 @@ def approve_proposal(pid: int, body: dict = Body(default_factory=dict), session:
 
 
 @router.post("/proposals/{pid}/reject")
-def reject_proposal(pid: int, body: dict = Body(default_factory=dict)):
+def reject_proposal(
+    pid: int,
+    body: dict = Body(default_factory=dict),
+    _op: str = Depends(require_operator_token),
+):
     actor = (body or {}).get("actor", "operator")
     return {
         "status": "ok",
@@ -97,7 +107,11 @@ def reject_proposal(pid: int, body: dict = Body(default_factory=dict)):
 
 
 @router.post("/run-review")
-def run_review(body: dict = Body(default_factory=dict), session: Session = Depends(get_session)):
+def run_review(
+    body: dict = Body(default_factory=dict),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     """Trigger a Gemini review cycle (advisory only). Returns existing latest_review if budget exhausted."""
     from app.services.sentiment_status_service import ai_advisor_status
 

@@ -200,14 +200,21 @@ def get_eligibility(strategy_id: str, session: Session = Depends(get_session)):
 
 
 @router.post("/registry/sync-from-lab")
-def sync_from_lab(session: Session = Depends(get_session)):
+def sync_from_lab(
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     out = StrategyRegistryService(session).sync_from_lab()
     session.commit()
     return out
 
 
 @router.post("/validate")
-def validate_all(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def validate_all(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     _block_ai_actor(body)
     out = StrategyValidationGate(session).validate_all()
     session.commit()
@@ -215,7 +222,11 @@ def validate_all(body: dict = Body(default={}), session: Session = Depends(get_s
 
 
 @router.post("/promote-candidates")
-def promote_candidates(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def promote_candidates(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     _block_ai_actor(body)
     orders_before = len(session.exec(select(OrderRecord)).all())
     out = StrategyValidationGate(session).promote_candidates()
@@ -226,7 +237,11 @@ def promote_candidates(body: dict = Body(default={}), session: Session = Depends
 
 
 @router.post("/retire-failed")
-def retire_failed(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def retire_failed(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     _block_ai_actor(body)
     out = StrategyValidationGate(session).retire_failed()
     session.commit()
@@ -234,7 +249,11 @@ def retire_failed(body: dict = Body(default={}), session: Session = Depends(get_
 
 
 @router.post("/rebalance")
-def rebalance(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def rebalance(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     _block_ai_actor(body)
     cfg = ConfigManager(session).get_current()
     out = StrategyConflictService(session, cfg).evaluate()
@@ -243,7 +262,10 @@ def rebalance(body: dict = Body(default={}), session: Session = Depends(get_sess
 
 
 @router.post("/memories/validate")
-def validate_memories(session: Session = Depends(get_session)):
+def validate_memories(
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     cfg = ConfigManager(session).get_current()
     svc = StrategyMemoryValidationService(session, cfg)
     out = svc.validate_all_pending()
@@ -253,7 +275,12 @@ def validate_memories(session: Session = Depends(get_session)):
 
 
 @router.post("/pause/{strategy_id}")
-def pause_strategy(strategy_id: str, body: dict = Body(default={}), session: Session = Depends(get_session)):
+def pause_strategy(
+    strategy_id: str,
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     _block_ai_actor(body)
     out = StrategyValidationGate(session).pause(strategy_id, body.get("reason", "operator_pause"))
     session.commit()
@@ -261,7 +288,12 @@ def pause_strategy(strategy_id: str, body: dict = Body(default={}), session: Ses
 
 
 @router.post("/resume/{strategy_id}")
-def resume_strategy(strategy_id: str, body: dict = Body(default={}), session: Session = Depends(get_session)):
+def resume_strategy(
+    strategy_id: str,
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     _block_ai_actor(body)
     out = StrategyValidationGate(session).resume(strategy_id)
     session.commit()
@@ -269,14 +301,22 @@ def resume_strategy(strategy_id: str, body: dict = Body(default={}), session: Se
 
 
 @router.post("/experiment-eligibility/scan")
-def experiment_eligibility_scan(session: Session = Depends(get_session)):
+def experiment_eligibility_scan(
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     from app.services.aggressive_paper_learning_service import AggressivePaperLearningService
 
     return AggressivePaperLearningService(session).scan_experiment_eligibility()
 
 
 @router.post("/{strategy_id}/mark-paper-experiment")
-def mark_paper_experiment(strategy_id: str, body: dict = Body(default={}), session: Session = Depends(get_session)):
+def mark_paper_experiment(
+    strategy_id: str,
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     _block_ai_actor(body)
     out = StrategyRegistryService(session).mark_paper_experiment(
         strategy_id, body.get("reason", "operator_mark_experiment")
@@ -286,7 +326,12 @@ def mark_paper_experiment(strategy_id: str, body: dict = Body(default={}), sessi
 
 
 @router.post("/{strategy_id}/pause-experiment")
-def pause_experiment(strategy_id: str, body: dict = Body(default={}), session: Session = Depends(get_session)):
+def pause_experiment(
+    strategy_id: str,
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
     _block_ai_actor(body)
     out = StrategyRegistryService(session).pause_experiment(
         strategy_id, body.get("reason", "experiment_daily_cap")
@@ -313,5 +358,4 @@ def strategies_import(
         out = {"status": "error", "message": "manifest or path required"}
     session.commit()
     return out
-
 

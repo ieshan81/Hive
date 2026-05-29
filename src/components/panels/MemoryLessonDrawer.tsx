@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { apiPost } from "@/lib/apiClient";
+import { apiPostOperator } from "@/lib/apiClient";
 
 export interface LessonDetail {
   node_id: string;
@@ -79,7 +79,7 @@ export function MemoryLessonDrawer({ detail, onClose, onUpdated }: Props) {
     if (!lessonId) return;
     setBusy(true);
     try {
-      await apiPost(`/api/memory/lesson/${lessonId}/${path}`, body);
+      await apiPostOperator(`/api/memory/lesson/${lessonId}/${path}`, body);
       onUpdated?.();
       if (path !== "visibility") onClose();
     } finally {

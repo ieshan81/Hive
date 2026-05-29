@@ -55,7 +55,7 @@ export function PushPullTraderPanel() {
   const load = useCallback(async () => {
     setLoading(true);
     const [cockpit, liveStatus, sig] = await Promise.all([
-      apiGet<Record<string, unknown>>("/api/cockpit", { timeoutMs: 5000 }),
+      apiGet<Record<string, unknown>>("/api/mission-control/status", { timeoutMs: 5000 }),
       apiGet<Record<string, unknown>>("/api/push-pull/status", { timeoutMs: 5000 }),
       apiGet<Record<string, unknown>>(`/api/push-pull/signals?symbol=${encodeURIComponent(signalSymbol)}`, { timeoutMs: 5000 }),
     ]);

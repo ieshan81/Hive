@@ -8,7 +8,7 @@ import { PanelError } from "@/components/ui/PanelError";
 import { MemoryLessonDrawer, type LessonDetail } from "@/components/panels/MemoryLessonDrawer";
 import { HiveBrainCanvas } from "@/components/hive-brain/HiveBrainCanvas";
 import { HiveBrainDrawer } from "@/components/hive-brain/HiveBrainDrawer";
-import { apiGet, apiPost } from "@/lib/apiClient";
+import { apiGet, apiPostOperator } from "@/lib/apiClient";
 import { onHiveNukeComplete } from "@/lib/hiveRefresh";
 import { lessonNodeIdForApi } from "@/lib/apiNormalize";
 import type { PanelLoadMeta } from "@/types/api";
@@ -132,7 +132,7 @@ export function HiveMemoryGraphPanel({ compact = false }: Props) {
             className="text-[9px] text-amber-300"
             onClick={async () => {
               setBrainBusy(true);
-              await apiPost("/api/hive-brain/consolidate", { force: true });
+              await apiPostOperator("/api/hive-brain/consolidate", { force: true });
               await load();
               setBrainBusy(false);
             }}
