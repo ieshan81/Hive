@@ -183,6 +183,16 @@ def _execution_safety(session: Session, cfg: dict) -> dict[str, Any]:
     learning_cfg = dict(cfg.get("autonomous_paper_learning") or {})
     paper_learning_on = bool(learning_cfg.get("mode_enabled"))
     scheduler_enabled = bool(learning_cfg.get("scheduler_enabled"))
+    open_positions_count = int(
+        session.exec(select(func.count()).select_from(PositionSnapshot).where(PositionSnapshot.qty > 0)).one() or 0
+    )
+    active_order_statuses = ["pending", "submitted", "accepted", "new", "partially_filled"]
+    active_orders_count = int(
+        session.exec(
+            select(func.count()).select_from(OrderRecord).where(OrderRecord.status.in_(active_order_statuses))
+        ).one()
+        or 0
+    )
     blockers: list[str] = []
     if not paper_broker:
         blockers.append("broker_not_paper")
@@ -218,9 +228,26 @@ def _execution_safety(session: Session, cfg: dict) -> dict[str, Any]:
         if switches and isinstance(switches[0], dict):
             message = switches[0].get("message")
         plain_blockers.insert(0, str(message or "Paper entries are blocked by the kill switch."))
+    switches = kill.get("active_switches") or []
+    drawdown_blocker = next(
+        (
+            s
+            for s in switches
+            if isinstance(s, dict) and str(s.get("switch_name") or "").lower() in {"daily_drawdown", "max_drawdown"}
+        ),
+        None,
+    )
+    next_action = (
+        "Wait for drawdown window reset or intentionally change risk config."
+        if drawdown_blocker
+        else plain_blockers[0]
+        if plain_blockers
+        else "Paper entries may submit when a candidate passes the cage."
+    )
     return {
         "status": "ok" if not blockers else "blocked",
         "paper_broker": paper_broker,
+        "paper_broker_connected": paper_broker,
         "broker_mode": "paper" if paper_broker else "unknown",
         "live_lock_status": live.get("live_lock_status"),
         "live_trading_locked": live.get("live_lock_status") == "locked",
@@ -229,6 +256,12 @@ def _execution_safety(session: Session, cfg: dict) -> dict[str, Any]:
         "paper_learning_on": paper_learning_on,
         "scheduler_enabled": scheduler_enabled,
         "can_place_paper_orders_now": can_place,
+        "bot_can_submit_paper_entries_now": can_place,
+        "kill_switch_active": not bool(kill.get("entries_allowed")),
+        "drawdown_blocker": drawdown_blocker,
+        "open_positions_count": open_positions_count,
+        "active_orders_count": active_orders_count,
+        "next_action": next_action,
         "blocker_codes": blockers,
         "blockers": plain_blockers,
         "kill_switch": kill,
