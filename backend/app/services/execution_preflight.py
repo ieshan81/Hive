@@ -13,8 +13,8 @@ from app.services.broker_safety import is_paper_broker_url, live_lock_status
 from app.services.capital_buckets import compute_buckets
 from app.services.cost_edge_gate import evaluate_cost_edge
 from app.services.cooldown_service import CooldownService
-from app.services.engine_config import cfg_get
-from app.services.scan_limits import zero_means_unlimited, current_promotion_stage
+from app.services.engine_config import cfg_get, current_promotion_stage
+from app.services.scan_limits import zero_means_unlimited
 from app.services.kill_switch_service import KillSwitchService
 from app.services.closing_position_preflight import (
     evaluate_full_position_exit_exemption,
