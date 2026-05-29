@@ -92,6 +92,34 @@ function OverlayLegend({ summary, lines }: { summary?: OverlaySummary; lines?: P
 
 const DEFAULT_SYMBOLS = ["BTC/USD", "ETH/USD", "SOL/USD", "DOGE/USD", "AVAX/USD", "LINK/USD"];
 
+function sanitizeCandles(candles: Candle[]) {
+  if (!candles.length) return [];
+  const closes = candles.map((c) => c.close).filter((v) => v > 0);
+  const ref = closes.length ? [...closes].sort((a, b) => a - b)[Math.floor(closes.length / 2)] : 1;
+  const maxWick = 0.06;
+  return candles.map((c) => {
+    const o = c.open;
+    const cl = c.close;
+    const bodyHi = Math.max(o, cl);
+    const bodyLo = Math.min(o, cl);
+    const capHi = Math.max(bodyHi * (1 + maxWick), ref * 1.08);
+    const capLo = Math.min(bodyLo * (1 - maxWick), ref * 0.92);
+    let h = c.high;
+    let l = c.low;
+    if (h > capHi) h = capHi;
+    if (l < capLo) l = capLo;
+    if (h < bodyHi) h = bodyHi;
+    if (l > bodyLo) l = bodyLo;
+    return {
+      time: c.time as import("lightweight-charts").UTCTimestamp,
+      open: o,
+      high: h,
+      low: l,
+      close: cl,
+    };
+  });
+}
+
 export function CandleChartPanel({
   defaultSymbol = "BTC/USD",
   symbolOptions,
@@ -185,17 +213,22 @@ export function CandleChartPanel({
       setLoading(false);
       return;
     }
-    const candles = r.data.candles.map((c) => ({
-      time: c.time as import("lightweight-charts").UTCTimestamp,
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-    }));
+    const candles = sanitizeCandles(r.data.candles);
+    const tMin = candles[0]?.time;
+    const tMax = candles[candles.length - 1]?.time;
     seriesRef.current?.setData(candles);
     chartRef.current?.timeScale().fitContent();
     setMeta({ count: candles.length, last: r.data.last_close });
-    if (ctxRes.ok && ctxRes.data) applyOverlays(ctxRes.data);
+    if (ctxRes.ok && ctxRes.data) {
+      let ctx = ctxRes.data;
+      if (ctx.markers?.length && tMin != null && tMax != null) {
+        ctx = {
+          ...ctx,
+          markers: ctx.markers.filter((m) => m.time >= tMin && m.time <= tMax),
+        };
+      }
+      applyOverlays(ctx);
+    }
     else setBrainNote("AI trade markers load when backend chart-context is available.");
     setLoading(false);
   }, [symbol, timeframe, applyOverlays]);

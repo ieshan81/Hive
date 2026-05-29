@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from app.database import OrderRecord, PositionSnapshot, SettingsActionAudit
 from app.services.aggressive_paper_learning_service import AggressivePaperLearningService
@@ -47,6 +47,14 @@ class AutonomousPaperLearningService:
 
     def _order_count(self) -> int:
         return len(list(self.session.exec(select(OrderRecord)).all()))
+
+    def _autonomous_tick_count(self) -> int:
+        n = self.session.exec(
+            select(func.count())
+            .select_from(SettingsActionAudit)
+            .where(SettingsActionAudit.action == "autonomous_run_one_cycle")
+        ).one()
+        return int(n or 0)
 
     def _learning_capacity(self) -> dict[str, Any]:
         from app.services.capital_allocator import _unlimited
@@ -290,6 +298,27 @@ class AutonomousPaperLearningService:
                     "message": str(exc)[:200],
                 }
 
+        scanner_summary: dict[str, Any] = {"status": "skipped"}
+        if bool(cfg_get(self.config, "autonomous_paper_learning.run_scanners_each_tick", True)):
+            try:
+                from app.services import scanner_stack
+
+                scanner_summary = scanner_stack.run_all(self.session)
+            except Exception as exc:
+                scanner_summary = {"status": "error", "message": str(exc)[:200]}
+
+        backtest_summary: dict[str, Any] = {"status": "skipped"}
+        n_ticks = self._autonomous_tick_count()
+        every_n = int(cfg_get(self.config, "autonomous_paper_learning.run_backtest_lab_every_n_ticks", 12) or 12)
+        if every_n > 0 and n_ticks > 0 and n_ticks % every_n == 0:
+            try:
+                backtest_summary = self.run_backtest_lab_now(
+                    operator=operator,
+                    limit=int(cfg_get(self.config, "autonomous_paper_learning.backtest_lab_limit", 2) or 2),
+                )
+            except Exception as exc:
+                backtest_summary = {"status": "error", "message": str(exc)[:200]}
+
         orders_before = self._order_count()
         result = self.ft.run_once(actor=operator)
         orders_after = self._order_count()
@@ -316,6 +345,8 @@ class AutonomousPaperLearningService:
             "new_orders": out["orders_created"],
             "orders_created": out["orders_created"],
             "market_data_refresh": refresh_summary,
+            "scanner_stack": scanner_summary,
+            "backtest_lab": backtest_summary,
             "action": out.get("action") or entries.get("action"),
             "reason": out.get("reason") or entries.get("reason") or tick_summary.get("result"),
             "plain_summary": tick_summary.get("plain_summary") or out.get("message"),

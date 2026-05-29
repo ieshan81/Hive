@@ -9,7 +9,7 @@ import { normalizeOrders } from "@/lib/apiNormalize";
 import { OrderMetricsBar } from "@/components/ui/OrderMetricsBar";
 import { ExecutionOrdersTable } from "@/components/ui/ExecutionOrdersTable";
 import { PortfolioExecutionPanel } from "@/components/panels/PortfolioExecutionPanel";
-import { CandleChartPanel } from "@/components/panels/CandleChartPanel";
+import { PortfolioLineChart } from "@/components/panels/PortfolioLineChart";
 import { TickerSymbol } from "@/components/ui/TickerSymbol";
 import { formatDisplaySymbol } from "@/lib/assetIcons";
 import type { OrderSummaryCounts } from "@/lib/orderDisplay";
@@ -26,10 +26,6 @@ type BrokerRow = {
   local_history_incomplete?: boolean;
   local_history_note?: string;
 };
-
-function displaySymbol(raw: string): string {
-  return formatDisplaySymbol(raw);
-}
 
 export default function PortfolioPage() {
   const [orders, setOrders] = useState<OrderRecord[]>([]);
@@ -94,6 +90,7 @@ export default function PortfolioPage() {
 
   const brokerTruth = (recon?.broker_truth as Record<string, unknown>) || {};
   const brokerRows = (brokerTruth.positions as BrokerRow[]) || [];
+  const positionSymbols = brokerRows.map((p) => formatDisplaySymbol(String(p.symbol ?? "")));
   const warning = recon?.reconciliation_warning as string | undefined;
   const isInfoNote = Boolean(brokerRows.some((p) => p.local_history_note));
 
@@ -134,58 +131,54 @@ export default function PortfolioPage() {
             </div>
           )}
 
-          <GlassPanel title="Open positions · chart + TP/SL bands">
-            <p className="text-[11px] text-slate-500 mb-3">
-              Alpaca paper sync · each position shows candles with AI entry markers and pattern-based stop/target lines
-            </p>
+          {positionSymbols.length > 0 && (
+            <PortfolioLineChart symbols={positionSymbols} defaultSymbol={positionSymbols[0]} />
+          )}
+
+          <GlassPanel title="Open positions">
             {brokerRows.length === 0 ? (
-              <EmptyState message="No open broker positions — agent trades all eligible symbols each cycle." />
+              <EmptyState message="No open broker positions." />
             ) : (
-              <div className="space-y-6">
+              <ul className="space-y-3">
                 {brokerRows.map((pos) => {
-                  const sym = displaySymbol(String(pos.symbol));
+                  const sym = formatDisplaySymbol(String(pos.symbol));
                   return (
-                    <article key={sym} className="rounded-lg border border-white/5 bg-white/[0.02] p-3">
-                      <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
-                        <div>
-                          <TickerSymbol symbol={sym} size="sm" labelClassName="font-semibold text-white" />
-                          <p className="text-[10px] text-slate-500 mt-0.5">
-                            Qty {String(pos.qty)} · entry {String(pos.avg_entry ?? "—")} · P/L{" "}
-                            <span className={(pos.unrealized_pl ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}>
-                              {String(pos.unrealized_pl ?? "—")}
-                              {pos.unrealized_pl_pct != null ? ` (${pos.unrealized_pl_pct}%)` : ""}
-                            </span>
-                          </p>
-                          {pos.local_history_note && (
-                            <p className="text-[10px] text-cyan-300/80 mt-1">{pos.local_history_note}</p>
-                          )}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => requestPaperSell(sym)}
-                          className={
-                            armedExitSymbol === sym
-                              ? "rounded border border-amber-300/60 bg-amber-400/15 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-100"
-                              : "rounded border border-rose-400/40 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-rose-200"
-                          }
-                        >
-                          {armedExitSymbol === sym ? "Confirm paper sell" : "Paper sell"}
-                        </button>
+                    <li
+                      key={sym}
+                      className="rounded-lg border border-white/5 bg-white/[0.02] p-3 flex flex-wrap items-center justify-between gap-3"
+                    >
+                      <div>
+                        <TickerSymbol symbol={sym} size="sm" labelClassName="font-semibold text-white" />
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          Qty {String(pos.qty)} · entry {String(pos.avg_entry ?? "—")} · mark{" "}
+                          {String(pos.current_price ?? "—")} · P/L{" "}
+                          <span className={(pos.unrealized_pl ?? 0) >= 0 ? "text-emerald-400" : "text-red-400"}>
+                            {String(pos.unrealized_pl ?? "—")}
+                            {pos.unrealized_pl_pct != null ? ` (${pos.unrealized_pl_pct}%)` : ""}
+                          </span>
+                        </p>
+                        {pos.local_history_note && (
+                          <p className="text-[10px] text-cyan-300/80 mt-1">{pos.local_history_note}</p>
+                        )}
+                        {exitStatus[sym] && (
+                          <p className="text-[11px] text-amber-200 mt-1">{exitStatus[sym]}</p>
+                        )}
                       </div>
-                      {exitStatus[sym] && (
-                        <p className="text-[11px] text-amber-200 mb-2">{exitStatus[sym]}</p>
-                      )}
-                      <CandleChartPanel
-                        defaultSymbol={sym}
-                        symbolOptions={[sym]}
-                        lockSymbol
-                        compact
-                        title={`${sym} · AI chart wrapper`}
-                      />
-                    </article>
+                      <button
+                        type="button"
+                        onClick={() => requestPaperSell(sym)}
+                        className={
+                          armedExitSymbol === sym
+                            ? "rounded border border-amber-300/60 bg-amber-400/15 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-100"
+                            : "rounded border border-rose-400/40 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-rose-200"
+                        }
+                      >
+                        {armedExitSymbol === sym ? "Confirm paper sell" : "Paper sell"}
+                      </button>
+                    </li>
                   );
                 })}
-              </div>
+              </ul>
             )}
           </GlassPanel>
 

@@ -393,6 +393,10 @@ class TrainingExecutionService:
             purpose = "manual_operator_exit"
         elif "max_hold" in reason:
             purpose = "max_hold_exit"
+        elif "unrealized_loss_band" in reason:
+            purpose = "loss_band_exit"
+        elif "dynamic_exit" in reason:
+            purpose = "dynamic_exit"
         elif review.get("action") == "exit_recommended":
             purpose = "max_hold_exit" if review.get("stale") else "stale_position_exit"
 

@@ -75,14 +75,14 @@ SCANNERS: list[dict[str, Any]] = [
     {
         "id": "sentiment",
         "label": "Sentiment Scanner",
-        "description": "FinBERT + Alpaca news + optional Reddit; capped ±10% influence.",
-        "depends_on": ["finbert_optional", "alpaca_news_optional", "reddit_optional"],
+        "description": "FinBERT + Alpaca Benzinga news; capped ±10% ranking influence.",
+        "depends_on": ["finbert_optional", "alpaca_news_optional"],
         "writes": ["sentiment_snapshot"],
     },
     {
         "id": "risk_eligibility",
         "label": "Risk / Eligibility Scanner",
-        "description": "Reconciliation, ghost-position, cooldown, pump-dump, PDT gates.",
+        "description": "Cage gates: reconciliation, cooldowns, pump-dump flags, position limits.",
         "depends_on": ["broker_reconciliation"],
         "writes": ["eligibility_snapshot"],
     },

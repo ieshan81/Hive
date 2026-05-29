@@ -16,7 +16,6 @@ def sentiment_status(session: Session, config: Optional[dict] = None) -> dict[st
     cfg = config or ConfigManager(session).get_current()
     sources_payload = sentiment_sources(session, cfg)
     fin = sources_payload.get("sources", {}).get("finbert", {})
-    reddit = sources_payload.get("sources", {}).get("reddit_social", {})
     return {
         "status": "ok",
         "generated_at_utc": datetime.utcnow().isoformat() + "Z",
@@ -25,7 +24,7 @@ def sentiment_status(session: Session, config: Optional[dict] = None) -> dict[st
         "sentiment_can_place_trades": False,
         "sentiment_influence_ranking": bool((cfg.get("sentiment") or {}).get("influence_ranking")),
         "sentiment_influence_trading": False,
-        "overall_active": bool(fin.get("active") or reddit.get("active")),
+        "overall_active": bool(fin.get("active")),
         "max_adjustment_pct": (cfg.get("sentiment") or {}).get("max_adjustment_pct", 10),
         "finbert": {
             "implemented": True,
@@ -33,11 +32,6 @@ def sentiment_status(session: Session, config: Optional[dict] = None) -> dict[st
             "worker_connected": fin.get("worker_connected", False),
             "model_loaded": fin.get("model_loaded", False),
             "active": fin.get("active", False),
-        },
-        "reddit": {
-            "mode": reddit.get("mode", "inactive"),
-            "active": reddit.get("active", False),
-            "read_only": True,
         },
         "message": "Sentiment adjusts ranking only (capped). Never permits trades.",
         "sources": sources_payload.get("sources"),
@@ -65,11 +59,6 @@ def sentiment_sources(session: Session, config: Optional[dict] = None) -> dict[s
         model_loaded = False
         finbert_active = False
 
-    from app.services.reddit_scanner_service import reddit_status as rs
-
-    rs_payload = rs()
-    reddit_active = bool(rs_payload.get("active"))
-    reddit_mode = rs_payload.get("mode", "inactive")
     # News provider can be configured even when FinBERT is unavailable; we keep truth explicit:
     # provider_wired may be true, but sentiment_scoring is inactive without FinBERT.
     news_provider_wired = bool(settings.alpaca_configured)
@@ -92,18 +81,6 @@ def sentiment_sources(session: Session, config: Optional[dict] = None) -> dict[s
                     if finbert_active
                     else "Implemented; inactive until FINBERT_SERVICE_URL healthy or local transformers."
                 ),
-            },
-            "reddit_social": {
-                "active": reddit_active,
-                "mode": reddit_mode,
-                "wired": True,
-                "read_only": True,
-                "posting_enabled": False,
-                "reason": rs_payload.get("reason", "Reddit scanner read-only."),
-                "supported_subreddits": [
-                    "wallstreetbets", "stocks", "investing", "options",
-                    "CryptoCurrency", "Bitcoin", "ethtrader", "dogecoin", "solana",
-                ],
             },
             "news_feed": {
                 "active": news_active,

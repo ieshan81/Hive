@@ -43,6 +43,7 @@ type Cockpit = {
   positions?: Array<{ symbol: string; qty: number; unrealized_pl?: number }>;
   recent_trades?: Array<{ symbol: string; side: string; status: string }>;
   weights?: { universe_ranking?: Record<string, number>; min_rank_score?: number };
+  ai_brain?: { active_lessons?: number; recent_lessons?: Array<{ title: string; memory_type?: string; symbol?: string }> };
 };
 
 export function CockpitDashboard() {
@@ -158,6 +159,15 @@ export function CockpitDashboard() {
       </div>
 
       <CockpitFunnelBrain funnel={f} blockers={data?.why_zero_shortlist} aiNote={data?.ai_cockpit_message} />
+
+      {data?.ai_brain && (data.ai_brain.active_lessons ?? 0) > 0 && (
+        <p className="text-[10px] text-violet-200/80">
+          AI memory: {data.ai_brain.active_lessons} active lesson(s)
+          {data.ai_brain.recent_lessons?.[0]?.title
+            ? ` · latest: ${data.ai_brain.recent_lessons[0].title}`
+            : ""}
+        </p>
+      )}
 
       <CandleChartPanel defaultSymbol={chartSymbol} title="TradingView wrapper · AI-controlled overlays" />
 

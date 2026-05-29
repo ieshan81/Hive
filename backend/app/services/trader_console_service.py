@@ -125,6 +125,7 @@ def trader_console_status(session: Session, *, force: bool = False) -> dict[str,
     scored = score_active_universe(session, cfg, limit=eval_limit)
     scores = scored.get("scores") or []
     eligible = [row for row in scores if row.get("entry_allowed")]
+    fresh_count = int(scored.get("fresh_count") or 0)
     latest_decision = _latest_decision(session)
     latest_ai = _latest_ai_review(session)
     paper_status = PaperExecutionService(session).status()
@@ -158,6 +159,7 @@ def trader_console_status(session: Session, *, force: bool = False) -> dict[str,
         "open_positions_count": len(positions),
         "eligible_trades": eligible,
         "eligible_count": len(eligible),
+        "fresh_count": fresh_count,
         "shortlist": eligible,
         "shortlist_count": len(eligible),
         "scored_symbols": scored.get("symbols_scored", 0),

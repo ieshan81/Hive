@@ -9,6 +9,7 @@ from sqlmodel import Session, select
 
 from app.database import PositionSnapshot, StrategySignal
 from app.services.aggressive_paper_learning_service import AggressivePaperLearningService
+from app.services.engine_config import cfg_get
 from app.services.config_manager import ConfigManager
 from app.services.dynamic_exit_levels_service import compute_dynamic_exit_levels, exit_trigger_for_long
 from app.services.historical_data_service import HistoricalDataService
@@ -92,6 +93,36 @@ class OpenPositionReviewService:
                 reason = str(exit_trigger.get("reason") or "dynamic_exit_level_hit")
                 stale_status = "exit_signal"
 
+        upl = float(pos.unrealized_pl or 0)
+        upl_pct = float(pos.unrealized_pl_pct or 0)
+        loss_pct_cfg = float(
+            self.pl_cfg.get("max_unrealized_loss_pct")
+            or cfg_get(self.config, "autonomous_paper_learning.max_unrealized_loss_pct", 1.5)
+        )
+        loss_usd_cfg = float(
+            self.pl_cfg.get("max_unrealized_loss_usd")
+            or cfg_get(self.config, "autonomous_paper_learning.max_unrealized_loss_usd", 4.0)
+        )
+        if upl <= -abs(loss_usd_cfg) or upl_pct <= -abs(loss_pct_cfg):
+            action = "exit_recommended"
+            reason = "unrealized_loss_band"
+            stale_status = "exit_signal"
+            self.lessons.upsert_lesson(
+                memory_type="loss_exit_memory",
+                title=f"Loss band exit: {symbol}",
+                summary=(
+                    f"Paper position {symbol} hit loss band (P/L ${upl:.2f}, {upl_pct:.2f}%). "
+                    "Exit recommended to protect paper capital."
+                ),
+                detailed_lesson="Dynamic exits should fire before discretionary hold becomes a bag.",
+                symbol=symbol,
+                strategy_name=strategy,
+                source="open_position_review",
+                pattern_key=f"loss_band|{symbol}|{datetime.utcnow().date()}",
+                can_influence_ranking=True,
+                visible_to_ai=True,
+            )
+
         spike = MemeVolatilitySpikeDetector(self.session, self.config).evaluate_symbol(symbol)
         return {
             **truth,
@@ -109,6 +140,8 @@ class OpenPositionReviewService:
             "reason": reason,
             "dynamic_exit_levels": dynamic_levels,
             "exit_trigger": exit_trigger,
+            "unrealized_pl": upl,
+            "unrealized_pl_pct": upl_pct,
             "exit_status": truth.get("exit_status", "open"),
             "monitor_status": truth.get("monitor_status", "active"),
             "manipulation_risk": spike.get("manipulation_risk"),

@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 from sqlmodel import Session, select
 
-from app.database import AccountSnapshot, ExecutionLog, PositionSnapshot
+from app.database import AccountSnapshot, ExecutionLog, LessonNode, PositionSnapshot
 from app.services.alpaca_adapter import AlpacaAdapter
 from app.services.config_manager import ConfigManager
 from app.services.dynamic_weights_service import get_dynamic_weights
@@ -54,17 +54,40 @@ def build_cockpit_summary(session: Session) -> dict[str, Any]:
     breakdown = tc.get("no_trade_reason_breakdown") or {}
 
     positions = list(session.exec(select(PositionSnapshot)).all())
+    lesson_rows = list(
+        session.exec(
+            select(LessonNode)
+            .where(LessonNode.status == "active")
+            .order_by(LessonNode.updated_at.desc())
+            .limit(5)
+        ).all()
+    )
+    lesson_total = len(
+        list(session.exec(select(LessonNode).where(LessonNode.status == "active")).all())
+    )
     logs = list(
         session.exec(select(ExecutionLog).order_by(ExecutionLog.submitted_at.desc()).limit(8)).all()
     )
 
     avail = int(crypto.get("usd_pairs") or len(crypto.get("symbols") or []))
     eligible_n = len(shortlist)
+    fresh_n = int(tc.get("fresh_count") or 0)
+    stale_n = int(breakdown.get("stale_bar") or breakdown.get("data_stale") or 0)
+    if fresh_n <= 0 and avail > 0 and stale_n < avail:
+        fresh_n = max(0, avail - stale_n)
+
+    zero_reason = None
+    if not shortlist:
+        top = sorted(breakdown.items(), key=lambda x: -x[1])[:3]
+        if top:
+            zero_reason = "; ".join(f"{k}: {v}" for k, v in top)
+        elif tc.get("message"):
+            zero_reason = str(tc.get("message"))
 
     funnel = {
         "available": avail,
         "cached": avail,
-        "fresh": max(0, avail - int(breakdown.get("stale_bar", 0))),
+        "fresh": fresh_n if fresh_n > 0 else max(0, avail - stale_n),
         "eligible": int(tc.get("eligible_count") or eligible_n),
         "ranked": int(tc.get("scored_symbols") or 0),
         "shortlist": eligible_n,
@@ -90,7 +113,7 @@ def build_cockpit_summary(session: Session) -> dict[str, Any]:
         "funnel": funnel,
         "eligible_trades": shortlist[:24],
         "shortlist": shortlist[:24],
-        "why_zero_shortlist": tc.get("message") if not shortlist else None,
+        "why_zero_shortlist": zero_reason if not shortlist else None,
         "block_breakdown": breakdown,
         "control": _control_from_truth(truth),
         "positions": [
@@ -114,11 +137,18 @@ def build_cockpit_summary(session: Session) -> dict[str, Any]:
             for r in logs
         ],
         "ai_cockpit_message": _cockpit_narrative(
-            {"funnel": funnel, "why_zero_shortlist": tc.get("message")},
+            {"funnel": funnel, "why_zero_shortlist": zero_reason},
             truth,
-            [],
+            shortlist,
             {"universe_ranking": {}},
         ),
+        "ai_brain": {
+            "active_lessons": lesson_total,
+            "recent_lessons": [
+                {"title": r.title, "memory_type": r.memory_type, "symbol": r.symbol}
+                for r in lesson_rows
+            ],
+        },
     }
 
 

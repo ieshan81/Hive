@@ -141,7 +141,16 @@ class PortfolioGate:
         if not candidates:
             return result
 
-        top_n = int(_stage_portfolio_value(self.config, "execute_top_n_signals", 1))
+        top_n_raw = _stage_portfolio_value(self.config, "execute_top_n_signals", 1)
+        from app.services.scan_limits import zero_means_unlimited
+
+        trade_all = bool(cfg_get(self.config, "universe.trade_all_eligible", False)) or zero_means_unlimited(
+            cfg_get(self.config, "universe.max_execution_shortlist", 0)
+        )
+        if trade_all or zero_means_unlimited(top_n_raw):
+            top_n = max(len(candidates), 9999)
+        else:
+            top_n = max(1, int(top_n_raw or 1))
         raw_max_concurrent = _stage_portfolio_value(self.config, "max_concurrent_positions", 2)
         max_concurrent_unlimited = _zero_or_negative_means_unlimited(raw_max_concurrent)
         max_concurrent = 0 if max_concurrent_unlimited else int(raw_max_concurrent)

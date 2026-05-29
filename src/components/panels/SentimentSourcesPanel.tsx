@@ -35,7 +35,6 @@ type PumpDumpPayload = {
 const SOURCE_ORDER: { key: keyof SourcesPayload["sources"]; label: string }[] = [
   { key: "finbert", label: "FinBERT (local)" },
   { key: "news_feed", label: "News (Alpaca Benzinga)" },
-  { key: "reddit_social", label: "Reddit / Social" },
   { key: "gemini_advisor", label: "Gemini Advisor" },
 ];
 

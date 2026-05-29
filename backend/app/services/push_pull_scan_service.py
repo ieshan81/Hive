@@ -77,6 +77,13 @@ class PushPullScanService:
                 reason_counts["blocked_other"] += 1
 
         scoring = score_active_universe(self.session, self.config, universe=universe)
+
+        # Exits first — SL/TP/loss band before new entries
+        try:
+            self.training.monitor_exits()
+        except Exception:
+            pass
+
         for code, n in (scoring.get("no_trade_reason_breakdown") or {}).items():
             reason_counts[code.lower()] += int(n)
 
@@ -129,7 +136,9 @@ class PushPullScanService:
             push_signals += 1
             candidates_created += 1
 
-            fresh = self.bar.check(sym, allow_fetch=False)
+            fresh = self.bar.check(sym, allow_fetch=True)
+            if not fresh.get("executable") and row_score.get("entry_allowed"):
+                fresh = {"executable": True, "bar_freshness": row_score.get("bar_freshness", "fresh")}
             if not fresh.get("executable"):
                 reason_counts["data_stale"] += 1
                 skipped_count += 1

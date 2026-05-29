@@ -15,8 +15,24 @@ const STAGES = [
   ["shortlist", "To trade"],
 ] as const;
 
+function formatBlockers(raw?: string, funnel?: Record<string, number>): string | undefined {
+  if (!raw) return undefined;
+  const avail = Number(funnel?.available ?? 0);
+  const fresh = Number(funnel?.fresh ?? 0);
+  if (avail > 0 && fresh === 0 && /stale_bar:\s*\d+/.test(raw)) {
+    return `${raw} — bars may need refresh; scoring uses cached history when within staleness window.`;
+  }
+  if (/insufficient_historical_bars/.test(raw)) {
+    return `${raw} — run market data refresh or wait for the next scheduler tick.`;
+  }
+  return raw;
+}
+
 export function CockpitFunnelBrain({ funnel, blockers, aiNote }: Props) {
   const f = funnel ?? {};
+  const blockerText = formatBlockers(blockers, f);
+  const showAiNote = aiNote && aiNote !== blockerText;
+
   return (
     <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4">
       <p className="text-[10px] uppercase tracking-wider text-violet-300/80 mb-3">AI brain · 6-stage funnel</p>
@@ -31,12 +47,12 @@ export function CockpitFunnelBrain({ funnel, blockers, aiNote }: Props) {
           </div>
         ))}
       </div>
-      {blockers && (
+      {blockerText && (
         <p className="text-[10px] text-amber-300/90 mt-3 border-t border-white/5 pt-2">
-          Cage blockers: {blockers}
+          Cage blockers: {blockerText}
         </p>
       )}
-      {aiNote && <p className="text-[10px] text-cyan-200/80 mt-2">{aiNote}</p>}
+      {showAiNote && <p className="text-[10px] text-cyan-200/80 mt-2">{aiNote}</p>}
     </div>
   );
 }

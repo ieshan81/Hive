@@ -116,7 +116,7 @@ DEFAULT_CONFIG = {
         "max_bar_age_seconds": 900.0,
     },
     "portfolio": {
-        "execute_top_n_signals": 1,
+        "execute_top_n_signals": 0,
         "max_concurrent_positions": 0,
         "max_total_exposure_pct": 100.0,
         "reserve_cash_pct": 5.0,
@@ -205,7 +205,7 @@ DEFAULT_CONFIG = {
         "stages": {
             "PAPER": {
                 "portfolio": {
-                    "execute_top_n_signals": 1,
+                    "execute_top_n_signals": 0,
                     "max_concurrent_positions": 0,
                     "max_total_exposure_pct": 100.0,
                     "reserve_cash_pct": 5.0,
@@ -403,7 +403,12 @@ DEFAULT_CONFIG = {
         "no_duplicate_symbol_buy": True,
         "refresh_market_data_before_tick": True,
         "refresh_stocks_during_market_hours": True,
-        "refresh_lookback_hours": 12,
+        "refresh_lookback_hours": 36,
+        "max_unrealized_loss_usd": 4.0,
+        "max_unrealized_loss_pct": 1.5,
+        "run_scanners_each_tick": True,
+        "run_backtest_lab_every_n_ticks": 12,
+        "backtest_lab_limit": 2,
     },
     "confidence": {
         "weights": {

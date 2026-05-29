@@ -15,7 +15,7 @@ from app.services.alpaca_crypto_assets import fetch_crypto_assets
 from app.services.bar_freshness_service import BarFreshnessService
 from app.services.config_manager import ConfigManager
 from app.services.engine_config import cfg_get
-from app.services.historical_data_service import HistoricalDataService
+from app.services.historical_data_service import HistoricalDataService, _parse_ts
 from app.services.quote_freshness_service import QuoteFreshnessService
 from app.services.research_backtest_engine import ResearchBacktestEngine
 from app.services.research_memory_service import ResearchMemoryService
@@ -73,6 +73,17 @@ def _db_bars_only(session: Session, symbol: str, timeframe: str, limit: int) -> 
         }
         for r in rows
     ]
+
+
+def _reconcile_stale_bar_block(blocks: list[str], bars: list, config: dict) -> None:
+    """Drop stale_bar when cached bars are within configured staleness window."""
+    if "stale_bar" not in blocks or not bars or len(bars) < 10:
+        return
+    last_ts = _parse_ts(bars[-1]["timestamp"])
+    age_h = (datetime.utcnow() - last_ts).total_seconds() / 3600.0
+    max_h = float(cfg_get(config, "universe.max_bar_staleness_hours", 96))
+    if age_h <= max_h:
+        blocks.remove("stale_bar")
 
 
 def evaluate_symbol_blocks(
@@ -134,6 +145,8 @@ def evaluate_symbol_blocks(
         bar_meta = {} if len(bars_5m) >= 14 else {"error": f"Only {len(bars_5m)} cached 5Min bars"}
     if bar_meta.get("error") or len(bars_5m) < 14:
         blocks.append("insufficient_historical_bars")
+    else:
+        _reconcile_stale_bar_block(blocks, bars_5m, config)
 
     bars_1m = []
     if not bar_meta.get("error"):

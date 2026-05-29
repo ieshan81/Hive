@@ -36,6 +36,7 @@ def aggressive_config_patch() -> dict[str, Any]:
         "portfolio": {
             "max_concurrent_positions": 0,
             "reserve_cash_pct": 10.0,
+            "execute_top_n_signals": 0,
         },
         "allocator": {
             "paper_trade_notional_min_usd": 12.0,
@@ -62,10 +63,15 @@ def aggressive_config_patch() -> dict[str, Any]:
             "scheduler_enabled": True,
             "scheduler_interval_seconds": 45,
             "refresh_market_data_before_tick": True,
-            "refresh_lookback_hours": 24,
+            "refresh_lookback_hours": 36,
             "max_paper_trades_per_day": 0,
             "max_open_paper_positions": 0,
             "use_capital_allocator": True,
+            "max_unrealized_loss_usd": 4.0,
+            "max_unrealized_loss_pct": 1.5,
+            "run_scanners_each_tick": True,
+            "run_backtest_lab_every_n_ticks": 12,
+            "backtest_lab_limit": 2,
         },
         "execution": {
             "paper_orders_enabled": True,

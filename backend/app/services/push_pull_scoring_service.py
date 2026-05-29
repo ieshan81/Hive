@@ -235,7 +235,8 @@ def score_symbol(
     strategy_id = "crypto_push_pull_baseline" if asset_class == "crypto" else "stock_push_pull_baseline"
     bar_svc = BarFreshnessService(session, config)
     quote_svc = QuoteFreshnessService(session, config)
-    bar_chk = bar_svc.check(symbol, timeframe="5Min", allow_fetch=False)
+    allow_bar_fetch = _trade_all_eligible_on(config) or _paper_exploration_on(config)
+    bar_chk = bar_svc.check(symbol, timeframe="5Min", allow_fetch=allow_bar_fetch)
     quote_chk = quote_svc.check(symbol, asset_class=asset_class)
     quote = {
         "bid": quote_chk.get("bid"),
@@ -249,6 +250,21 @@ def score_symbol(
 
     hist = HistoricalDataService(session, config)
     bars, _meta = hist.get_bars(symbol, timeframe="5Min", min_rows=14, lookback_days=14)
+    if not bar_chk.get("fresh") and bars and len(bars) >= 10:
+        from app.services.historical_data_service import _parse_ts
+        from datetime import datetime
+
+        last_ts = _parse_ts(bars[-1]["timestamp"])
+        age_h = (datetime.utcnow() - last_ts).total_seconds() / 3600.0
+        max_h = float(cfg_get(config, "universe.max_bar_staleness_hours", 96))
+        if age_h <= max_h:
+            bar_chk = {
+                **bar_chk,
+                "fresh": True,
+                "executable": True,
+                "bar_freshness": "fresh",
+                "staleness_hours": round(age_h, 1),
+            }
     pattern = top_pattern(bars)
     pattern_direction = str(pattern.get("direction") or "long")
     metrics = _metrics_from_bars(bars, quote)
@@ -464,8 +480,13 @@ def score_active_universe(
 
     breakdown: Counter[str] = Counter()
     for r in ranked:
-        reason = r.get("no_trade_reason") or "unknown"
-        breakdown[str(reason)] += 1
+        reason = str(r.get("no_trade_reason") or "unknown")
+        if reason.upper() in ("DATA_STALE", "STALE_BAR", "NO_BARS"):
+            reason = "stale_bar"
+        breakdown[reason] += 1
+
+    fresh_count = sum(1 for r in ranked if r.get("bar_freshness") == "fresh")
+    eligible_count = sum(1 for r in ranked if r.get("entry_allowed"))
 
     return {
         "status": "ok",
@@ -473,6 +494,8 @@ def score_active_universe(
         "scoring_model": SCORING_MODEL,
         "strategy_version": _strategy_version(session),
         "symbols_scored": len(ranked),
+        "fresh_count": fresh_count,
+        "eligible_count": eligible_count,
         "scores": ranked,
         "selected_candidate": selected,
         "rejected_candidates": rejected[:20],
