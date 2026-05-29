@@ -21,6 +21,7 @@ from app.database import (
     KillSwitchEvent,
     MonteCarloResult,
     OrderRecord,
+    PaperExperimentDecision,
     PortfolioDecision,
     PositionSnapshot,
     RiskEvent,
@@ -396,6 +397,68 @@ def _resolve_cycle_status(last_cycle: dict[str, Any], health: Optional[SystemHea
     return "partial"
 
 
+def _latest_training_activity_cycle(
+    signal_rows: list[StrategySignal],
+    portfolio_rows: list[PortfolioDecision],
+    execution_rows: list[ExecutionLog],
+    paper_decision_rows: list[PaperExperimentDecision],
+) -> dict[str, Any] | None:
+    """Fallback cycle summary for Research OS/paper-learning runs that did not write legacy cycle_end."""
+
+    candidates: list[tuple[datetime, str, Any]] = []
+    for row in signal_rows:
+        if row.created_at:
+            candidates.append((row.created_at, "strategy_signals", row))
+    for row in portfolio_rows:
+        if row.created_at:
+            candidates.append((row.created_at, "portfolio_decisions", row))
+    for row in execution_rows:
+        if row.created_at:
+            candidates.append((row.created_at, "execution_logs", row))
+    for row in paper_decision_rows:
+        if row.created_at:
+            candidates.append((row.created_at, "paper_experiment_decisions", row))
+    if not candidates:
+        return None
+
+    latest_at, source, row = max(candidates, key=lambda item: item[0])
+    cycle_run_id = getattr(row, "cycle_run_id", None)
+
+    def same_cycle(items: list[Any]) -> list[Any]:
+        if not cycle_run_id:
+            return items
+        return [item for item in items if getattr(item, "cycle_run_id", None) == cycle_run_id]
+
+    scoped_signals = same_cycle(signal_rows)
+    scoped_portfolio = same_cycle(portfolio_rows)
+    scoped_execution = same_cycle(execution_rows)
+    scoped_paper = paper_decision_rows if not cycle_run_id else paper_decision_rows
+    submitted_statuses = {"paper_order_submitted", "paper_order_filled", "paper_order_partially_filled"}
+    blocked_count = sum(1 for r in scoped_execution if r.status == "preflight_blocked")
+    rejected_count = sum(1 for r in scoped_execution if "reject" in str(r.status or "").lower())
+
+    return {
+        "cycle_run_id": cycle_run_id,
+        "started_at": latest_at.isoformat() + "Z",
+        "ended_at": latest_at.isoformat() + "Z",
+        "status": "activity_detected",
+        "source": source,
+        "session": {"mode": "paper_learning"},
+        "radar_count": 0,
+        "signals_generated": len(scoped_signals),
+        "signals_created": len(scoped_signals),
+        "signals_evaluated": len(scoped_portfolio),
+        "blocked": blocked_count,
+        "risk_approved": sum(1 for r in scoped_portfolio if bool(r.selected_for_execution)),
+        "portfolio_deferred": sum(1 for r in scoped_portfolio if r.portfolio_status == "portfolio_deferred"),
+        "selected_for_execution": sum(1 for r in scoped_portfolio if bool(r.selected_for_execution)),
+        "approved": sum(1 for r in scoped_paper if r.decision == "approved"),
+        "orders_submitted": sum(1 for r in scoped_execution if r.status in submitted_statuses),
+        "orders_rejected_or_blocked": blocked_count + rejected_count,
+        "errors": [],
+    }
+
+
 def _export_latest_order_attempt(session: Session, config: dict) -> dict[str, Any]:
     from app.services.paper_order_proof_service import PaperOrderProofService
 
@@ -595,13 +658,18 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
     broker_error_rows = list(session.exec(select(BrokerError).order_by(BrokerError.created_at.desc())).all())
     portfolio_rows = list(session.exec(select(PortfolioDecision).order_by(PortfolioDecision.created_at.desc())).all())
     execution_rows = list(session.exec(select(ExecutionLog).order_by(ExecutionLog.created_at.desc())).all())
+    paper_decision_rows = list(
+        session.exec(select(PaperExperimentDecision).order_by(PaperExperimentDecision.created_at.desc())).all()
+    )
     kill_rows = list(session.exec(select(KillSwitchEvent).order_by(KillSwitchEvent.created_at.desc())).all())
 
     db_counts = count_cycle_rows(session)
     cycle_log = latest_cycle_end(session)
     last_cycle = cycle_log.details if cycle_log and cycle_log.details else None
-    if last_cycle is None and health and health.details:
+    if not last_cycle and health and health.details:
         last_cycle = health.details.get("last_cycle")
+    if not last_cycle:
+        last_cycle = _latest_training_activity_cycle(signal_rows, portfolio_rows, execution_rows, paper_decision_rows)
 
     latest_cycle_id = last_cycle.get("cycle_run_id") if last_cycle else None
     cycle_started = last_cycle.get("started_at") if last_cycle else None
@@ -679,7 +747,12 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
     latest_cycle_errors = [e for e in broker_errors_all if e.get("is_latest_cycle") and not e.get("historical")]
     historical_alpaca_errors = [e for e in broker_errors_all if e.get("historical")]
 
+    from app.services.kill_switch_service import KillSwitchService
+
+    summary_config = config_mgr.get_current()
+    summary_kill_status = KillSwitchService(session, summary_config).status()
     cycle_status = _resolve_cycle_status(last_cycle, health) if last_cycle else "never_run"
+    kill_label = "ACTIVE" if not summary_kill_status.get("entries_allowed") else summary_kill_status.get("state", "clear")
 
     summary_lines = [
         "# Caged Hive Quant — System Summary",
@@ -690,7 +763,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         f"- Alpaca: {'connected' if health and health.alpaca_connected else 'not connected'}",
         f"- Gemini: {'configured' if health and health.gemini_configured else 'not configured'}",
         f"- Database: {'connected' if health and health.database_connected else 'unavailable'}",
-        f"- Kill Switch: {'ACTIVE' if health and health.kill_switch_active else 'off'}",
+        f"- Kill Switch: {str(kill_label).replace('_', ' ')}",
         "",
         "## Backend Data Counts (from DB)",
         f"- activity_logs: {len(activity_rows)}",
@@ -709,6 +782,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
                 f"- Cycle run id: {last_cycle.get('cycle_run_id', 'unknown')}",
                 f"- Timestamp: {last_cycle.get('ended_at') or last_cycle.get('started_at', 'unknown')}",
                 f"- Status: {cycle_status}",
+                f"- Source: {last_cycle.get('source', 'legacy_cycle_end')}",
                 f"- Session mode: {(last_cycle.get('session') or {}).get('mode', 'unknown')}",
                 f"- Radar count: {last_cycle.get('radar_count', 0)}",
                 f"- Signals generated: {last_cycle.get('signals_generated', 0)}",
@@ -737,7 +811,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             summary_lines.append(f"- {st.get('strategy')}: {st.get('status')} — {st.get('reason')}")
     else:
         summary_lines.append("- Status: never run")
-        summary_lines.append("- Run POST /api/cycle/run to populate backend data")
+        summary_lines.append("- No cycle, strategy signal, paper decision, or execution log rows were found.")
 
     if strategy_rows:
         summary_lines.extend(["", "## Strategy States (DB)"])

@@ -58,6 +58,22 @@ type Cockpit = {
   };
 };
 
+function symbolKey(symbol: string): string {
+  return String(symbol || "").toUpperCase().replace(/[/-]/g, "");
+}
+
+function dedupeEligible<T extends { symbol: string; trade_quality_score?: number; universe_rank_score?: number; quality_score?: number }>(rows: T[]): T[] {
+  const best = new Map<string, T>();
+  for (const row of rows.filter((r) => r.symbol)) {
+    const key = symbolKey(row.symbol);
+    const prev = best.get(key);
+    const prevScore = Number(prev?.universe_rank_score ?? prev?.trade_quality_score ?? prev?.quality_score ?? 0);
+    const nextScore = Number(row.universe_rank_score ?? row.trade_quality_score ?? row.quality_score ?? 0);
+    if (!prev || nextScore >= prevScore) best.set(key, row);
+  }
+  return Array.from(best.values());
+}
+
 export function CockpitDashboard() {
   const [data, setData] = useState<Cockpit | null>(null);
   const [loading, setLoading] = useState(true);
@@ -84,10 +100,11 @@ export function CockpitDashboard() {
 
   const f = data?.funnel ?? {};
   const ctrl = data?.control ?? {};
-  const eligible =
+  const eligible = dedupeEligible(
     data?.eligible_trades ??
     data?.shortlist ??
-    (data?.scores ?? []).filter((s) => s.entry_allowed);
+    (data?.scores ?? []).filter((s) => s.entry_allowed)
+  );
 
   return (
     <div className="space-y-4 max-w-6xl">
