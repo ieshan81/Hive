@@ -27,24 +27,48 @@ type BrokerRow = {
   local_history_note?: string;
 };
 
+type ExitPlan = {
+  symbol?: string;
+  has_exit_plan?: boolean;
+  missing_exit_plan?: boolean;
+  exit_plan_source?: string;
+  stop_loss?: number | null;
+  take_profit?: number | null;
+};
+
+function planKey(symbol: string): string {
+  return String(symbol || "").toUpperCase().replace(/[/-]/g, "");
+}
+
 export default function PortfolioPage() {
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [orderSummary, setOrderSummary] = useState<OrderSummaryCounts | undefined>();
   const [recon, setRecon] = useState<Record<string, unknown> | null>(null);
   const [exitStatus, setExitStatus] = useState<Record<string, string>>({});
+  const [exitPlans, setExitPlans] = useState<Record<string, ExitPlan>>({});
   const [armedExitSymbol, setArmedExitSymbol] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [cockpitRes, oRes, reconRes] = await Promise.all([
+    const [cockpitRes, oRes, reconRes, exitRes] = await Promise.all([
       apiGet<Record<string, unknown>>("/api/mission-control/status", { timeoutMs: 5000 }),
       apiGet("/api/orders?limit=50"),
       apiGet("/api/portfolio/reconciliation"),
+      apiGet<Record<string, unknown>>("/api/push-pull/exit-monitor/status", { timeoutMs: 5000 }),
     ]);
 
     if (reconRes.ok) setRecon(reconRes.data as Record<string, unknown>);
     else setRecon(null);
+
+    if (exitRes.ok && exitRes.data) {
+      const plans = (exitRes.data.positions as ExitPlan[]) || [];
+      const map: Record<string, ExitPlan> = {};
+      for (const p of plans) map[planKey(String(p.symbol ?? ""))] = p;
+      setExitPlans(map);
+    } else {
+      setExitPlans({});
+    }
 
     if (cockpitRes.ok && cockpitRes.data && typeof cockpitRes.data === "object") {
       const d = cockpitRes.data as Record<string, unknown>;
@@ -159,6 +183,8 @@ export default function PortfolioPage() {
               <ul className="space-y-3">
                 {brokerRows.map((pos) => {
                   const sym = formatDisplaySymbol(String(pos.symbol));
+                  const plan = exitPlans[planKey(String(pos.symbol ?? ""))];
+                  const planMissing = plan ? Boolean(plan.missing_exit_plan) : undefined;
                   return (
                     <li
                       key={sym}
@@ -174,6 +200,28 @@ export default function PortfolioPage() {
                             {pos.unrealized_pl_pct != null ? ` (${pos.unrealized_pl_pct}%)` : ""}
                           </span>
                         </p>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px]">
+                          {planMissing === undefined ? (
+                            <span className="rounded-full border border-white/10 px-2 py-0.5 text-slate-500">
+                              exit plan: unknown
+                            </span>
+                          ) : planMissing ? (
+                            <span className="rounded-full border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 font-semibold text-rose-300">
+                              missing exit plan — blocks new entries
+                            </span>
+                          ) : (
+                            <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 font-semibold text-emerald-300">
+                              exit plan: {plan?.exit_plan_source || "ok"}
+                            </span>
+                          )}
+                          {plan && (plan.stop_loss != null || plan.take_profit != null) && (
+                            <span className="text-slate-500">
+                              {plan.stop_loss != null ? `stop ${plan.stop_loss}` : ""}
+                              {plan.stop_loss != null && plan.take_profit != null ? " · " : ""}
+                              {plan.take_profit != null ? `target ${plan.take_profit}` : ""}
+                            </span>
+                          )}
+                        </div>
                         {pos.local_history_note && (
                           <p className="text-[10px] text-cyan-300/80 mt-1">{pos.local_history_note}</p>
                         )}
