@@ -86,11 +86,17 @@ class OpenPositionReviewService:
         action = "hold"
         reason = "within_hold_window"
         stale_status = "active"
+        max_hold_eval: Optional[dict[str, Any]] = None
         if stale or true_hold >= effective_max:
-            action = "exit_recommended"
-            reason = f"exceeded_max_hold_{effective_max}m"
-            stale_status = "stale"
-            self._stale_memory(symbol, strategy, true_hold, effective_max, pos)
+            # Fee-aware max-hold: don't exit just because the clock expired if the
+            # round-trip cost isn't covered and the signal is still valid — extend
+            # within a hard time ceiling. Stop-loss / invalidation / loss-band exits
+            # below still override and fire immediately.
+            action, reason, stale_status, max_hold_eval = self._fee_aware_max_hold(
+                pos, true_hold, effective_max
+            )
+            if action == "exit_recommended":
+                self._stale_memory(symbol, strategy, true_hold, effective_max, pos)
         elif true_hold >= effective_max * 0.9:
             action = "exit_recommended"
             reason = "at_or_near_max_hold"
@@ -163,6 +169,7 @@ class OpenPositionReviewService:
             "stale_status": stale_status,
             "action": action,
             "reason": reason,
+            "max_hold_eval": max_hold_eval,
             "dynamic_exit_levels": dynamic_levels,
             "ratchet_state": ratchet_state or None,
             "exit_trigger": exit_trigger,
@@ -175,6 +182,43 @@ class OpenPositionReviewService:
             "live_trading_locked": True,
             "reviewed_at": datetime.utcnow().isoformat() + "Z",
         }
+
+    def _fee_aware_max_hold(
+        self, pos: PositionSnapshot, true_hold: float, effective_max: float
+    ) -> tuple[str, str, str, dict[str, Any]]:
+        """Decide a max-hold-expiry outcome with round-trip cost awareness.
+
+        - Past an absolute time ceiling → exit (no further extension).
+        - Net positive after estimated round-trip cost → exit (fee covered).
+        - Otherwise (fee not covered) → extend the hold; stop-loss / invalidation /
+          loss-band exits evaluated elsewhere still fire immediately and override this.
+        """
+        apl = self.pl_cfg
+        qty = abs(float(pos.qty or 0))
+        mark = float(pos.current_price or pos.avg_entry_price or 0)
+        notional = qty * mark
+        cost_bps = float(apl.get("max_hold_round_trip_cost_bps", 40) or 40)
+        est_cost = notional * cost_bps / 10000.0
+        upl = float(pos.unrealized_pl or 0)
+        net = upl - est_cost
+        abs_ceiling_min = float(apl.get("absolute_max_hold_hours", 72) or 72) * 60.0
+        ext_budget = float(apl.get("max_extension_count", 3) or 3) * float(
+            apl.get("max_extension_minutes", 60) or 60
+        )
+        hard_ceiling = min(effective_max + ext_budget, abs_ceiling_min)
+        ev = {
+            "true_hold_min": round(true_hold, 1),
+            "effective_max_min": effective_max,
+            "hard_ceiling_min": round(hard_ceiling, 1),
+            "unrealized_pl": round(upl, 4),
+            "est_round_trip_cost_usd": round(est_cost, 4),
+            "net_after_cost": round(net, 4),
+        }
+        if true_hold >= hard_ceiling:
+            return "exit_recommended", "max_hold_exit_absolute_ceiling", "stale", ev
+        if net > 0:
+            return "exit_recommended", "max_hold_exit_fee_covered", "stale", ev
+        return "hold", "max_hold_extended_fee_not_covered", "extended", ev
 
     def _strategy_intent(self, strategy: Optional[str], signal_id: Optional[int]) -> str:
         if strategy and "push" in str(strategy).lower():

@@ -459,6 +459,13 @@ DEFAULT_CONFIG = {
         "auto_heal_missing_exit_plans": True,
         "auto_pause_on_unmanaged_position": False,
         "emergency_max_hold_hours": 24,
+        # --- Fee-aware max-hold (TASK 5): extend a fee-uncovered hold while the signal
+        # is still valid, bounded by a hard time ceiling. Stop-loss / invalidation /
+        # loss-band exits always fire immediately and are unaffected. ---
+        "absolute_max_hold_hours": 72,
+        "max_extension_count": 3,
+        "max_extension_minutes": 60,
+        "max_hold_round_trip_cost_bps": 40,
         "refresh_market_data_before_tick": True,
         "refresh_stocks_during_market_hours": True,
         "refresh_lookback_hours": 36,
