@@ -21,12 +21,29 @@ type PositionPlan = {
   has_exit_plan?: boolean;
   missing_exit_plan?: boolean;
   exit_plan_source?: string;
+  protection_state?: string;
+  self_heal_attached_at?: string | null;
+  emergency_backfill?: boolean;
   unrealized_pl?: number | null;
 };
 
 function fmt(v: number | null | undefined): string {
   if (v === null || v === undefined || !Number.isFinite(Number(v))) return "—";
   return String(v);
+}
+
+function protectionBadge(p: PositionPlan) {
+  if (p.missing_exit_plan) {
+    return <span className="text-rose-300">unmanaged</span>;
+  }
+  const state = p.protection_state || p.exit_plan_source || "protected";
+  if (state === "emergency plan" || p.exit_plan_source === "emergency_backfill" || p.emergency_backfill) {
+    return <span className="text-amber-300">emergency plan</span>;
+  }
+  if (state === "recovered plan" || p.exit_plan_source === "recovered_signal") {
+    return <span className="text-cyan-300">recovered plan</span>;
+  }
+  return <span className="text-emerald-300">{state}</span>;
 }
 
 export function PositionMonitorPanel() {
@@ -63,12 +80,14 @@ export function PositionMonitorPanel() {
   const anyMissing = Boolean(data?.any_missing_exit_plan);
   const missingSymbols = (data?.missing_exit_plan_symbols as string[]) || [];
   const openCount = Number(data?.open_positions_count ?? positions.length);
+  const selfHeal = (data?.self_heal as Dict) || {};
+  const healDiag = (data?.self_heal_diagnostics as Dict) || {};
 
   return (
     <GlassPanel title="Position Monitor" icon={<Activity className="h-4 w-4" />}>
       <p className="text-[10px] text-slate-500 mb-3">
-        Per-position exit plans (entry / stop / target / trailing / max-hold). A position with no documented plan blocks
-        new entries. Exits route through the cage — paper sells only.
+        Per-position exit plans (entry / stop / target / trailing / max-hold). Unmanaged positions trigger automatic
+        self-heal each tick; emergency plans are paper-only backstops. Exits route through the cage — paper sells only.
       </p>
 
       <div className="flex flex-wrap items-center gap-2 mb-3 text-[10px]">
@@ -98,6 +117,25 @@ export function PositionMonitorPanel() {
         </button>
       </div>
 
+      {Boolean(selfHeal.last_result || healDiag.last_self_heal_at) && (
+        <div className="mb-3 rounded border border-white/10 bg-black/20 px-2 py-2 text-[10px] text-slate-400">
+          <span className="text-slate-300 font-semibold">Self-heal: </span>
+          {selfHeal.auto_heal_enabled === false ? "disabled" : "enabled"}
+          {selfHeal.last_result ? ` · last ${String(selfHeal.last_result)}` : ""}
+          {selfHeal.last_message ? ` — ${String(selfHeal.last_message)}` : ""}
+          {selfHeal.last_attempt_at ? ` (${String(selfHeal.last_attempt_at)})` : ""}
+          {typeof selfHeal.recovered_count === "number" || typeof selfHeal.emergency_count === "number" ? (
+            <span>
+              {" "}
+              · recovered {String(selfHeal.recovered_count ?? 0)} / emergency {String(selfHeal.emergency_count ?? 0)}
+            </span>
+          ) : null}
+          {typeof healDiag.unresolved_count === "number" && Number(healDiag.unresolved_count) > 0 ? (
+            <span className="text-rose-300"> · {String(healDiag.unresolved_count)} unresolved</span>
+          ) : null}
+        </div>
+      )}
+
       {positions.length === 0 ? (
         <p className="text-[10px] text-slate-500">No open positions — exit monitor idle.</p>
       ) : (
@@ -112,7 +150,7 @@ export function PositionMonitorPanel() {
                 <th className="py-1 pr-2">Target</th>
                 <th className="py-1 pr-2">Trail</th>
                 <th className="py-1 pr-2">Hard stop</th>
-                <th className="py-1 pr-2">Plan</th>
+                <th className="py-1 pr-2">Protection</th>
               </tr>
             </thead>
             <tbody className="text-slate-300">
@@ -125,13 +163,7 @@ export function PositionMonitorPanel() {
                   <td className="py-1 pr-2 tabular-nums">{fmt(p.take_profit)}</td>
                   <td className="py-1 pr-2 tabular-nums">{fmt(p.trailing_stop)}</td>
                   <td className="py-1 pr-2 tabular-nums">{fmt(p.hard_safety_stop_price)}</td>
-                  <td className="py-1 pr-2">
-                    {p.missing_exit_plan ? (
-                      <span className="text-rose-300">missing</span>
-                    ) : (
-                      <span className="text-emerald-300">{p.exit_plan_source || "ok"}</span>
-                    )}
-                  </td>
+                  <td className="py-1 pr-2">{protectionBadge(p)}</td>
                 </tr>
               ))}
             </tbody>

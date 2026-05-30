@@ -309,6 +309,11 @@ class FastCryptoTrainingLoop:
         phases: list[str] = []
         pf = self.training.preflight_training()
 
+        from app.services.exit_plan_self_heal_service import attempt_exit_plan_self_heal
+
+        self_heal = attempt_exit_plan_self_heal(self.session, self.config, operator=actor)
+        phases.append("exit_plan_self_heal")
+
         reviews = OpenPositionReviewService(self.session, self.config).review_all()
         phases.append("open_position_review")
 
@@ -382,6 +387,7 @@ class FastCryptoTrainingLoop:
                 "phases": phases,
                 "open_position_reviews": reviews,
                 "exit_monitor": exit_out,
+                "exit_plan_self_heal": self_heal,
                 "stale_reviews": stale_reviews,
                 "entries": entry_result,
                 "tick_summary": score_only,
@@ -401,6 +407,7 @@ class FastCryptoTrainingLoop:
             "phases": phases,
             "open_position_reviews": reviews,
             "exit_monitor": exit_out,
+            "exit_plan_self_heal": self_heal,
             "stale_reviews": stale_reviews,
             "entries": entry_result,
             "tick_summary": entry_result.get("tick_summary") or score_only,
