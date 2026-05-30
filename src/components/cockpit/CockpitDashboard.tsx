@@ -5,6 +5,7 @@ import { Brain, FlaskConical, RefreshCw, Shield } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { TickerSymbol } from "@/components/ui/TickerSymbol";
 import { CockpitFunnelBrain } from "@/components/cockpit/CockpitFunnelBrain";
+import { CockpitAutopilotChip } from "@/components/cockpit/CockpitAutopilotChip";
 import { apiGet, apiPostOperator } from "@/lib/apiClient";
 import { dispatchCockpitRefresh } from "@/lib/cockpitEvents";
 
@@ -176,7 +177,7 @@ export function CockpitDashboard() {
         )}
       </header>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
           onClick={load}
@@ -186,6 +187,7 @@ export function CockpitDashboard() {
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
           Refresh live
         </button>
+        <CockpitAutopilotChip />
       </div>
 
       <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">

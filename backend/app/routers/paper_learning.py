@@ -13,8 +13,9 @@ router = APIRouter(prefix="/api/paper-learning", tags=["paper-learning"])
 
 
 def _block_ai(body: dict) -> None:
-    actor = (body or {}).get("actor", "")
-    if str(actor).lower() in ("ai", "ai_advisory"):
+    from app.services.ai_boundaries import is_ai_actor
+
+    if is_ai_actor((body or {}).get("actor", "")):
         raise HTTPException(403, "AI cannot control paper learning endpoints")
 
 

@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 from sqlmodel import Session, select
 
-from app.database import ExecutionLog, OrderRecord, StrategySignal
+from app.database import ExecutionLog, OrderRecord, PositionSnapshot, StrategySignal
 from app.services.broker_safety import is_paper_broker_url, live_lock_status
 from app.services.capital_buckets import compute_buckets
 from app.services.cost_edge_gate import evaluate_cost_edge
@@ -16,6 +16,12 @@ from app.services.cooldown_service import CooldownService
 from app.services.engine_config import cfg_get, current_promotion_stage
 from app.services.scan_limits import zero_means_unlimited
 from app.services.kill_switch_service import KillSwitchService
+from app.services.paper_autopilot_caps import (
+    LIVE_OR_FILLED_STATUSES,
+    new_entries_this_hour,
+    new_entries_today,
+    resolve_cap,
+)
 from app.services.closing_position_preflight import (
     evaluate_full_position_exit_exemption,
     notional_from_candidate,
@@ -107,6 +113,68 @@ def _unlimited_int(value: Any) -> bool:
         return int(value) <= 0
     except (TypeError, ValueError):
         return False
+
+
+def _position_qty(p: Any) -> float:
+    try:
+        if isinstance(p, dict):
+            return float(p.get("qty", 0) or 0)
+        return float(getattr(p, "qty", 0) or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _position_symbol(p: Any) -> str:
+    try:
+        if isinstance(p, dict):
+            return str(p.get("symbol") or p.get("sym") or "").upper()
+        return str(getattr(p, "symbol", "") or "").upper()
+    except (TypeError, ValueError):
+        return ""
+
+
+def _held_qty_for_symbol(session: Session, positions: list, symbol: str) -> float:
+    """Largest known held qty for a symbol across broker positions + local snapshots.
+
+    Used for duplicate-buy / averaging-down prevention. We take the max (not the
+    sum) of the broker-position view and the local snapshot view so a stale row in
+    either source still blocks a re-buy, without double-counting.
+    """
+    target = (symbol or "").upper()
+    qty = 0.0
+    for p in positions or []:
+        if _position_symbol(p) == target:
+            qty = max(qty, _position_qty(p))
+    try:
+        rows = session.exec(
+            select(PositionSnapshot).where(
+                PositionSnapshot.symbol == symbol,
+                PositionSnapshot.qty > 0,
+            )
+        ).all()
+        for r in rows:
+            qty = max(qty, float(getattr(r, "qty", 0) or 0))
+    except Exception:
+        pass
+    return qty
+
+
+def _recent_buy_order_exists(session: Session, symbol: str, *, minutes: int) -> bool:
+    """True if a live/working or filled BUY order for this symbol exists within the window.
+
+    Guards the race where a fill hasn't yet propagated into a position snapshot but
+    we already committed capital to the symbol this session.
+    """
+    since = datetime.utcnow() - timedelta(minutes=max(1, minutes))
+    row = session.exec(
+        select(ExecutionLog).where(
+            ExecutionLog.symbol == symbol,
+            ExecutionLog.side == "buy",
+            ExecutionLog.status.in_(list(LIVE_OR_FILLED_STATUSES)),
+            ExecutionLog.submitted_at >= since,
+        )
+    ).first()
+    return row is not None
 
 
 def _has_exit_plan(sig: StrategySignal, meta: dict) -> bool:
@@ -230,6 +298,28 @@ def run_preflight(
     if _signal_already_submitted(session, cand.signal_id):
         return PreflightResult(False, "DUPLICATE_CLIENT_ORDER_ID", "Signal already submitted", evidence)
 
+    # ---- Duplicate-buy / averaging-down prevention (entries only; sells/exits allowed) ----
+    if cand.signal_type == "entry":
+        apl = config.get("autonomous_paper_learning") or {}
+        block_dupe = bool(apl.get("no_duplicate_symbol_buy", True)) or bool(apl.get("no_averaging_down", True))
+        if block_dupe:
+            held = _held_qty_for_symbol(session, positions, cand.symbol)
+            if held > 0:
+                return PreflightResult(
+                    False,
+                    "DUPLICATE_SYMBOL_POSITION",
+                    f"Already holding {cand.symbol} ({held:g}) — no duplicate buy / averaging down",
+                    {**evidence, "symbol": cand.symbol, "held_qty": held},
+                )
+            window_min = int(apl.get("duplicate_recent_order_window_minutes", 60) or 60)
+            if _recent_buy_order_exists(session, cand.symbol, minutes=window_min):
+                return PreflightResult(
+                    False,
+                    "DUPLICATE_RECENT_ORDER",
+                    f"Recent buy order for {cand.symbol} within {window_min}m",
+                    {**evidence, "symbol": cand.symbol, "recent_order_window_minutes": window_min},
+                )
+
     formula_paper_mode = bool(cfg_get(config, "autonomous_paper_learning.mode_enabled", False)) and bool(
         cfg_get(config, "autonomous_paper_learning.use_capital_allocator", True)
     )
@@ -248,6 +338,64 @@ def run_preflight(
     max_day = int(max_day_raw or 0)
     if not _unlimited_int(max_day_raw) and _orders_in_window(session, days=1) >= max_day:
         return PreflightResult(False, "ORDER_RATE_LIMIT_REACHED", "max_orders_per_day", evidence)
+
+    # ---- ABSOLUTE hard caps — enforced even in formula/allocator mode ----
+    # formula_paper_mode zeroes the soft caps above; these do NOT depend on it
+    # and can never be disabled to unlimited (see paper_autopilot_caps.py).
+    abs_cycle = resolve_cap(config, "absolute_max_orders_per_cycle")
+    if _cycle_orders(session, cycle_run_id) >= abs_cycle:
+        return PreflightResult(
+            False,
+            "ABSOLUTE_CYCLE_CAP",
+            f"Absolute cap: {abs_cycle} order(s) per cycle reached",
+            {**evidence, "absolute_max_orders_per_cycle": abs_cycle},
+        )
+
+    if cand.signal_type == "entry":
+        abs_open = resolve_cap(config, "absolute_max_open_positions")
+        open_count = len([p for p in (positions or []) if _position_qty(p) > 0])
+        if open_count >= abs_open:
+            return PreflightResult(
+                False,
+                "ABSOLUTE_MAX_OPEN_POSITIONS",
+                f"Absolute cap: {abs_open} open position(s) reached ({open_count} held)",
+                {**evidence, "absolute_max_open_positions": abs_open, "open_positions": open_count},
+            )
+
+        abs_hour = resolve_cap(config, "absolute_max_new_entries_per_hour")
+        if new_entries_this_hour(session) >= abs_hour:
+            return PreflightResult(
+                False,
+                "ABSOLUTE_HOURLY_ENTRY_CAP",
+                f"Absolute cap: {abs_hour} new entries/hour reached",
+                {**evidence, "absolute_max_new_entries_per_hour": abs_hour},
+            )
+
+        abs_day = resolve_cap(config, "absolute_max_new_entries_per_day")
+        if new_entries_today(session) >= abs_day:
+            return PreflightResult(
+                False,
+                "ABSOLUTE_DAILY_ENTRY_CAP",
+                f"Absolute cap: {abs_day} new entries/day reached",
+                {**evidence, "absolute_max_new_entries_per_day": abs_day},
+            )
+
+        # ---- Refuse new risk while an existing position is unmanaged (no exit plan) ----
+        apl = config.get("autonomous_paper_learning") or {}
+        if bool(apl.get("block_new_entry_if_unmanaged_position", True)):
+            try:
+                from app.services.exit_monitor_service import open_positions_missing_exit_plan
+
+                unmanaged = open_positions_missing_exit_plan(session, config, positions)
+            except Exception:
+                unmanaged = []
+            if unmanaged:
+                return PreflightResult(
+                    False,
+                    "OPEN_POSITION_MISSING_EXIT_PLAN",
+                    f"{len(unmanaged)} open position(s) lack an exit plan: {', '.join(unmanaged[:5])}",
+                    {**evidence, "unmanaged_positions": unmanaged},
+                )
 
     if not quote or quote.get("bid") is None or quote.get("ask") is None:
         return PreflightResult(False, "STALE_QUOTE", "No fresh quote", evidence)

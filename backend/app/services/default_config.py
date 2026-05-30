@@ -396,7 +396,7 @@ DEFAULT_CONFIG = {
     "autonomous_paper_learning": {
         "mode_enabled": False,
         "scheduler_enabled": False,
-        "scheduler_interval_seconds": 90,
+        "scheduler_interval_seconds": 600,
         "max_paper_trades_per_day": 0,
         "max_paper_notional_per_trade_usd": 0,
         "default_paper_notional_usd": 5,
@@ -408,8 +408,21 @@ DEFAULT_CONFIG = {
         "rejection_cooldown_minutes": 15,
         "max_scheduler_ticks_per_day": 0,
         "broker_error_pause_after": 3,
+        # --- ABSOLUTE hard caps (enforced even when use_capital_allocator=True) ---
+        # These survive opportunity-based/allocator mode, which zeroes the soft
+        # caps above. 0/negative falls back to the default — they can never be
+        # disabled to "unlimited". See app/services/paper_autopilot_caps.py.
+        "absolute_max_scheduler_ticks_per_day": 48,
+        "absolute_max_new_entries_per_day": 6,
+        "absolute_max_new_entries_per_hour": 2,
+        "absolute_max_orders_per_cycle": 1,
+        "absolute_max_open_positions": 3,
+        "auto_pause_after_consecutive_broker_errors": 3,
+        "auto_pause_after_consecutive_rejections": 3,
         "no_averaging_down": True,
         "no_duplicate_symbol_buy": True,
+        "duplicate_recent_order_window_minutes": 60,
+        "block_new_entry_if_unmanaged_position": True,
         "refresh_market_data_before_tick": True,
         "refresh_stocks_during_market_hours": True,
         "refresh_lookback_hours": 36,
@@ -418,6 +431,11 @@ DEFAULT_CONFIG = {
         "run_scanners_each_tick": True,
         "run_backtest_lab_every_n_ticks": 12,
         "backtest_lab_limit": 2,
+        # --- Optional daily export (off by default). When enabled the scheduler
+        # persists one compact diagnostics snapshot per day and prunes to the
+        # newest N; the full bundle is always available on demand. ---
+        "daily_export_enabled": False,
+        "daily_export_retention": 14,
     },
     "confidence": {
         "weights": {
