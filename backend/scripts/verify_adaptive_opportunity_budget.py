@@ -15,10 +15,25 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from sqlalchemy.pool import StaticPool
+from sqlmodel import Session, SQLModel, create_engine
+
+import app.database  # noqa: F401
+from app.database import PaperExperimentOutcome
 from app.services.adaptive_opportunity_budget import BudgetInputs, evaluate_opportunity_budget
-from app.services.paper_trade_protections import ProtectionContext, run_all_protections
+from app.services.paper_trade_protections import (
+    ProtectionContext,
+    collect_protection_context,
+    run_all_protections,
+)
 
 CFG: dict = {}
+
+
+def _mem_session() -> Session:
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(eng)
+    return Session(eng)
 
 
 def _inp(**kw) -> BudgetInputs:
@@ -92,7 +107,36 @@ def test_low_profit_symbol_blocked() -> None:
     print("budget: low-profit symbol cooldown blocked — PASS")
 
 
+def test_collector_reads_real_outcomes_not_execlog() -> None:
+    """Regression for Codex review: protections read PaperExperimentOutcome (which has
+    realized PnL / exit_reason), not ExecutionLog. With no outcomes, churn/low-profit
+    must NOT fire; profitable exits must NOT be counted flat; real fee-negative ones do."""
+    session = _mem_session()
+    # 1) Empty -> no flat/low-profit, no spurious block.
+    c0 = collect_protection_context(session, CFG, symbol="SOL/USD")
+    assert c0.recent_flat_trades == 0 and c0.symbol_trade_count == 0, c0
+    assert run_all_protections(c0, CFG).code not in ("CHURN_GUARD", "LOW_PROFIT_SYMBOL_COOLDOWN"), c0
+
+    # 2) Profitable exits -> positive net, zero flat, NOT churn/low-profit blocked.
+    for _ in range(4):
+        session.add(PaperExperimentOutcome(strategy_id="x", symbol="SOL/USD", realized_pnl=2.0, fees_estimated=0.2, exit_reason="take_profit"))
+    session.commit()
+    c1 = collect_protection_context(session, CFG, symbol="SOL/USD")
+    assert c1.recent_flat_trades == 0 and c1.symbol_net_pnl_usd > 0, c1
+    assert run_all_protections(c1, CFG).code not in ("CHURN_GUARD", "LOW_PROFIT_SYMBOL_COOLDOWN"), c1
+
+    # 3) Real fee-negative exits -> counted flat, guard fires.
+    for _ in range(4):
+        session.add(PaperExperimentOutcome(strategy_id="x", symbol="DOGE/USD", realized_pnl=0.0, fees_estimated=0.3, exit_reason="time"))
+    session.commit()
+    c2 = collect_protection_context(session, CFG, symbol="DOGE/USD")
+    assert c2.recent_flat_trades >= 4 and run_all_protections(c2, CFG).blocked, c2
+    session.close()
+    print("budget: protections read real outcomes (no false churn on empty/profitable) — PASS")
+
+
 if __name__ == "__main__":
+    test_collector_reads_real_outcomes_not_execlog()
     test_strong_allowed()
     test_weak_edge_blocked()
     test_weak_signal_blocked()

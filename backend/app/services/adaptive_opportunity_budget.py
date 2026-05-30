@@ -280,7 +280,15 @@ def collect_budget_inputs(
     cash = _num(getattr(account, "cash", None)) if account is not None else 0.0
     drawdown = abs(_num(getattr(account, "drawdown_pct", None))) if account is not None else 0.0
     unrealized = _num(getattr(account, "unrealized_pl", None)) if account is not None else 0.0
-    realized_today = _num(getattr(account, "realized_pl_today", None)) if account is not None else 0.0
+    # AccountSnapshot exposes daily_pl (not realized_pl_today). Use an explicit realized
+    # field when present, else fall back to daily_pl, so today's losses tighten the budget.
+    if account is not None:
+        _today_pl = getattr(account, "realized_pl_today", None)
+        if _today_pl is None:
+            _today_pl = getattr(account, "daily_pl", None)
+        realized_today = _num(_today_pl)
+    else:
+        realized_today = 0.0
 
     return BudgetInputs(
         symbol=symbol,

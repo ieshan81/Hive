@@ -27,8 +27,6 @@ from typing import Any, Optional
 
 from sqlmodel import Session, select
 
-from app.database import ExecutionLog
-
 
 # ─────────────────────────────────────────────────────────────────────────
 # Result + config
@@ -207,11 +205,6 @@ class ProtectionContext:
     warnings: list[str] = field(default_factory=list)
 
 
-def _exec_meta(row: Any) -> dict:
-    meta = getattr(row, "meta", None) or getattr(row, "evidence", None) or {}
-    return meta if isinstance(meta, dict) else {}
-
-
 def collect_protection_context(
     session: Session,
     config: dict,
@@ -233,14 +226,18 @@ def collect_protection_context(
 
     now = datetime.utcnow()
 
-    # Recent stop-loss exits (sell-side execution logs flagged as stop/invalidation).
+    # Realized exit outcomes (PnL, fees, exit_reason) live on PaperExperimentOutcome —
+    # ExecutionLog rows do NOT carry realized PnL/exit_reason, so reading them made every
+    # exit look fee-negative and spuriously tripped the churn / low-profit guards. Read the
+    # real outcomes here, and only count a trade as flat/fee-negative when a realized figure
+    # actually exists (missing data -> not counted, so guards never block on absence).
+    sym_norm = (symbol or "").upper().replace("/", "")
     try:
+        from app.database import PaperExperimentOutcome
+
         since = now - timedelta(hours=_num(cfg["stoploss_guard_lookback_hours"], 6.0))
         rows = session.exec(
-            select(ExecutionLog).where(
-                ExecutionLog.side == "sell",
-                ExecutionLog.submitted_at >= since,
-            )
+            select(PaperExperimentOutcome).where(PaperExperimentOutcome.created_at >= since)
         ).all()
         stops = 0
         last_exit_dt: Optional[datetime] = None
@@ -248,23 +245,20 @@ def collect_protection_context(
         sym_net = 0.0
         sym_trades = 0
         for r in rows:
-            meta = _exec_meta(r)
-            reason = str(meta.get("exit_reason") or meta.get("reason") or "").lower()
+            reason = str(getattr(r, "exit_reason", "") or "").lower()
             if any(k in reason for k in ("stop", "invalidat", "emergency")):
                 stops += 1
-            realized = _num(meta.get("realized_pnl") or meta.get("pnl"), 0.0)
-            fee = _num(meta.get("fees") or meta.get("fee"), 0.0)
-            net = realized - fee
-            if abs(net) < _num(meta.get("fee_breakeven_usd"), 0.01) or net < 0:
+            realized_raw = getattr(r, "realized_pnl", None)
+            net = _num(realized_raw, 0.0) - _num(getattr(r, "fees_estimated", None), 0.0)
+            if realized_raw is not None and net <= 0:
                 flat += 1
-            r_sym = str(getattr(r, "symbol", "") or "")
-            if r_sym.upper().replace("/", "") == (symbol or "").upper().replace("/", ""):
-                sym_net += net
-                sym_trades += 1
-            sub = getattr(r, "submitted_at", None)
-            if isinstance(sub, datetime) and (last_exit_dt is None or sub > last_exit_dt):
-                if r_sym.upper().replace("/", "") == (symbol or "").upper().replace("/", ""):
-                    last_exit_dt = sub
+            if str(getattr(r, "symbol", "") or "").upper().replace("/", "") == sym_norm:
+                if realized_raw is not None:
+                    sym_net += net
+                    sym_trades += 1
+                cat = getattr(r, "created_at", None)
+                if isinstance(cat, datetime) and (last_exit_dt is None or cat > last_exit_dt):
+                    last_exit_dt = cat
         ctx.recent_stop_exits = stops
         ctx.recent_flat_trades = flat
         ctx.symbol_net_pnl_usd = sym_net
