@@ -151,7 +151,8 @@ def latest_tick_card(session: Session) -> dict[str, Any]:
     if orders:
         why = "Approved and submitted to paper broker"
     elif approved:
-        why = "Entry approved — awaiting broker fill"
+        # Approved by the gate but no broker order — blocked downstream at preflight/cage.
+        why = "Candidate passed gates but no order submitted (blocked before broker)"
     elif top.get("no_trade_reason"):
         why = f"Skipped — {str(top.get('no_trade_reason')).replace('_', ' ')}"
     elif tick.get("plain"):
