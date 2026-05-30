@@ -371,14 +371,49 @@ def run_preflight(
                 {**evidence, "absolute_max_new_entries_per_hour": abs_hour},
             )
 
-        abs_day = resolve_cap(config, "absolute_max_new_entries_per_day")
-        if new_entries_today(session) >= abs_day:
-            return PreflightResult(
-                False,
-                "ABSOLUTE_DAILY_ENTRY_CAP",
-                f"Absolute cap: {abs_day} new entries/day reached",
-                {**evidence, "absolute_max_new_entries_per_day": abs_day},
+        # ---- Daily entry COUNT is telemetry only (no longer a hard blocker). ----
+        # The fixed "stop after N entries/day" cap has been replaced by the adaptive
+        # opportunity budget below. The count is surfaced for diagnostics/telemetry.
+        evidence["new_entries_today"] = new_entries_today(session)
+
+        # ---- Adaptive opportunity budget (risk budget + deterministic protections) ----
+        # Lets the bot keep trading when risk/edge/broker/protection checks pass; blocks
+        # on risk-budget exhaustion, drawdown, stop-loss streak, low-profit symbol,
+        # cooldown-after-exit, churn, or the generous orders/day circuit-breaker. This is
+        # an ADDITIONAL gate — every hard cage check above and below still runs.
+        try:
+            from app.services.adaptive_opportunity_budget import decide_entry
+
+            signal_score = None
+            try:
+                score_src = (meta.get("push_pull_score") or {}) if isinstance(meta, dict) else {}
+                if isinstance(score_src, dict):
+                    signal_score = score_src.get("score")
+                if signal_score is None and isinstance(meta, dict):
+                    signal_score = meta.get("signal_score") or meta.get("score")
+            except Exception:
+                signal_score = None
+
+            budget = decide_entry(
+                session,
+                config,
+                symbol=cand.symbol,
+                account=account,
+                positions=positions,
+                signal_score=signal_score,
             )
+            evidence["adaptive_opportunity_budget"] = budget.as_dict()
+            if not budget.allowed:
+                return PreflightResult(
+                    False,
+                    "ADAPTIVE_BUDGET_BLOCKED",
+                    f"Adaptive opportunity budget blocked entry: {budget.reason}",
+                    {**evidence, "adaptive_budget_reason": budget.reason},
+                )
+        except Exception as exc:
+            # Fail-open on the adaptive layer only: the hard cage gates still protect
+            # every order. The adaptive budget must never crash a preflight.
+            evidence["adaptive_opportunity_budget_error"] = type(exc).__name__
 
         # ---- Refuse new risk while an existing position is unmanaged (no exit plan) ----
         apl = config.get("autonomous_paper_learning") or {}

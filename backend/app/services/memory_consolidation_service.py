@@ -13,7 +13,10 @@ from app.services.lesson_memory_service import LessonMemoryService
 from app.services.memory_categories import (
     CATEGORY_AI_LEARNING,
     CATEGORY_RESEARCH,
+    CATEGORY_SYMBOL_PATTERN,
+    CATEGORY_SYSTEM,
     MEMORY_LEVEL_CONSOLIDATED,
+    MEMORY_LEVEL_PATTERN,
     MEMORY_LEVEL_RAW,
     OUTCOME_SOURCE_MEMORY_TYPES,
     RESEARCH_MEMORY_TYPES,
@@ -41,14 +44,17 @@ class MemoryConsolidationService:
 
     def status(self) -> dict[str, Any]:
         raw = self._raw_active()
-        consolidated = list(
-            self.session.exec(
-                select(LessonNode).where(
-                    LessonNode.memory_level.in_(("consolidated_lesson", "core_ai_lesson")),
-                    LessonNode.status == "active",
-                )
-            ).all()
-        )
+        active = list(self.session.exec(select(LessonNode).where(LessonNode.status == "active")).all())
+        consolidated = [r for r in active if r.memory_level in ("consolidated_lesson", "core_ai_lesson")]
+        patterns = [
+            r
+            for r in active
+            if r.memory_level == MEMORY_LEVEL_PATTERN
+            or r.category == CATEGORY_SYMBOL_PATTERN
+            or "pattern" in (r.memory_type or "")
+        ]
+        system_issues = [r for r in active if r.category == CATEGORY_SYSTEM]
+        nudges = [r for r in active if "nudge" in (r.memory_type or "") or r.category == "nudge"]
         archived = len(
             list(
                 self.session.exec(
@@ -59,8 +65,25 @@ class MemoryConsolidationService:
                 ).all()
             )
         )
+        # Candidate raw memories = those already clustering into a group of >=2
+        # (eligible to consolidate once the run thresholds are met).
+        candidate_count = sum(len(v) for v in self._group_raw(raw).values())
         total = len(raw) + len(consolidated)
         ratio = round(len(consolidated) / max(total, 1), 3)
+        should = self._should_run()
+
+        last_consolidation_at: Optional[str] = None
+        try:
+            last_run = self.session.exec(
+                select(SystemValidationAudit)
+                .where(SystemValidationAudit.action == "memory_consolidation_run")
+                .order_by(SystemValidationAudit.created_at.desc())
+            ).first()
+            if last_run and getattr(last_run, "created_at", None):
+                last_consolidation_at = last_run.created_at.isoformat() + "Z"
+        except Exception:
+            last_consolidation_at = None
+
         return {
             "status": "ok",
             "total_raw_memories": len(raw),
@@ -68,8 +91,29 @@ class MemoryConsolidationService:
             "archived_raw_memories": archived,
             "compression_ratio": ratio,
             "policy": self.policy,
-            "should_consolidate": self._should_run(),
+            "should_consolidate": should,
+            # --- Hive Mind diagnostics (TASK 7) ---
+            "raw_memory_count": len(raw),
+            "candidate_memory_count": candidate_count,
+            "consolidated_memory_count": len(consolidated),
+            "nudge_count": len(nudges),
+            "pattern_count": len(patterns),
+            "system_issue_count": len(system_issues),
+            "last_consolidation_at": last_consolidation_at,
+            "why_consolidation_skipped": None if should else self._why_skipped(raw),
         }
+
+    def _why_skipped(self, raw: list[LessonNode]) -> str:
+        total_t = int(self.policy.get("consolidation_threshold_total_raw_memories", 100))
+        per_t = int(self.policy.get("consolidation_threshold_per_strategy", 25))
+        by_strategy: dict[str, int] = defaultdict(int)
+        for r in raw:
+            by_strategy[r.strategy_name or "unknown"] += 1
+        max_strat = max(by_strategy.values(), default=0)
+        return (
+            f"raw {len(raw)}/{total_t} total and max {max_strat}/{per_t} per-strategy "
+            "below consolidation thresholds"
+        )
 
     def _raw_active(self) -> list[LessonNode]:
         return list(

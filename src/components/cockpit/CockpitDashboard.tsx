@@ -6,6 +6,7 @@ import { GlassPanel } from "@/components/ui/GlassPanel";
 import { TickerSymbol } from "@/components/ui/TickerSymbol";
 import { CockpitFunnelBrain } from "@/components/cockpit/CockpitFunnelBrain";
 import { CockpitAutopilotChip } from "@/components/cockpit/CockpitAutopilotChip";
+import { CockpitPortfolioHistory } from "@/components/cockpit/CockpitPortfolioHistory";
 import { apiGet, apiPostOperator } from "@/lib/apiClient";
 import { dispatchCockpitRefresh } from "@/lib/cockpitEvents";
 
@@ -219,6 +220,8 @@ export function CockpitDashboard() {
           </div>
         ))}
       </div>
+
+      <CockpitPortfolioHistory />
 
       <CockpitFunnelBrain funnel={f} blockers={data?.why_zero_shortlist} aiNote={data?.ai_cockpit_message} />
 

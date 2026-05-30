@@ -262,20 +262,6 @@ def _plain_tick_summary(
     score_note = ""
     if top_symbol and top_score is not None:
         score_note = f" Top scored {top_symbol} (quality {top_score:.2f})."
-    if orders:
-        return (
-            f"Scanned {symbols_scanned} symbols ({fresh} fresh bars) — paper order submitted ({orders})."
-            + score_note
-        )
-    if approved:
-        return f"Scanned {symbols_scanned} symbols ({fresh} fresh) — entry approved, awaiting fill." + score_note
-    if selected and selected.get("symbol"):
-        sel_reason = selected.get("no_trade_reason") or "gates passed but validator blocked"
-        return (
-            f"Scanned {symbols_scanned} symbols — best candidate {selected['symbol']} "
-            f"(score {selected.get('trade_quality_score', 0):.2f}) skipped: {sel_reason}."
-        )
-    parts = []
     label_map = {
         "no_push_signal": "no push signal",
         "spread_too_wide": "spread too wide",
@@ -289,7 +275,36 @@ def _plain_tick_summary(
         "negative_edge_after_cost": "negative edge after cost",
         "no_stock_strategy": "no stock paper strategy",
         "no_crypto_strategy": "no crypto paper strategy",
+        "adaptive_budget_blocked": "adaptive budget blocked",
+        "risk_blocked": "risk blocked",
+        "cooldown": "symbol/account cooldown",
+        "missing_exit_plan": "missing exit plan",
     }
+    if orders:
+        return (
+            f"Scanned {symbols_scanned} symbols ({fresh} fresh bars) — paper order submitted ({orders})."
+            + score_note
+        )
+    if approved:
+        # Approved by the portfolio gate but NO broker order was submitted — it was blocked
+        # downstream at the execution cage/preflight. Do not imply a fill is pending.
+        top_block = reasons.most_common(1)[0][0] if reasons else None
+        block_note = (
+            f" (blocked before submission: {label_map.get(top_block, top_block.replace('_', ' '))})"
+            if top_block
+            else " (no broker order submitted)"
+        )
+        return (
+            f"Scanned {symbols_scanned} symbols ({fresh} fresh) — candidate passed gates but no order submitted{block_note}."
+            + score_note
+        )
+    if selected and selected.get("symbol"):
+        sel_reason = selected.get("no_trade_reason") or "gates passed but validator blocked"
+        return (
+            f"Scanned {symbols_scanned} symbols — best candidate {selected['symbol']} "
+            f"(score {selected.get('trade_quality_score', 0):.2f}) skipped: {sel_reason}."
+        )
+    parts = []
     for code, n in reasons.most_common(8):
         parts.append(f"{n} {label_map.get(code, code.replace('_', ' '))}")
     detail = ", ".join(parts) if parts else "no stronger entry this tick"

@@ -74,12 +74,29 @@ def equity_curve(session: Session, limit: int = 120) -> dict[str, Any]:
             }
         ]
 
+    # Drawdown overlay + change summary for the cockpit Portfolio History card.
+    peak: Optional[float] = None
+    max_dd = 0.0
+    for p in points:
+        eq = float(p.get("equity") or 0)
+        peak = eq if peak is None else max(peak, eq)
+        dd = ((peak - eq) / peak * 100.0) if peak and peak > 0 else 0.0
+        p["drawdown_pct"] = round(dd, 3)
+        max_dd = max(max_dd, dd)
+    start_equity = float(points[0]["equity"]) if points else 0.0
+    current_equity = float(points[-1]["equity"]) if points else 0.0
+
     return {
         "status": "ok",
         "reset_epoch": epoch,
         "fresh_baseline_label": "Fresh paper baseline after reset",
         "points": points,
         "count": len(points),
+        "start_equity": round(start_equity, 2),
+        "current_equity": round(current_equity, 2),
+        "change_usd": round(current_equity - start_equity, 2),
+        "change_pct": round((current_equity - start_equity) / start_equity * 100.0, 3) if start_equity > 0 else None,
+        "max_drawdown_pct": round(max_dd, 3),
     }
 
 
@@ -90,6 +107,15 @@ def _post_nuke_trades(session: Session, epoch: Optional[dict]) -> list[TradeReco
     cutoff = epoch["nuke_completed_at"]
     try:
         cut = datetime.fromisoformat(str(cutoff).replace("Z", ""))
-        return [t for t in rows if t.created_at and t.created_at >= cut]
     except ValueError:
         return rows
+    # Crash-safe timestamp resolution: a trade with a None created_at still resolves
+    # via opened_at/closed_at (etc.) instead of being silently dropped.
+    from app.services.timestamp_safety import safe_record_timestamp
+
+    out: list[TradeRecord] = []
+    for t in rows:
+        ts = safe_record_timestamp(t)
+        if ts is not None and ts >= cut:
+            out.append(t)
+    return out

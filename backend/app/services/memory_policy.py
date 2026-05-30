@@ -9,9 +9,13 @@ from sqlmodel import Session, select
 from app.database import MemoryPolicyConfig
 
 DEFAULT_MEMORY_POLICY = {
-    "consolidation_threshold_total_raw_memories": 100,
-    "consolidation_threshold_per_strategy": 25,
-    "consolidation_threshold_same_type": 10,
+    # Lowered so a fresh paper bot actually forms learned memories during a run
+    # (the old 100/25/10 thresholds meant the Hive Mind stayed empty for days).
+    # Existing deployments with a persisted MemoryPolicyConfig row may need a reset
+    # to pick up these defaults.
+    "consolidation_threshold_total_raw_memories": 12,
+    "consolidation_threshold_per_strategy": 6,
+    "consolidation_threshold_same_type": 3,
     "archive_raw_after_consolidation": True,
     "raw_memory_retention_days": 30,
     "keep_audit_evidence_forever": True,
