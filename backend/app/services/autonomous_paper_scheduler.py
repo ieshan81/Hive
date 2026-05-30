@@ -110,10 +110,49 @@ class AutonomousPaperScheduler:
         except Exception:
             pass
 
+    def _effective_interval(self) -> tuple[int, int, Optional[str]]:
+        """Configured interval plus an effective interval that backs off (widens) when the
+        broker is unhealthy, so the scheduler *paces* itself rather than hard-stopping.
+        Pure read of config/state — the external cron drives the real cadence."""
+        configured = max(60, int(self.cfg.get("scheduler_interval_seconds", 600)))
+        err = int(self._state.get("broker_error_streak", 0))
+        rej = int(self._state.get("rejection_streak", 0))
+        worst = max(err, rej)
+        effective = configured
+        backoff_reason: Optional[str] = None
+        if worst > 0:
+            effective = min(configured * (1 + worst), configured * 8)
+            backoff_reason = f"broker_error_streak={err}" if err >= rej else f"rejection_streak={rej}"
+        return configured, int(effective), backoff_reason
+
+    def _adaptive_budget_summary(self) -> dict[str, Any]:
+        """Compact echo of the adaptive budget + protections config for status/diagnostics —
+        shows the fixed daily entry cap has been replaced by risk-based gating."""
+        apl = self.config.get("autonomous_paper_learning") or {}
+        ob = apl.get("opportunity_budget") or {}
+        pr = apl.get("protections") or {}
+        return {
+            "enabled": bool(ob.get("enabled", True)),
+            "replaces_fixed_daily_entry_cap": True,
+            "max_daily_risk_pct": ob.get("max_daily_risk_pct", 4.0),
+            "min_edge_after_cost_bps": ob.get("min_edge_after_cost_bps", 15.0),
+            "min_signal_score": ob.get("min_signal_score", 0.50),
+            "circuit_breaker_max_orders_per_day": ob.get("absolute_max_orders_per_day", 200),
+            "protections_enabled": bool(pr.get("enabled", True)),
+            "protections": [
+                "max_drawdown",
+                "stoploss_guard",
+                "low_profit_symbol",
+                "cooldown_after_exit",
+                "churn_guard",
+            ],
+        }
+
     def status(self) -> dict[str, Any]:
         self._reset_daily_if_needed()
         use_allocator = bool(self.cfg.get("use_capital_allocator", True))
-        interval = max(60, int(self.cfg.get("scheduler_interval_seconds", 600)))
+        configured_interval, effective_interval, backoff_reason = self._effective_interval()
+        interval = effective_interval
         last = self._state.get("last_tick_at")
         next_at = None
         if last and self._state.get("scheduler_enabled") and not self._state.get("paused"):
@@ -132,8 +171,12 @@ class AutonomousPaperScheduler:
             "scheduler_enabled": bool(self.cfg.get("scheduler_enabled")),
             "paused": bool(self._state.get("paused")),
             "paused_reason": self._state.get("paused_reason"),
-            "interval_seconds": interval,
+            "interval_seconds": configured_interval,
+            "configured_interval_seconds": configured_interval,
+            "effective_interval_seconds": effective_interval,
+            "backoff_reason": backoff_reason,
             "ticks_today": ticks_today,
+            "ticks_today_telemetry_only": True,
             "max_ticks_per_day": 0 if use_allocator else int(self.cfg.get("max_scheduler_ticks_per_day", 0) or 0),
             "absolute_max_scheduler_ticks_per_day": abs_tick_cap,
             "ticks_today_remaining": max(0, abs_tick_cap - ticks_today),
@@ -149,6 +192,7 @@ class AutonomousPaperScheduler:
             ),
             "use_capital_allocator": use_allocator,
             "live_locked": True,
+            "adaptive_opportunity_budget": self._adaptive_budget_summary(),
             **caps,
         }
 
@@ -210,38 +254,32 @@ class AutonomousPaperScheduler:
         if not apl_cfg.get("mode_enabled"):
             return {"status": "noop", "reason": "autonomous_paper_learning_off"}
 
-        # ---- Minimum tick spacing (cron only; supervised ticks/bursts bypass) ----
-        interval = max(60, int(apl_cfg.get("scheduler_interval_seconds", 600)))
+        # ---- Pacing (cron only; supervised ticks/bursts bypass) ----
+        # Min-interval + backoff prevents API/broker spam. This PACES (skips early) — it
+        # never hard-stops for the day, so the scheduler keeps scanning on cadence.
+        configured_interval, effective_interval, backoff_reason = self._effective_interval()
         if operator == "cron":
             last = self._state.get("last_tick_at")
             if last:
                 try:
                     last_dt = datetime.fromisoformat(str(last).replace("Z", ""))
                     elapsed = (datetime.utcnow() - last_dt).total_seconds()
-                    if elapsed < interval * 0.8:
+                    if elapsed < effective_interval * 0.8:
                         return {
                             "status": "skipped",
-                            "reason": "tick_interval_not_elapsed",
+                            "reason": "tick_paced",
                             "elapsed_seconds": round(elapsed, 1),
-                            "interval_seconds": interval,
+                            "configured_interval_seconds": configured_interval,
+                            "effective_interval_seconds": effective_interval,
+                            "backoff_reason": backoff_reason,
                         }
                 except ValueError:
                     pass
 
-        # ---- ABSOLUTE daily tick cap (enforced even under allocator/opportunity mode) ----
-        abs_tick_cap = resolve_cap(self.config, "absolute_max_scheduler_ticks_per_day")
-        if int(self._state.get("ticks_today", 0)) >= abs_tick_cap:
-            self._state["paused"] = True
-            self._state["paused_reason"] = "absolute_daily_tick_cap"
-            self._persist_state(operator)
-            stop_result = {
-                "status": "stopped",
-                "reason": "absolute_daily_tick_cap_reached",
-                "ticks_today": int(self._state.get("ticks_today", 0)),
-                "absolute_max_scheduler_ticks_per_day": abs_tick_cap,
-            }
-            self._journal_tick(operator, supervised, stop_result)
-            return stop_result
+        # ---- Tick COUNT is telemetry only — the daily tick cap no longer hard-pauses. ----
+        # Pacing/backoff above prevents spam; the scheduler keeps scanning all day. Order
+        # safety lives in the execution cage + adaptive opportunity budget (which gate every
+        # order), not in a tick counter. ticks_today is surfaced in status() for diagnostics.
 
         use_allocator = bool(apl_cfg.get("use_capital_allocator", True))
         max_ticks = int(apl_cfg.get("max_scheduler_ticks_per_day", 0) or 0)

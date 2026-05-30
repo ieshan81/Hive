@@ -408,17 +408,50 @@ DEFAULT_CONFIG = {
         "rejection_cooldown_minutes": 15,
         "max_scheduler_ticks_per_day": 0,
         "broker_error_pause_after": 3,
-        # --- ABSOLUTE hard caps (enforced even when use_capital_allocator=True) ---
-        # These survive opportunity-based/allocator mode, which zeroes the soft
-        # caps above. 0/negative falls back to the default — they can never be
-        # disabled to "unlimited". See app/services/paper_autopilot_caps.py.
-        "absolute_max_scheduler_ticks_per_day": 48,
-        "absolute_max_new_entries_per_day": 6,
-        "absolute_max_new_entries_per_hour": 2,
-        "absolute_max_orders_per_cycle": 1,
-        "absolute_max_open_positions": 3,
+        # --- Hard safety caps + telemetry references (survive allocator mode) ---
+        # Open-positions, per-hour entry, and per-cycle caps remain HARD blocks in the
+        # execution cage. The two DAILY COUNT values below are now TELEMETRY / circuit
+        # references only — the fixed "stop after N entries/ticks per day" behaviour was
+        # replaced by the adaptive opportunity budget (opportunity_budget below) plus
+        # scheduler pacing/backoff. They are kept generous so they never act as a daily
+        # stop; the real safety ceiling is opportunity_budget.absolute_max_orders_per_day.
+        "absolute_max_scheduler_ticks_per_day": 1000,   # telemetry only; pacing controls cadence
+        "absolute_max_new_entries_per_day": 200,        # telemetry only; adaptive budget gates entries
+        "absolute_max_new_entries_per_hour": 6,         # HARD anti-spam pacing cap (raised from 2)
+        "absolute_max_orders_per_cycle": 1,             # HARD per-cycle cap
+        "absolute_max_open_positions": 3,               # HARD cap (kept)
         "auto_pause_after_consecutive_broker_errors": 3,
         "auto_pause_after_consecutive_rejections": 3,
+        # --- Adaptive opportunity budget (replaces the fixed daily trade-count cap) ---
+        # app/services/adaptive_opportunity_budget.py — risk-based gate for one new entry.
+        # The circuit-breaker is a generous safety ceiling, NOT a strategy trade cap.
+        "opportunity_budget": {
+            "enabled": True,
+            "max_daily_risk_pct": 4.0,
+            "max_open_risk_pct": 4.0,
+            "min_edge_after_cost_bps": 15.0,
+            "min_signal_score": 0.50,
+            "default_trade_risk_pct": 1.0,
+            "absolute_max_orders_per_day": 200,
+            "max_broker_error_streak": 3,
+            "max_rejection_streak": 3,
+        },
+        # --- Deterministic protections (Freqtrade-style concepts; no dependency) ---
+        # app/services/paper_trade_protections.py — entry-only; exits never affected.
+        "protections": {
+            "enabled": True,
+            "max_drawdown_block_pct": 12.0,
+            "stoploss_guard_lookback_hours": 6.0,
+            "stoploss_guard_max_stops": 3,
+            "low_profit_min_trades": 3,
+            "low_profit_net_threshold_usd": 0.0,
+            "low_profit_cooldown_hours": 12.0,
+            "cooldown_after_exit_minutes": 30,
+            "cooldown_strong_signal_score": 0.80,
+            "churn_lookback_hours": 6.0,
+            "churn_max_flat_trades": 4,
+            "churn_required_edge_after_cost_bps": 40.0,
+        },
         "no_averaging_down": True,
         "no_duplicate_symbol_buy": True,
         "duplicate_recent_order_window_minutes": 60,
