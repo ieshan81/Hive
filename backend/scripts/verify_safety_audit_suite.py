@@ -18,6 +18,8 @@ SCRIPTS = [
     "verify_meme_spike_timeframes.py",
     "verify_quote_age_not_hardcoded.py",
     "verify_exit_monitor_single_call.py",
+    "verify_exit_plan_self_healing.py",
+    "verify_paper_exit_monitor.py",
 ]
 
 

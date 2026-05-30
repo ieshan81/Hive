@@ -119,7 +119,7 @@ def test_exit_monitor_status_paper_locked() -> None:
     finally:
         ems.AlpacaAdapter, ems.TrainingExecutionService = orig_alpaca, orig_tes
 
-    assert st["schema_version"] == 2, st
+    assert st["schema_version"] == 3, st
     assert st["live_locked"] is True, st
     assert st["broker_mode"] == "paper", st
     assert st["open_positions_count"] == 1, st

@@ -19,6 +19,7 @@ from app.database import ExecutionLog, PositionSnapshot, StrategySignal
 from app.services.alpaca_adapter import AlpacaAdapter
 from app.services.config_manager import ConfigManager
 from app.services.paper_autopilot_caps import LIVE_OR_FILLED_STATUSES
+from app.services.symbol_normalize import symbol_variants, symbols_match
 from app.services.training_execution_service import TrainingExecutionService
 
 
@@ -50,26 +51,32 @@ def _entry_context_for_symbol(session: Session, symbol: str):
     """Return (StrategySignal | None, ExecutionLog | None) for the latest entry of a held symbol.
 
     Prefers the signal tied to the most recent live/filled BUY execution log;
-    falls back to the latest entry signal row for the symbol.
+    falls back to the latest entry signal row for the symbol (variant-aware).
     """
-    log = session.exec(
-        select(ExecutionLog)
-        .where(
-            ExecutionLog.symbol == symbol,
-            ExecutionLog.side == "buy",
-            ExecutionLog.status.in_(list(LIVE_OR_FILLED_STATUSES)),
-        )
-        .order_by(ExecutionLog.submitted_at.desc(), ExecutionLog.id.desc())
-    ).first()
+    variants = {v.upper() for v in symbol_variants(symbol)}
+    logs = list(
+        session.exec(
+            select(ExecutionLog)
+            .where(
+                ExecutionLog.side == "buy",
+                ExecutionLog.status.in_(list(LIVE_OR_FILLED_STATUSES)),
+            )
+            .order_by(ExecutionLog.submitted_at.desc(), ExecutionLog.id.desc())
+        ).all()
+    )
+    log = next((row for row in logs if str(row.symbol or "").upper() in variants), None)
     sig = None
     if log is not None and log.signal_id is not None:
         sig = session.get(StrategySignal, log.signal_id)
     if sig is None:
-        sig = session.exec(
-            select(StrategySignal)
-            .where(StrategySignal.symbol == symbol, StrategySignal.signal_type == "entry")
-            .order_by(StrategySignal.created_at.desc())
-        ).first()
+        rows = list(
+            session.exec(
+                select(StrategySignal)
+                .where(StrategySignal.signal_type == "entry")
+                .order_by(StrategySignal.created_at.desc())
+            ).all()
+        )
+        sig = next((row for row in rows if symbols_match(row.symbol or "", symbol)), None)
     return sig, log
 
 
@@ -126,6 +133,27 @@ def resolve_exit_plan(
         ]
     )
 
+    exit_plan_source = "none"
+    if documented and sig is not None:
+        stored_source = str(meta.get("exit_plan_source") or "").strip()
+        if meta.get("emergency_backfill") or stored_source == "emergency_backfill":
+            exit_plan_source = "emergency_backfill"
+        elif meta.get("self_heal_recovered") or stored_source == "recovered_signal":
+            exit_plan_source = "recovered_signal"
+        elif stored_source and stored_source not in ("none", ""):
+            exit_plan_source = stored_source
+        else:
+            exit_plan_source = "entry_signal"
+
+    protection_state = "unmanaged"
+    if documented:
+        if exit_plan_source == "emergency_backfill":
+            protection_state = "emergency plan"
+        elif exit_plan_source == "recovered_signal":
+            protection_state = "recovered plan"
+        else:
+            protection_state = "protected"
+
     return {
         "symbol": symbol,
         "entry_price": entry_price,
@@ -141,7 +169,10 @@ def resolve_exit_plan(
         "hard_safety_stop_price": hard_safety_stop_price,
         "has_exit_plan": bool(documented),
         "missing_exit_plan": not bool(documented),
-        "exit_plan_source": "entry_signal" if (documented and sig is not None) else "none",
+        "exit_plan_source": exit_plan_source,
+        "protection_state": protection_state,
+        "self_heal_attached_at": meta.get("self_heal_attached_at"),
+        "emergency_backfill": bool(meta.get("emergency_backfill")),
         "signal_id": getattr(sig, "id", None),
     }
 
@@ -204,9 +235,13 @@ def exit_monitor_status(session: Session, config: Optional[dict] = None) -> dict
     block_unmanaged = bool(
         (cfg.get("autonomous_paper_learning") or {}).get("block_new_entry_if_unmanaged_position", True)
     )
+    from app.services.exit_plan_self_heal_service import latest_self_heal_status, self_heal_diagnostics
+
+    self_heal = latest_self_heal_status(session) or {}
+    heal_diag = self_heal_diagnostics(session, cfg)
     return {
         "status": "ok",
-        "schema_version": 2,
+        "schema_version": 3,
         "exit_monitor_enabled": True,
         "require_exit_monitor": require_monitor,
         "block_new_entry_if_unmanaged_position": block_unmanaged,
@@ -215,6 +250,17 @@ def exit_monitor_status(session: Session, config: Optional[dict] = None) -> dict
         "any_missing_exit_plan": bool(missing_symbols),
         "missing_exit_plan_symbols": missing_symbols,
         "latest_monitor_run": monitor,
+        "self_heal": {
+            "auto_heal_enabled": heal_diag.get("auto_heal_enabled"),
+            "last_attempt_at": self_heal.get("finished_at"),
+            "last_result": self_heal.get("status"),
+            "last_message": self_heal.get("message"),
+            "attempted": self_heal.get("attempted"),
+            "recovered_count": self_heal.get("recovered_count"),
+            "emergency_count": self_heal.get("emergency_count"),
+            "unresolved_count": heal_diag.get("unmanaged_count"),
+        },
+        "self_heal_diagnostics": heal_diag,
         "live_locked": True,
         "broker_mode": "paper",
         "plain": (

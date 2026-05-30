@@ -207,13 +207,22 @@ def daily_diagnostics(session: Session, config: Optional[dict] = None, *, days: 
             agg["pause_reasons"][pr] = agg["pause_reasons"].get(pr, 0) + 1
 
     days_list = [by_day[k] for k in sorted(by_day.keys(), reverse=True)]
+    from app.services.exit_plan_self_heal_service import self_heal_diagnostics
+
+    heal = self_heal_diagnostics(session, config)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at": _now_iso(),
         "window_days": days,
         "totals": totals,
         "days": days_list,
         "live_locked": True,
+        "operations_brain": heal,
+        "unmanaged_positions": heal.get("unmanaged_positions") or [],
+        "self_heal_attempts": heal.get("self_heal_attempts") or 0,
+        "recovered_exit_plans": heal.get("recovered_exit_plans") or [],
+        "emergency_exit_plans": heal.get("emergency_exit_plans") or [],
+        "unresolved_positions": heal.get("unresolved_positions") or [],
     }
 
 
@@ -266,6 +275,15 @@ def _exit_monitor_status(session: Session, config: Optional[dict]) -> dict[str, 
         return {"error": f"{type(exc).__name__}: {exc}"}
 
 
+def _self_heal_diagnostics(session: Session, config: Optional[dict]) -> dict[str, Any]:
+    try:
+        from app.services.exit_plan_self_heal_service import self_heal_diagnostics
+
+        return self_heal_diagnostics(session, config)
+    except Exception as exc:  # pragma: no cover - defensive
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
 def _ai_boundaries_section() -> dict[str, Any]:
     from app.services.ai_boundaries import (
         AI_CAPABILITIES,
@@ -287,6 +305,7 @@ _README = (
     "Contents:\n"
     "- `scheduler_status.json` — current scheduler state, interval, and ABSOLUTE caps.\n"
     "- `exit_monitor_status.json` — per-position exit plans / missing-exit-plan flags.\n"
+    "- `self_heal_diagnostics.json` — operations brain self-heal status.\n"
     "- `daily_diagnostics.json` — per-day tick/order/rejection/pause aggregates.\n"
     "- `run_journal.json` — compact per-tick journal (newest first).\n"
     "- `recent_execution_logs.json` — recent paper execution-log rows.\n"
@@ -314,6 +333,7 @@ def paper_autopilot_bundle(session: Session, config: Optional[dict] = None) -> d
         },
         "paper_autopilot/scheduler_status.json": _scheduler_status(session, config),
         "paper_autopilot/exit_monitor_status.json": _exit_monitor_status(session, config),
+        "paper_autopilot/self_heal_diagnostics.json": _self_heal_diagnostics(session, config),
         "paper_autopilot/daily_diagnostics.json": daily_diagnostics(session, config),
         "paper_autopilot/run_journal.json": recent_journal(session, limit=500),
         "paper_autopilot/recent_execution_logs.json": _recent_execution_logs(session),
