@@ -28,21 +28,14 @@ def latest_review(session: Session = Depends(get_session)):
 
 @router.get("/capabilities")
 def capabilities():
+    """Mirror the single source of truth in app.services.ai_boundaries verbatim."""
+    from app.services.ai_boundaries import AI_CAPABILITIES
+
     return {
         "status": "ok",
-        "can_submit_orders": False,
-        "can_cancel_orders": False,
-        "can_liquidate_positions": False,
-        "can_change_live_lock": False,
-        "can_disable_kill_switch": False,
-        "can_apply_config_directly": False,
-        "can_write_pending_memories": True,
-        "can_propose_param_changes": True,
-        "can_propose_backtests": True,
-        "can_explain_trade_outcomes": True,
-        "validator_required_for_proposals": True,
-        "max_param_delta_per_cycle_pct": 50,
-        "role": "advisory_reviewer_only",
+        **AI_CAPABILITIES,
+        # Back-compat alias for older frontend consumers.
+        "can_explain_trade_outcomes": AI_CAPABILITIES["can_summarize_or_explain"],
     }
 
 
@@ -79,8 +72,10 @@ def approve_proposal(
     _op: str = Depends(require_operator_token),
 ):
     """Operator approves an AI proposal. Validator must pass before any config change is applied."""
+    from app.services.ai_boundaries import is_ai_actor
+
     actor = (body or {}).get("actor", "operator")
-    if str(actor).lower() in ("ai", "gemini", "ai_advisor"):
+    if is_ai_actor(actor):
         raise HTTPException(403, "AI cannot self-approve proposals")
     return {
         "status": "ok",
