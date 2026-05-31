@@ -20,10 +20,19 @@ const ORDER_STATUS_LABELS: Record<string, string> = {
 };
 
 const ORDER_TYPE_LABELS: Record<string, string> = {
-  marketable_limit_ioc: "Instant market-price limit order",
-  limit: "Limit order",
-  market: "Market order",
+  limit_ioc: "IOC limit",
+  marketable_limit_ioc: "IOC marketable limit",
+  limit: "Limit",
+  market: "Market",
 };
+
+/** First value that is not null/undefined/empty-string; else null. */
+export function firstPresent(...vals: unknown[]): unknown {
+  for (const v of vals) {
+    if (v !== null && v !== undefined && v !== "") return v;
+  }
+  return null;
+}
 
 const REJECTED = new Set([
   "paper_order_rejected",
@@ -120,17 +129,32 @@ export function enrichExecutionRow(row: Record<string, unknown>): Record<string,
 }
 
 export function enrichOrderRecord(row: Record<string, unknown>): Record<string, unknown> {
-  const status = String(row.status ?? "");
+  const status = String(firstPresent(row.status, row.broker_status, row.outcome) ?? "");
   const brokerId = row.broker_order_id ?? row.brokerOrderId ?? row.alpaca_order_id;
   const rejected = isRejectedStatus(status) || status.toLowerCase().includes("reject");
-  const filled = status.toLowerCase() === "filled";
+  const lower = status.toLowerCase();
+  const filled = lower === "filled" || lower === "paper_order_filled";
   const side = String(row.side ?? "");
+  // API rows expose type/filled_qty/requested_qty (not order_type/qty) — map via fallback chains.
+  const orderType = firstPresent(row.order_type, row.type, row.orderType, row.order_class);
+  const qtyVal = firstPresent(row.filled_qty, row.qty, row.requested_qty, row.submitted_qty, row.broker_qty);
+  const priceVal = firstPresent(
+    row.filled_avg_price,
+    row.avg_fill_price,
+    row.avg_entry,
+    row.limit_price,
+    row.current_price
+  );
+  const timeVal = firstPresent(row.filled_at, row.submitted_at, row.created_at, row.timestamp);
   return {
     ...row,
     status_label: filled ? "Filled" : rejected ? "Rejected" : orderStatusLabel(status),
-    order_type_label: orderTypeLabel(String(row.order_type ?? row.orderType ?? "")),
-    qty_display: formatDecimal(row.qty),
-    filled_avg_price_display: formatDecimal(row.filled_avg_price ?? row.filledAvgPrice),
+    order_type_label: orderType ? orderTypeLabel(String(orderType)) : "—",
+    qty_display: formatDecimal(qtyVal),
+    requested_qty_display: formatDecimal(qtyVal),
+    filled_avg_price_display: formatDecimal(priceVal),
+    limit_price_display: formatDecimal(firstPresent(row.limit_price, row.limitPrice)),
+    time_display: timeVal != null ? String(timeVal) : "—",
     outcome_bucket: orderOutcomeBucket(status, !!brokerId),
     is_rejected: rejected,
     looks_like_closed_position: rejected && side.toLowerCase() === "sell",
