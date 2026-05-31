@@ -12,40 +12,92 @@ from app.database import AIReview, SymbolCandidate
 from app.services.config_manager import ConfigManager
 
 
+def _sentiment_display(config: dict, sources_payload: dict, diagnostics: dict) -> tuple[str, str, str]:
+    """Return (display_title, display_subtitle, wiring_state)."""
+    fin = sources_payload.get("sources", {}).get("finbert", {})
+    news = sources_payload.get("sources", {}).get("news_feed", {})
+    fin_active = bool(fin.get("active"))
+    news_wired = bool(news.get("provider_wired"))
+    scored_count = int(diagnostics.get("latest_scored_symbols_count") or 0)
+    used_in_ranking = bool(diagnostics.get("sentiment_used_in_ranking"))
+    max_pct = diagnostics.get("max_sentiment_adjustment_pct", 10)
+
+    if not fin.get("wired"):
+        return (
+            "Configured but not wired end-to-end.",
+            "Sentiment service imports or endpoints are incomplete.",
+            "not_wired",
+        )
+
+    if fin_active and scored_count > 0 and used_in_ranking:
+        return (
+            f"Sentiment active: ranking modifier only, max ±{max_pct}%.",
+            "Headlines scored via FinBERT; never permits trades or bypasses execution cage.",
+            "active_ranking",
+        )
+
+    if (fin_active or news_wired) and scored_count == 0:
+        return (
+            "Sources active, no recent symbol sentiment yet.",
+            "Run POST /api/sentiment/refresh or wait for scanner scoring to populate cache.",
+            "sources_only",
+        )
+
+    if fin_active or news_wired:
+        return (
+            "Sources active, sentiment pipeline ready.",
+            f"Ranking influence capped at ±{max_pct}%; advisory only.",
+            "ready",
+        )
+
+    return (
+        "Sentiment sources inactive.",
+        "Configure Alpaca credentials and FinBERT (local or FINBERT_SERVICE_URL).",
+        "inactive",
+    )
+
+
 def sentiment_status(session: Session, config: Optional[dict] = None) -> dict[str, Any]:
     cfg = config or ConfigManager(session).get_current()
     sources_payload = sentiment_sources(session, cfg)
+    from app.services.sentiment_service import sentiment_diagnostics
+
+    diagnostics = sentiment_diagnostics(cfg)
     fin = sources_payload.get("sources", {}).get("finbert", {})
+    display_title, display_subtitle, wiring_state = _sentiment_display(cfg, sources_payload, diagnostics)
+    influence = bool((cfg.get("sentiment") or {}).get("influence_ranking", True))
+
     return {
         "status": "ok",
         "generated_at_utc": datetime.utcnow().isoformat() + "Z",
-        "sentiment_affects_ranking": bool((cfg.get("sentiment") or {}).get("influence_ranking")),
+        "display_title": display_title,
+        "display_subtitle": display_subtitle,
+        "wiring_state": wiring_state,
+        "sentiment_affects_ranking": influence and bool(diagnostics.get("finbert_model_loaded")),
         "sentiment_affects_trading": False,
         "sentiment_can_place_trades": False,
-        "sentiment_influence_ranking": bool((cfg.get("sentiment") or {}).get("influence_ranking")),
+        "sentiment_influence_ranking": influence,
         "sentiment_influence_trading": False,
         "overall_active": bool(fin.get("active")),
         "max_adjustment_pct": (cfg.get("sentiment") or {}).get("max_adjustment_pct", 10),
         "finbert": {
             "implemented": True,
-            "worker_url_configured": fin.get("worker_url_configured", False),
-            "worker_connected": fin.get("worker_connected", False),
-            "model_loaded": fin.get("model_loaded", False),
+            "worker_url_configured": diagnostics.get("finbert_worker_configured", False),
+            "worker_connected": diagnostics.get("finbert_worker_connected", False),
+            "model_loaded": diagnostics.get("finbert_model_loaded", False),
             "active": fin.get("active", False),
         },
-        "message": "Sentiment adjusts ranking only (capped). Never permits trades.",
+        "message": display_subtitle,
         "sources": sources_payload.get("sources"),
+        "diagnostics": diagnostics,
     }
 
 
 def sentiment_sources(session: Session, config: Optional[dict] = None) -> dict[str, Any]:
     cfg = config or ConfigManager(session).get_current()
-    import os
     try:
         from app.services.sentiment_service import FinBERTScorer
-        from app.services.finbert_client import finbert_health
-
-        from app.services.finbert_client import finbert_service_url
+        from app.services.finbert_client import finbert_health, finbert_service_url
 
         remote = finbert_health()
         worker_url = bool(finbert_service_url())
@@ -59,10 +111,13 @@ def sentiment_sources(session: Session, config: Optional[dict] = None) -> dict[s
         model_loaded = False
         finbert_active = False
 
-    # News provider can be configured even when FinBERT is unavailable; we keep truth explicit:
-    # provider_wired may be true, but sentiment_scoring is inactive without FinBERT.
     news_provider_wired = bool(settings.alpaca_configured)
     news_active = bool(news_provider_wired and finbert_active)
+
+    from app.services.sentiment_service import get_sentiment_cache_snapshot, sentiment_ranking_enabled
+
+    cache = get_sentiment_cache_snapshot()
+    ranking_on = sentiment_ranking_enabled(cfg)
 
     return {
         "status": "ok",
@@ -78,8 +133,12 @@ def sentiment_sources(session: Session, config: Optional[dict] = None) -> dict[s
                 "model": "ProsusAI/finbert",
                 "reason": (
                     "FinBERT microservice connected."
-                    if finbert_active
-                    else "Implemented; inactive until FINBERT_SERVICE_URL healthy or local transformers."
+                    if worker_connected
+                    else (
+                        "FinBERT local transformers available."
+                        if model_loaded and not worker_connected
+                        else "Implemented; inactive until FINBERT_SERVICE_URL healthy or local transformers."
+                    )
                 ),
             },
             "news_feed": {
@@ -100,9 +159,13 @@ def sentiment_sources(session: Session, config: Optional[dict] = None) -> dict[s
                 ),
             },
             "symbol_candidate_score": {
-                "active": False,
+                "active": len(cache) > 0 and ranking_on,
                 "wired": True,
-                "reason": "Computed on-demand by sentiment_service.score_symbol_sentiment().",
+                "reason": (
+                    f"On-demand scoring cached for {len(cache)} symbol(s); ranking modifier only."
+                    if cache
+                    else "Computed on-demand by sentiment_service.score_symbol_sentiment().",
+                ),
             },
             "gemini_advisor": {
                 "active": settings.gemini_configured and bool(cfg.get("ai_enabled", True)),
@@ -115,21 +178,41 @@ def sentiment_sources(session: Session, config: Optional[dict] = None) -> dict[s
 
 
 def sentiment_latest(session: Session, config: Optional[dict] = None) -> dict[str, Any]:
-    cfg = config or ConfigManager(session).get_current()
-    rows = list(
+    from app.services.sentiment_service import get_sentiment_cache_snapshot
+
+    cache = get_sentiment_cache_snapshot()
+    db_rows = list(
         session.exec(
             select(SymbolCandidate).where(SymbolCandidate.sentiment_score.is_not(None)).limit(20)
         ).all()
     )
+    cached_scores = [
+        {
+            "symbol": sym,
+            "score": row.get("sentiment_score"),
+            "alignment": row.get("sentiment_alignment"),
+            "headline_count": row.get("headline_count"),
+            "model_used": row.get("model_used"),
+            "scored_at": row.get("scored_at"),
+            "source": "sentiment_cache",
+        }
+        for sym, row in cache.items()
+    ]
+    db_scores = [
+        {"symbol": r.symbol, "score": r.sentiment_score, "source": r.source or "symbol_candidate"}
+        for r in db_rows
+    ]
+    merged = cached_scores or db_scores
     return {
         "status": "ok",
         "generated_at_utc": datetime.utcnow().isoformat() + "Z",
-        "symbol_scores": [
-            {"symbol": r.symbol, "score": r.sentiment_score, "source": r.source}
-            for r in rows
-        ],
-        "count": len(rows),
-        "note": "Empty list is expected — sentiment scoring is not active.",
+        "symbol_scores": merged,
+        "count": len(merged),
+        "note": (
+            "Live cache from score_symbol_sentiment(); ranking-only influence."
+            if cached_scores
+            else ("DB symbol_candidate rows only." if db_scores else "No scored symbols yet — run /api/sentiment/refresh.")
+        ),
     }
 
 

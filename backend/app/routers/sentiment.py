@@ -28,7 +28,7 @@ def latest(session: Session = Depends(get_session)):
     return sentiment_latest(session)
 
 
-@router.get("/symbol/{symbol}")
+@router.get("/symbol/{symbol:path}")
 def symbol_score(symbol: str, side: str = Query(default="buy")):
     """Live FinBERT + Alpaca news score for one symbol. Capped influence ±10%."""
     from app.services.sentiment_service import score_symbol_sentiment

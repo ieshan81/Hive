@@ -173,8 +173,15 @@ export function AIManagerLearningPanel() {
         </GlassPanel>
 
         <GlassPanel title="Sentiment" icon={<Sparkles className="h-4 w-4 text-slate-500" />}>
-          <p className="text-sm text-slate-400">{String(sentiment?.display_title ?? "Sentiment Intelligence: Not wired yet")}</p>
-          <p className="text-[11px] text-slate-600 mt-1">{String(sentiment?.display_subtitle ?? "")}</p>
+          <p className="text-sm text-slate-300">{String(sentiment?.display_title ?? "Sentiment status loading…")}</p>
+          <p className="text-[11px] text-slate-500 mt-1">{String(sentiment?.display_subtitle ?? sentiment?.message ?? "")}</p>
+          {sentiment?.diagnostics ? (
+            <p className="text-[10px] text-slate-600 mt-2">
+              Scored symbols: {String((sentiment.diagnostics as Record<string, unknown>)?.latest_scored_symbols_count ?? 0)} ·
+              ranking influence: {sentiment.sentiment_influence_ranking ? "on" : "off"} · max ±
+              {String(sentiment.max_adjustment_pct ?? 10)}%
+            </p>
+          ) : null}
         </GlassPanel>
 
         <GlassPanel title="Memory Graph" icon={<Network className="h-4 w-4" />} className="md:col-span-2">

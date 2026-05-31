@@ -22,6 +22,8 @@ from typing import Any, Optional
 
 from sqlmodel import Session
 
+from app.services.config_manager import ConfigManager
+
 logger = logging.getLogger(__name__)
 
 
@@ -208,11 +210,22 @@ def _scan_push_pull(session: Session, symbols: list[str]) -> dict[str, Any]:
             scores[sym] = {"reason": "no_bars"}
             continue
         regime = classify_regime(bars_1m)
+        sentiment_alignment = 0.0
+        try:
+            from app.services.sentiment_service import resolve_sentiment_for_ranking
+
+            sent = resolve_sentiment_for_ranking(
+                ConfigManager(session).get_current(), sym, side="buy"
+            )
+            if sent.get("used_in_ranking"):
+                sentiment_alignment = float(sent.get("sentiment_alignment") or 0.0)
+        except Exception:
+            pass
         evaluation = evaluate_entry(
             sym, bars_1m, bars_5m, quote,
             bar_age_seconds=0.0,
             universe_rank_score=0.5,
-            sentiment_alignment=0.0,
+            sentiment_alignment=sentiment_alignment,
             regime=regime,
             side="buy",
         )

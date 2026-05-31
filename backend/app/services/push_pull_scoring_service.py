@@ -300,7 +300,22 @@ def score_symbol(
     score_components["long_structure"] = structure
     entry_allowed = bool(scored.entry_allowed) and bool(structure.get("long_structure_ok"))
     no_trade_reason = scored.no_trade_reason
-    trade_quality = scored.trade_quality_score
+    base_trade_quality = float(scored.trade_quality_score or 0.0)
+    trade_quality = base_trade_quality
+    sentiment_ctx: dict[str, Any] = {}
+    try:
+        from app.services.sentiment_service import (
+            apply_sentiment_ranking_modifier,
+            resolve_sentiment_for_ranking,
+        )
+
+        sentiment_ctx = resolve_sentiment_for_ranking(config, symbol, side="buy")
+        if sentiment_ctx.get("used_in_ranking"):
+            trade_quality = apply_sentiment_ranking_modifier(
+                base_trade_quality, float(sentiment_ctx.get("sentiment_alignment") or 0.0)
+            )
+    except Exception:
+        sentiment_ctx = {"used_in_ranking": False, "sentiment_alignment": 0.0}
     if scored.entry_allowed and not structure.get("long_structure_ok"):
         no_trade_reason = str(structure.get("reason") or "NO_BULLISH_LONG_STRUCTURE")
         trade_quality = min(float(trade_quality or 0.0), 0.34)
@@ -322,7 +337,7 @@ def score_symbol(
                 quote=quote,
                 signal_meta={
                     "push_score": scored.push_score,
-                    "trade_quality_score": scored.trade_quality_score,
+                    "trade_quality_score": base_trade_quality,
                     "edge_after_cost_bps": scored.edge_after_cost_bps,
                     "pattern_confidence": pattern.get("confidence"),
                     "reversal_risk_score": pattern.get("reversal_risk_score"),
@@ -341,6 +356,11 @@ def score_symbol(
         "push_score": scored.push_score,
         "pull_exit_score": pull_exit,
         "trade_quality_score": round(float(trade_quality or 0.0), 4),
+        "base_trade_quality_score": round(base_trade_quality, 4),
+        "sentiment_score": sentiment_ctx.get("sentiment_score"),
+        "sentiment_alignment": sentiment_ctx.get("sentiment_alignment"),
+        "sentiment_used_in_ranking": bool(sentiment_ctx.get("used_in_ranking")),
+        "sentiment_model_used": sentiment_ctx.get("model_used"),
         "edge_after_cost_bps": scored.edge_after_cost_bps,
         "entry_allowed": entry_allowed,
         "no_trade_reason": no_trade_reason,
