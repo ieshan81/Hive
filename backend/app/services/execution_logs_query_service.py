@@ -162,6 +162,9 @@ def list_execution_logs(
             filtered = [r for r in rows if r.created_at and r.created_at >= en_dt]
         else:
             filtered = list(rows)
+    elif scope_norm == "all":
+        # All recent logs across every cycle, regardless of scheduler enable/tick window.
+        filtered = list(rows)
     else:
         filtered = []
 

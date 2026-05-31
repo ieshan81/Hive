@@ -1,19 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Wallet, RefreshCw, AlertTriangle, Info } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { apiGet, apiPostOperator } from "@/lib/apiClient";
-import { normalizeOrders } from "@/lib/apiNormalize";
-import { OrderMetricsBar } from "@/components/ui/OrderMetricsBar";
-import { ExecutionOrdersTable } from "@/components/ui/ExecutionOrdersTable";
 import { PortfolioExecutionPanel } from "@/components/panels/PortfolioExecutionPanel";
 import { PortfolioLineChart } from "@/components/panels/PortfolioLineChart";
+import { PortfolioOrdersLedger } from "@/components/ui/PortfolioOrdersLedger";
 import { TickerSymbol } from "@/components/ui/TickerSymbol";
 import { formatDisplaySymbol } from "@/lib/assetIcons";
-import type { OrderSummaryCounts } from "@/lib/orderDisplay";
-import type { OrderRecord } from "@/types/api";
 
 type BrokerRow = {
   symbol?: string;
@@ -41,8 +37,6 @@ function planKey(symbol: string): string {
 }
 
 export default function PortfolioPage() {
-  const [orders, setOrders] = useState<OrderRecord[]>([]);
-  const [orderSummary, setOrderSummary] = useState<OrderSummaryCounts | undefined>();
   const [recon, setRecon] = useState<Record<string, unknown> | null>(null);
   const [exitStatus, setExitStatus] = useState<Record<string, string>>({});
   const [exitPlans, setExitPlans] = useState<Record<string, ExitPlan>>({});
@@ -51,9 +45,7 @@ export default function PortfolioPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [cockpitRes, oRes, reconRes, exitRes] = await Promise.all([
-      apiGet<Record<string, unknown>>("/api/mission-control/status", { timeoutMs: 5000 }),
-      apiGet("/api/orders?limit=50"),
+    const [reconRes, exitRes] = await Promise.all([
       apiGet("/api/portfolio/reconciliation"),
       apiGet<Record<string, unknown>>("/api/push-pull/exit-monitor/status", { timeoutMs: 5000 }),
     ]);
@@ -69,14 +61,6 @@ export default function PortfolioPage() {
     } else {
       setExitPlans({});
     }
-
-    if (cockpitRes.ok && cockpitRes.data && typeof cockpitRes.data === "object") {
-      const d = cockpitRes.data as Record<string, unknown>;
-      setOrderSummary(d.orderSummary as OrderSummaryCounts | undefined);
-    }
-
-    if (oRes.ok) setOrders(normalizeOrders(oRes.data));
-    else setOrders([]);
 
     setLoading(false);
   }, []);
@@ -117,23 +101,6 @@ export default function PortfolioPage() {
   const positionSymbols = brokerRows.map((p) => formatDisplaySymbol(String(p.symbol ?? "")));
   const warning = recon?.reconciliation_warning as string | undefined;
   const isInfoNote = Boolean(brokerRows.some((p) => p.local_history_note));
-  const visibleOrders = orders.slice(0, 25);
-  const derivedOrderSummary = useMemo<OrderSummaryCounts>(() => {
-    const rejected = orders.filter((o) => String(o.status ?? "").toLowerCase().includes("reject")).length;
-    const filled = orders.filter((o) => String(o.status ?? "").toLowerCase() === "filled").length;
-    const sent = orders.filter((o) => Boolean(o.broker_order_id ?? o.alpaca_order_id)).length;
-    return {
-      orders_attempted: orders.length,
-      orders_sent_to_broker: sent,
-      orders_filled: filled,
-      orders_rejected: rejected,
-      orders_blocked_preflight: 0,
-      last_order_user_message:
-        orders.length > visibleOrders.length
-          ? `Showing latest ${visibleOrders.length} of ${orders.length} order rows.`
-          : undefined,
-    };
-  }, [orders, visibleOrders.length]);
 
   return (
     <section className="max-w-5xl space-y-4">
@@ -247,13 +214,8 @@ export default function PortfolioPage() {
             )}
           </GlassPanel>
 
-          <GlassPanel title="Orders">
-            <OrderMetricsBar summary={orderSummary ?? derivedOrderSummary} compact />
-            {orders.length === 0 ? (
-              <EmptyState message="No orders on record yet." />
-            ) : (
-              <ExecutionOrdersTable rows={visibleOrders as unknown as Record<string, unknown>[]} mode="order" />
-            )}
+          <GlassPanel title="Order & Trade Ledger">
+            <PortfolioOrdersLedger />
           </GlassPanel>
 
           <PortfolioExecutionPanel />
