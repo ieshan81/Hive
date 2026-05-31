@@ -48,14 +48,21 @@ export function CockpitAutopilotChip() {
         ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
         : "border-slate-500/30 bg-slate-500/10 text-slate-300";
 
-  const caps = (sched.absolute_caps as Dict) || {};
+  const adaptive = (sched.adaptive_opportunity_budget as Dict) || {};
+  const dailyCapRetired =
+    sched.daily_entry_cap_mode === "retired" || adaptive.replaces_fixed_daily_entry_cap === true;
   const entryCapHit = Boolean(sched.entry_cap_hit);
+  const reasons = (sched.entry_cap_hit_reasons as string[]) || [];
   const ticksToday = num(sched.ticks_today);
   const maxTicks = num(sched.absolute_max_scheduler_ticks_per_day);
   const entriesToday = num(sched.new_entries_today);
-  const maxEntries = num(caps.absolute_max_new_entries_per_day);
   const openPos = num(sched.open_positions);
+  const caps = (sched.absolute_caps as Dict) || {};
   const maxOpen = num(caps.absolute_max_open_positions);
+
+  const entriesLabel = dailyCapRetired
+    ? `entries ${entriesToday} (telemetry)`
+    : `entries ${entriesToday}/${num(caps.absolute_max_new_entries_per_day) || "—"}`;
 
   return (
     <Link
@@ -66,12 +73,13 @@ export function CockpitAutopilotChip() {
       <span className="font-semibold text-slate-300">Autopilot</span>
       <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold tracking-wide ${tone}`}>{state}</span>
       <span className="text-slate-500">
-        ticks {ticksToday}/{maxTicks > 0 ? maxTicks : "—"} · entries {entriesToday}/{maxEntries > 0 ? maxEntries : "—"} ·
-        open {openPos}/{maxOpen > 0 ? maxOpen : "—"}
+        ticks {ticksToday}/{maxTicks > 0 ? maxTicks : "—"} · {entriesLabel} · open {openPos}/
+        {maxOpen > 0 ? maxOpen : "—"}
+        {dailyCapRetired && <> · adaptive budget</>}
       </span>
       {entryCapHit && (
         <span className="rounded-full border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold text-rose-300">
-          entry cap
+          {reasons.length > 0 ? reasons.join(", ") : "entry blocked"}
         </span>
       )}
       <span className="inline-flex items-center gap-1 text-[10px] text-rose-300/80">
