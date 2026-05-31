@@ -27,6 +27,16 @@ type SourcesPayload = {
   };
 };
 
+type StatusPayload = {
+  display_title?: string;
+  display_subtitle?: string;
+  wiring_state?: string;
+  diagnostics?: {
+    latest_scored_symbols_count?: number;
+    sentiment_used_in_ranking?: boolean;
+  };
+};
+
 type PumpDumpPayload = {
   active_count: number;
   alerts: { symbol: string; cooldown_until: string; minutes_remaining?: number }[];
@@ -40,16 +50,19 @@ const SOURCE_ORDER: { key: keyof SourcesPayload["sources"]; label: string }[] = 
 
 export function SentimentSourcesPanel() {
   const [src, setSrc] = useState<SourcesPayload | null>(null);
+  const [status, setStatus] = useState<StatusPayload | null>(null);
   const [pump, setPump] = useState<PumpDumpPayload | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [s, p] = await Promise.all([
+    const [s, st, p] = await Promise.all([
       apiGet<SourcesPayload>("/api/sentiment/sources"),
+      apiGet<StatusPayload>("/api/sentiment/status"),
       apiGet<PumpDumpPayload>("/api/sentiment/pump-dump-alerts"),
     ]);
     if (s.ok && s.data) setSrc(s.data);
+    if (st.ok && st.data) setStatus(st.data);
     if (p.ok && p.data) setPump(p.data);
     setLoading(false);
   }, []);
@@ -68,6 +81,25 @@ export function SentimentSourcesPanel() {
       <p className="text-[11px] text-[#b9cacb] mb-3">
         Advisory only — sentiment shifts ranking by ≤ ±10%. Execution cage decides.
       </p>
+
+      {!loading && status?.display_title && (
+        <div
+          className="mb-3 rounded-md border px-2.5 py-2 text-[10px]"
+          style={{
+            borderColor:
+              status.wiring_state === "active_ranking"
+                ? "rgba(0, 255, 102, 0.25)"
+                : status.wiring_state === "not_wired"
+                  ? "rgba(239, 68, 68, 0.25)"
+                  : "rgba(245, 158, 11, 0.25)",
+            backgroundColor: "rgba(255,255,255,0.02)",
+            color: "#e3e2e8",
+          }}
+        >
+          <p className="font-semibold">{status.display_title}</p>
+          {status.display_subtitle && <p className="text-[#849495] mt-1">{status.display_subtitle}</p>}
+        </div>
+      )}
 
       {loading ? (
         <p className="text-[11px] text-[#849495]">Loading sentiment sources…</p>

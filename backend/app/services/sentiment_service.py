@@ -36,6 +36,118 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
+# In-process cache + diagnostics (resets on restart; advisory telemetry only).
+_SENTIMENT_CACHE: dict[str, dict[str, Any]] = {}
+_LAST_SENTIMENT_REFRESH_AT: Optional[str] = None
+_NEUTRAL_FALLBACK_COUNT = 0
+_SENTIMENT_ERRORS_24H: list[str] = []
+
+
+def _record_sentiment_error(message: str) -> None:
+    global _NEUTRAL_FALLBACK_COUNT
+    now = datetime.utcnow().isoformat() + "Z"
+    _SENTIMENT_ERRORS_24H.append(now)
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+    while _SENTIMENT_ERRORS_24H and datetime.fromisoformat(_SENTIMENT_ERRORS_24H[0].replace("Z", "")) < cutoff:
+        _SENTIMENT_ERRORS_24H.pop(0)
+    _NEUTRAL_FALLBACK_COUNT += 1
+    logger.debug("sentiment neutral fallback: %s", message[:200])
+
+
+def get_sentiment_cache_snapshot() -> dict[str, dict[str, Any]]:
+    return dict(_SENTIMENT_CACHE)
+
+
+def sentiment_diagnostics(config: Optional[dict] = None) -> dict[str, Any]:
+    """Structured sentiment pipeline diagnostics for status/bundle exports."""
+    from app.config import settings
+
+    try:
+        from app.services.finbert_client import finbert_health, finbert_service_url
+
+        remote = finbert_health()
+        worker_url = bool(finbert_service_url())
+        worker_connected = remote.get("status") in ("ok", "degraded") and remote.get("configured")
+        model_loaded = bool(remote.get("model_loaded")) or FinBERTScorer.is_available()
+    except Exception:
+        remote = {}
+        worker_url = False
+        worker_connected = False
+        model_loaded = FinBERTScorer.is_available()
+
+    cfg = config or {}
+    sent_cfg = cfg.get("sentiment") or {}
+    influence = bool(sent_cfg.get("influence_ranking", True))
+    cache = get_sentiment_cache_snapshot()
+    scored = [
+        {
+            "symbol": sym,
+            "sentiment_score": row.get("sentiment_score"),
+            "sentiment_alignment": row.get("sentiment_alignment"),
+            "headline_count": row.get("headline_count"),
+            "model_used": row.get("model_used"),
+            "scored_at": row.get("scored_at"),
+        }
+        for sym, row in cache.items()
+    ]
+
+    return {
+        "finbert_worker_configured": worker_url,
+        "finbert_worker_connected": worker_connected,
+        "finbert_model_loaded": model_loaded,
+        "news_provider_wired": bool(settings.alpaca_configured),
+        "latest_scored_symbols_count": len(cache),
+        "latest_sentiment_scores": scored[:20],
+        "last_sentiment_refresh_at": _LAST_SENTIMENT_REFRESH_AT,
+        "sentiment_used_in_ranking": influence and model_loaded,
+        "max_sentiment_adjustment_pct": sent_cfg.get("max_adjustment_pct", 10),
+        "neutral_fallback_count": _NEUTRAL_FALLBACK_COUNT,
+        "sentiment_errors_last_24h": len(_SENTIMENT_ERRORS_24H),
+    }
+
+
+def sentiment_ranking_enabled(config: dict) -> bool:
+    sent = (config or {}).get("sentiment") or {}
+    return bool(sent.get("influence_ranking", True))
+
+
+def apply_sentiment_ranking_modifier(trade_quality: float, sentiment_alignment: float) -> float:
+    """Ranking-only modifier: trade_quality * (1 + alignment), alignment clamped ±10%."""
+    alignment = max(-0.10, min(0.10, float(sentiment_alignment or 0.0)))
+    adjusted = float(trade_quality or 0.0) * (1.0 + alignment)
+    return max(0.0, min(1.0, adjusted))
+
+
+def resolve_sentiment_for_ranking(config: dict, symbol: str, side: str = "buy") -> dict[str, Any]:
+    """Safe ranking helper — never raises; returns neutral on failure."""
+    if not sentiment_ranking_enabled(config):
+        return {
+            "symbol": symbol,
+            "side": side,
+            "used_in_ranking": False,
+            "sentiment_score": 0.0,
+            "sentiment_alignment": 0.0,
+            "reason": "influence_ranking_disabled",
+        }
+    try:
+        result = score_symbol_sentiment(symbol, side=side)
+        result["used_in_ranking"] = sentiment_ranking_enabled(config)
+        return result
+    except Exception as exc:
+        _record_sentiment_error(str(exc))
+        return {
+            "symbol": symbol,
+            "side": side,
+            "used_in_ranking": False,
+            "sentiment_score": 0.0,
+            "sentiment_alignment": 0.0,
+            "headline_count": 0,
+            "source_count": 0,
+            "model_used": "neutral_fallback",
+            "neutral_reason": "sentiment_failure",
+            "error": str(exc)[:200],
+        }
+
 
 # ──────────────────────────────────────────────────────────────
 # Source reliability weights
@@ -272,11 +384,13 @@ class AlpacaNewsIngester:
         if last and (datetime.utcnow() - last).total_seconds() < cls._CACHE_TTL_S:
             return cls._last_headlines.get(symbol, [])
 
-        if not api_key:
-            from app.config import settings
-            api_key = settings.alpaca_api_key
+        from app.config import settings
 
         if not api_key:
+            api_key = settings.alpaca_api_key
+        secret_key = settings.alpaca_secret_key
+
+        if not api_key or not secret_key:
             return []
 
         try:
@@ -293,10 +407,8 @@ class AlpacaNewsIngester:
             url = f"{base}?{params}"
             req = urllib.request.Request(url, headers={
                 "APCA-API-KEY-ID": api_key,
-                "APCA-API-SECRET-KEY": "",  # filled below
+                "APCA-API-SECRET-KEY": secret_key,
             })
-            # Can't set secret via settings here without circular import risk
-            # News ingester is best called via a proper service that has settings
             with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read())
 
@@ -320,6 +432,7 @@ class AlpacaNewsIngester:
                     "age_minutes": round(age_min, 1),
                     "source": "alpaca_benzinga",
                     "url": item.get("url", ""),
+                    "symbol": symbol,
                 })
 
             cls._last_headlines[symbol] = results
@@ -360,6 +473,69 @@ def build_sentiment_memory_record(
     }
 
 
+def _polarity_from_finbert_label(label: str, score: float) -> tuple[float, float]:
+    label_l = (label or "neutral").lower()
+    conf = float(score or 0.5)
+    if "pos" in label_l:
+        return conf, conf
+    if "neg" in label_l:
+        return -conf, conf
+    return 0.0, conf
+
+
+def _score_headlines_with_finbert(headlines: list[dict]) -> tuple[list[dict], str]:
+    """Score headlines via FinBERT microservice batch, then local fallback."""
+    if not headlines:
+        return [], "none"
+
+    from app.services.finbert_client import classify_batch, finbert_service_url
+
+    items = []
+    for i, h in enumerate(headlines):
+        text = (h.get("headline") or h.get("text") or "").strip()
+        if not text:
+            continue
+        items.append(
+            {
+                "id": str(i),
+                "symbol": h.get("symbol") or "",
+                "source": h.get("source") or "news",
+                "text": text[:512],
+            }
+        )
+
+    if finbert_service_url() and items:
+        batch = classify_batch(items)
+        if batch:
+            by_id = {str(row.get("id")): row for row in batch}
+            scored: list[dict] = []
+            for i, h in enumerate(headlines):
+                row = by_id.get(str(i)) or {}
+                polarity, confidence = _polarity_from_finbert_label(row.get("label", "neutral"), row.get("score", 0.5))
+                scored.append(
+                    {
+                        **h,
+                        "polarity": polarity,
+                        "confidence": confidence,
+                        "label": row.get("label", "neutral"),
+                        "model_used": "finbert_microservice",
+                    }
+                )
+            return scored, "finbert_microservice"
+
+    scored = []
+    model_used = "finbert_local" if FinBERTScorer.is_available() else "neutral_fallback"
+    for h in headlines:
+        text = (h.get("headline") or h.get("text") or "").strip()
+        source = h.get("source", "alpaca")
+        if not text:
+            scored.append({**h, "polarity": 0.0, "confidence": 0.5, "label": "neutral", "model_used": model_used})
+            continue
+        local = FinBERTScorer.score_headline(text, source=source)
+        scored.append({**h, **local, "model_used": model_used})
+    return scored, model_used
+
+
 # ──────────────────────────────────────────────────────────────
 # High-level convenience — score a symbol
 # ──────────────────────────────────────────────────────────────
@@ -372,46 +548,101 @@ def score_symbol_sentiment(
     social_volume_z: float = 0.0,
     price_move_60m_pct: float = 0.0,
     marketcap_rank: Optional[int] = None,
+    fetch_news: bool = True,
 ) -> dict[str, Any]:
     """
     Full sentiment pipeline for one symbol:
       1. Check pump-dump flag
-      2. Score headlines with FinBERT
-      3. Compute aggregate sentiment_score
-      4. Compute sentiment_alignment (clamped ±10%)
+      2. Fetch Alpaca/Benzinga headlines (best-effort)
+      3. Score headlines with FinBERT microservice or local fallback
+      4. Compute aggregate sentiment_score
+      5. Compute sentiment_alignment (clamped ±10%)
+
+    Never raises — neutral fallback on missing data or scorer failure.
     """
-    pump_dump = check_pump_dump_flag(
-        symbol,
-        social_volume_z=social_volume_z,
-        price_move_60m_pct=price_move_60m_pct,
-        marketcap_rank=marketcap_rank,
-    )
+    global _LAST_SENTIMENT_REFRESH_AT
 
-    headlines = list(additional_headlines or [])
+    try:
+        pump_dump = check_pump_dump_flag(
+            symbol,
+            social_volume_z=social_volume_z,
+            price_move_60m_pct=price_move_60m_pct,
+            marketcap_rank=marketcap_rank,
+        )
 
-    # Score each headline with FinBERT
-    scored_headlines = []
-    for h in headlines:
-        text = h.get("headline", "")
-        source = h.get("source", "alpaca")
-        scored = FinBERTScorer.score_headline(text, source=source)
-        scored_headlines.append({
-            **h,
-            "polarity": scored["polarity"],
-            "confidence": scored["confidence"],
-        })
+        headlines: list[dict] = list(additional_headlines or [])
+        if fetch_news and not headlines:
+            try:
+                headlines = AlpacaNewsIngester.get_headlines(symbol, limit=10)
+            except Exception as exc:
+                _record_sentiment_error(f"news_fetch:{exc}")
 
-    sentiment_score = compute_sentiment_score(scored_headlines)
-    alignment = compute_sentiment_alignment(sentiment_score, side)
-    finbert_available = FinBERTScorer.is_available()
+        scored_headlines, model_used = _score_headlines_with_finbert(headlines)
+        sources = {h.get("source") for h in headlines if h.get("source")}
 
-    return {
-        "symbol": symbol,
-        "side": side,
-        "sentiment_score": round(sentiment_score, 4),
-        "sentiment_alignment": round(alignment, 4),
-        "pump_dump_flag": pump_dump,
-        "headlines_scored": len(scored_headlines),
-        "finbert_available": finbert_available,
-        "social_volume_z": social_volume_z,
-    }
+        if not headlines:
+            neutral_reason = "no_headlines"
+        elif model_used == "neutral_fallback":
+            neutral_reason = "finbert_unavailable"
+        else:
+            neutral_reason = None
+
+        if neutral_reason:
+            _record_sentiment_error(neutral_reason)
+
+        sentiment_score = compute_sentiment_score(scored_headlines)
+        alignment = compute_sentiment_alignment(sentiment_score, side)
+        finbert_available = FinBERTScorer.is_available()
+        try:
+            from app.services.finbert_client import finbert_service_url
+
+            remote_configured = bool(finbert_service_url())
+        except Exception:
+            remote_configured = False
+
+        scoring_active = bool(scored_headlines) and model_used not in ("none", "neutral_fallback")
+        if headlines and model_used != "none":
+            scoring_active = True
+
+        result: dict[str, Any] = {
+            "symbol": symbol,
+            "side": side,
+            "sentiment_score": round(sentiment_score, 4),
+            "sentiment_alignment": round(alignment, 4),
+            "pump_dump_flag": pump_dump,
+            "headline_count": len(headlines),
+            "headlines_scored": len(scored_headlines),
+            "source_count": len(sources),
+            "sources": sorted(sources),
+            "model_used": model_used,
+            "finbert_available": finbert_available or remote_configured,
+            "scoring_active": scoring_active,
+            "social_volume_z": social_volume_z,
+            "scored_at": datetime.utcnow().isoformat() + "Z",
+        }
+        if neutral_reason:
+            result["neutral_reason"] = neutral_reason
+
+        _SENTIMENT_CACHE[symbol] = result
+        _LAST_SENTIMENT_REFRESH_AT = result["scored_at"]
+        return result
+    except Exception as exc:
+        _record_sentiment_error(str(exc))
+        fallback = {
+            "symbol": symbol,
+            "side": side,
+            "sentiment_score": 0.0,
+            "sentiment_alignment": 0.0,
+            "pump_dump_flag": False,
+            "headline_count": 0,
+            "headlines_scored": 0,
+            "source_count": 0,
+            "model_used": "neutral_fallback",
+            "finbert_available": False,
+            "scoring_active": False,
+            "neutral_reason": "pipeline_error",
+            "error": str(exc)[:200],
+            "scored_at": datetime.utcnow().isoformat() + "Z",
+        }
+        _SENTIMENT_CACHE[symbol] = fallback
+        return fallback
