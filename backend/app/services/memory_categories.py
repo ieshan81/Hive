@@ -86,6 +86,11 @@ TRADING_TYPES = frozenset(
         "broker_behavior",
         "paper_trade_filled",
         "open_position_monitor",
+        # Visible learned-behaviour patterns (TASK 7) emitted by the cage/exit/churn guards.
+        "spread_widened_pattern",
+        "fee_negative_churn",
+        "weak_entry_pattern",
+        "symbol_cooldown_lesson",
     }
 )
 
@@ -111,6 +116,7 @@ RESEARCH_MEMORY_TYPES = frozenset(
         "sample_size_warning",
         "repeated_losing_parameter_family",
         "strategy_discovery_verdict",
+        "backtest_research_lesson",
     }
 )
 
@@ -123,6 +129,7 @@ SYSTEM_TYPES = frozenset(
         "stale_data_bug",
         "ui_truth_bug",
         "api_bug",
+        "exit_loop_risk",  # repeated failed exits -> visible system issue (TASK 7/9)
         "data_pipeline_bug",
         "duplicate_position_rows",
     }

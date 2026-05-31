@@ -101,11 +101,47 @@ class MemoryConsolidationService:
             "system_issue_count": len(system_issues),
             "last_consolidation_at": last_consolidation_at,
             "why_consolidation_skipped": None if should else self._why_skipped(raw),
+            # learned_memory_count is the operator-facing name for consolidated lessons.
+            "learned_memory_count": len(consolidated),
+            "latest_visible_memory_titles": self._latest_visible_titles(
+                consolidated, patterns, system_issues, nudges
+            ),
         }
 
+    @staticmethod
+    def _latest_visible_titles(*groups: list) -> list[str]:
+        seen: set = set()
+        merged: list = []
+        for g in groups:
+            for r in g or []:
+                rid = getattr(r, "id", None)
+                if rid in seen:
+                    continue
+                seen.add(rid)
+                merged.append(r)
+        merged.sort(
+            key=lambda r: getattr(r, "last_seen_at", None) or getattr(r, "first_seen_at", None) or datetime.min,
+            reverse=True,
+        )
+        return [str(getattr(r, "title", "") or "") for r in merged[:8]]
+
+    # Sane ceilings so a stale persisted MemoryPolicyConfig row (e.g. 100/25/10) cannot
+    # starve consolidation — the bot must still form visible learned memories on modest
+    # volume. Effective threshold = min(persisted, ceiling).
+    _THRESHOLD_CEILINGS = {
+        "consolidation_threshold_total_raw_memories": 12,
+        "consolidation_threshold_per_strategy": 6,
+        "consolidation_threshold_same_type": 3,
+    }
+
+    def _eff(self, key: str) -> int:
+        ceiling = self._THRESHOLD_CEILINGS.get(key)
+        raw = int(self.policy.get(key, ceiling or 0) or 0)
+        return min(raw, ceiling) if ceiling else raw
+
     def _why_skipped(self, raw: list[LessonNode]) -> str:
-        total_t = int(self.policy.get("consolidation_threshold_total_raw_memories", 100))
-        per_t = int(self.policy.get("consolidation_threshold_per_strategy", 25))
+        total_t = self._eff("consolidation_threshold_total_raw_memories")
+        per_t = self._eff("consolidation_threshold_per_strategy")
         by_strategy: dict[str, int] = defaultdict(int)
         for r in raw:
             by_strategy[r.strategy_name or "unknown"] += 1
@@ -128,12 +164,12 @@ class MemoryConsolidationService:
 
     def _should_run(self) -> bool:
         raw = self._raw_active()
-        if len(raw) >= int(self.policy.get("consolidation_threshold_total_raw_memories", 100)):
+        if len(raw) >= self._eff("consolidation_threshold_total_raw_memories"):
             return True
         by_strategy: dict[str, int] = defaultdict(int)
         for r in raw:
             by_strategy[r.strategy_name or "unknown"] += 1
-        thresh = int(self.policy.get("consolidation_threshold_per_strategy", 25))
+        thresh = self._eff("consolidation_threshold_per_strategy")
         return any(c >= thresh for c in by_strategy.values())
 
     def run(self, *, force: bool = False) -> dict[str, Any]:
@@ -142,8 +178,9 @@ class MemoryConsolidationService:
         raw = self._raw_active()
         groups = self._group_raw(raw)
         created = archived = 0
+        same_type_min = self._eff("consolidation_threshold_same_type")
         for key, rows in groups.items():
-            if len(rows) < int(self.policy.get("consolidation_threshold_same_type", 3)):
+            if len(rows) < same_type_min:
                 continue
             if any(r.memory_type in PROTECTED_MEMORY_TYPES for r in rows):
                 continue
