@@ -36,7 +36,8 @@ SPREAD_DEFAULTS: dict[str, Any] = {
 }
 
 # Reasons that must NEVER be trapped by spread (controlled exit always proceeds).
-_HARD_EXIT_KEYS = ("stop_loss", "stop", "invalidat", "emergency", "liquidat", "kill")
+# Precise tokens — a "time_stop" / "max_hold" is a SOFT exit, not a protective stop.
+_HARD_EXIT_KEYS = ("stop_loss", "stoploss", "stop loss", "invalidat", "emergency", "liquidat", "kill_switch")
 
 
 def spread_cfg(config: dict) -> dict[str, Any]:
@@ -81,6 +82,28 @@ def _row(session: Session, symbol: str) -> SymbolSpreadState:
     return row
 
 
+def _write_spread_lesson(session: Session, config: dict, symbol: str, count: int) -> None:
+    """Repeated SPREAD_WIDENED on a symbol becomes a visible learned lesson (fail-safe)."""
+    try:
+        from app.services.lesson_memory_service import LessonMemoryService
+
+        LessonMemoryService(session, config).upsert_lesson(
+            memory_type="spread_widened_pattern",
+            title=f"Spread too wide repeatedly: {symbol}",
+            summary=f"{symbol} hit SPREAD_WIDENED {count}x within the lookback window — entries "
+            "cooled down and the scanner rotates to other candidates.",
+            detailed_lesson="Repeated wide-spread entries waste cycles and signal poor liquidity; "
+            "rotate away rather than retrying the same symbol.",
+            symbol=symbol,
+            source="spread_state_service",
+            pattern_key=f"spread_widened|{norm_symbol(symbol)}",
+            can_influence_ranking=False,
+            visible_to_ai=True,
+        )
+    except Exception:
+        pass  # lesson writing must never break the cage
+
+
 # ───────────────────────── entry cooldown / rotation (TASK 2) ─────────────────────────
 def is_entry_cooldown_active(session: Session, config: dict, symbol: str) -> tuple[bool, dict[str, Any]]:
     row = get_state(session, symbol)
@@ -112,6 +135,8 @@ def record_spread_widened(session: Session, config: dict, symbol: str) -> dict[s
             cooled = True
         row.updated_at = now
         session.add(row)
+        if cooled:
+            _write_spread_lesson(session, config, symbol, row.spread_widened_count)
         return {
             "spread_widened_count": row.spread_widened_count,
             "cooldown_tripped": cooled,

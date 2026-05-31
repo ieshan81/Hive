@@ -198,6 +198,7 @@ class AutonomousPaperScheduler:
             "use_capital_allocator": use_allocator,
             "live_locked": True,
             "adaptive_opportunity_budget": self._adaptive_budget_summary(),
+            **self._spread_research_status(),
             **caps,
         }
 
@@ -386,6 +387,41 @@ class AutonomousPaperScheduler:
             self._state["last_memory_consolidation_at"] = datetime.utcnow().isoformat() + "Z"
         except Exception:
             pass  # memory work must never break the trading tick
+
+    def _spread_research_status(self) -> dict[str, Any]:
+        """Defensive diagnostics block: spread cooldown/rotation, idle research, memory."""
+        out: dict[str, Any] = {}
+        try:
+            from app.services.spread_state_service import spread_diagnostics
+
+            out["spread_policy"] = spread_diagnostics(self.session, self.config)
+        except Exception:
+            out["spread_policy"] = {}
+        try:
+            from app.services.autonomous_research_worker import AutonomousResearchWorker
+
+            out["autonomous_research"] = AutonomousResearchWorker(self.session, self.config).status()
+        except Exception:
+            out["autonomous_research"] = {}
+        try:
+            from app.services.memory_consolidation_service import MemoryConsolidationService
+
+            mc = MemoryConsolidationService(self.session, self.config).status()
+            out["memory"] = {
+                k: mc.get(k)
+                for k in (
+                    "raw_memory_count",
+                    "learned_memory_count",
+                    "nudge_count",
+                    "pattern_count",
+                    "system_issue_count",
+                    "last_consolidation_at",
+                    "latest_visible_memory_titles",
+                )
+            }
+        except Exception:
+            out["memory"] = {}
+        return out
 
     def _maybe_run_research(self, operator: str) -> None:
         """Throttled idle autonomous research/backtest. Safety + cadence gated inside the

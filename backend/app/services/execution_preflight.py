@@ -401,7 +401,6 @@ def run_preflight(
                 account=account,
                 positions=positions,
                 signal_score=signal_score,
-                edge_after_cost_bps=getattr(cand, "edge_over_cost", None),
                 setup=getattr(cand, "strategy", None) or (meta.get("strategy") if isinstance(meta, dict) else None),
             )
             evidence["adaptive_opportunity_budget"] = budget.as_dict()
