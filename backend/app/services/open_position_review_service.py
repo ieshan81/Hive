@@ -122,6 +122,8 @@ class OpenPositionReviewService:
             if exit_trigger:
                 action = "exit_recommended"
                 reason = str(exit_trigger.get("reason") or "dynamic_exit_level_hit")
+                if "invalidat" in reason.lower():
+                    reason = "EXIT_SIGNAL_INVALIDATED"
                 stale_status = "exit_signal"
 
         upl = float(pos.unrealized_pl or 0)
@@ -184,14 +186,13 @@ class OpenPositionReviewService:
         }
 
     def _fee_aware_max_hold(
-        self, pos: PositionSnapshot, true_hold: float, effective_max: float
+        self, pos: PositionSnapshot, true_hold: float, effective_max: float, *, signal_valid: bool = True
     ) -> tuple[str, str, str, dict[str, Any]]:
-        """Decide a max-hold-expiry outcome with round-trip cost awareness.
+        """Decide a max-hold-expiry outcome with round-trip cost + risk + signal awareness.
 
-        - Past an absolute time ceiling → exit (no further extension).
-        - Net positive after estimated round-trip cost → exit (fee covered).
-        - Otherwise (fee not covered) → extend the hold; stop-loss / invalidation /
-          loss-band exits evaluated elsewhere still fire immediately and override this.
+        Order: emergency time ceiling -> risk breach -> signal invalidated -> fee covered
+        -> extend (fee-negative but signal still valid AND risk controlled). Stop-loss /
+        invalidation / loss-band exits evaluated elsewhere still fire immediately too.
         """
         apl = self.pl_cfg
         qty = abs(float(pos.qty or 0))
@@ -200,25 +201,38 @@ class OpenPositionReviewService:
         cost_bps = float(apl.get("max_hold_round_trip_cost_bps", 40) or 40)
         est_cost = notional * cost_bps / 10000.0
         upl = float(pos.unrealized_pl or 0)
+        upl_pct = float(pos.unrealized_pl_pct or 0)
         net = upl - est_cost
         abs_ceiling_min = float(apl.get("absolute_max_hold_hours", 72) or 72) * 60.0
         ext_budget = float(apl.get("max_extension_count", 3) or 3) * float(
             apl.get("max_extension_minutes", 60) or 60
         )
         hard_ceiling = min(effective_max + ext_budget, abs_ceiling_min)
+        # Risk breach uses the same loss band the dedicated loss-band exit uses — a
+        # fee-negative hold extension must never override a real risk threshold.
+        loss_pct_cfg = abs(float(apl.get("max_unrealized_loss_pct", 1.5) or 1.5))
+        loss_usd_cfg = abs(float(apl.get("max_unrealized_loss_usd", 4.0) or 4.0))
+        risk_breached = upl <= -loss_usd_cfg or upl_pct <= -loss_pct_cfg
         ev = {
             "true_hold_min": round(true_hold, 1),
             "effective_max_min": effective_max,
             "hard_ceiling_min": round(hard_ceiling, 1),
             "unrealized_pl": round(upl, 4),
+            "unrealized_pl_pct": round(upl_pct, 4),
             "est_round_trip_cost_usd": round(est_cost, 4),
             "net_after_cost": round(net, 4),
+            "signal_valid": bool(signal_valid),
+            "risk_breached": bool(risk_breached),
         }
         if true_hold >= hard_ceiling:
-            return "exit_recommended", "max_hold_exit_absolute_ceiling", "stale", ev
+            return "exit_recommended", "EMERGENCY_MAX_HOLD_EXIT", "stale", ev
+        if risk_breached:
+            return "exit_recommended", "RISK_EXIT", "exit_signal", ev
+        if not signal_valid:
+            return "exit_recommended", "EXIT_SIGNAL_INVALIDATED", "exit_signal", ev
         if net > 0:
             return "exit_recommended", "max_hold_exit_fee_covered", "stale", ev
-        return "hold", "max_hold_extended_fee_not_covered", "extended", ev
+        return "hold", "MAX_HOLD_EXTENDED_FEE_NEGATIVE", "extended", ev
 
     def _strategy_intent(self, strategy: Optional[str], signal_id: Optional[int]) -> str:
         if strategy and "push" in str(strategy).lower():
