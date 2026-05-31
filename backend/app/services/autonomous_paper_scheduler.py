@@ -349,6 +349,7 @@ class AutonomousPaperScheduler:
         # Previously consolidation only ran from a manual endpoint, so the Hive Mind stayed
         # at thousands-of-raw / zero-learned ("fresh brain"). Never trades; never crashes the tick.
         self._maybe_consolidate_memory(operator)
+        self._maybe_run_research(operator)
 
         self._persist_state(operator)
         self.session.flush()
@@ -385,6 +386,31 @@ class AutonomousPaperScheduler:
             self._state["last_memory_consolidation_at"] = datetime.utcnow().isoformat() + "Z"
         except Exception:
             pass  # memory work must never break the trading tick
+
+    def _maybe_run_research(self, operator: str) -> None:
+        """Throttled idle autonomous research/backtest. Safety + cadence gated inside the
+        worker; never trades, never enables live, never crashes the tick."""
+        apl = self.config.get("autonomous_paper_learning") or {}
+        ar = apl.get("autonomous_research") or {}
+        if not bool(ar.get("autonomous_backtest_worker_enabled", True)):
+            return
+        cooldown_min = float(ar.get("idle_research_cooldown_minutes", 5) or 5)
+        last = self._state.get("last_research_run_at")
+        if last:
+            try:
+                last_dt = datetime.fromisoformat(str(last).replace("Z", ""))
+                if (datetime.utcnow() - last_dt).total_seconds() < cooldown_min * 60:
+                    return
+            except ValueError:
+                pass
+        try:
+            from app.services.autonomous_research_worker import AutonomousResearchWorker
+
+            res = AutonomousResearchWorker(self.session, self.config).maybe_run()
+            if res.get("status") == "ok":
+                self._state["last_research_run_at"] = datetime.utcnow().isoformat() + "Z"
+        except Exception:
+            pass  # research must never break the trading tick
 
     # Block-reason codes that should halt a supervised burst so the operator can
     # review before any further ticks fire.
