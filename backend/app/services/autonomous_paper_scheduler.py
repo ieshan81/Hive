@@ -11,7 +11,12 @@ from app.database import ExecutionLog, SettingsActionAudit
 from app.services.autonomous_paper_learning_service import AutonomousPaperLearningService
 from app.services.config_manager import ConfigManager, _deep_merge
 from app.services.engine_config import cfg_get
-from app.services.paper_autopilot_caps import LIVE_OR_FILLED_STATUSES, cap_status, resolve_cap
+from app.services.paper_autopilot_caps import (
+    LIVE_OR_FILLED_STATUSES,
+    cap_status,
+    replaces_fixed_daily_entry_cap,
+    resolve_cap,
+)
 
 
 class AutonomousPaperScheduler:
@@ -133,7 +138,7 @@ class AutonomousPaperScheduler:
         pr = apl.get("protections") or {}
         return {
             "enabled": bool(ob.get("enabled", True)),
-            "replaces_fixed_daily_entry_cap": True,
+            "replaces_fixed_daily_entry_cap": replaces_fixed_daily_entry_cap(self.config),
             "max_daily_risk_pct": ob.get("max_daily_risk_pct", 4.0),
             "min_edge_after_cost_bps": ob.get("min_edge_after_cost_bps", 15.0),
             "min_signal_score": ob.get("min_signal_score", 0.50),

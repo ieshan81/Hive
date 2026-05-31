@@ -90,29 +90,63 @@ def open_position_count(session: Session) -> int:
     return len(list(session.exec(select(PositionSnapshot).where(PositionSnapshot.qty > 0)).all()))
 
 
+def replaces_fixed_daily_entry_cap(config: dict) -> bool:
+    """True when adaptive opportunity budget replaces the fixed daily entry count gate."""
+    apl = (config or {}).get("autonomous_paper_learning") or {}
+    ob = apl.get("opportunity_budget") or {}
+    return bool(ob.get("enabled", True))
+
+
 def cap_status(session: Session, config: dict) -> dict[str, Any]:
     """Read-only snapshot of every absolute cap, current usage, and which (if any) is hit."""
     caps = all_caps(config)
     entries_day = new_entries_today(session)
     entries_hour = new_entries_this_hour(session)
     open_pos = open_position_count(session)
+    retired_daily = replaces_fixed_daily_entry_cap(config)
 
     hit_reasons: list[str] = []
-    if entries_day >= caps["absolute_max_new_entries_per_day"]:
+    if not retired_daily and entries_day >= caps["absolute_max_new_entries_per_day"]:
         hit_reasons.append("absolute_max_new_entries_per_day")
     if entries_hour >= caps["absolute_max_new_entries_per_hour"]:
         hit_reasons.append("absolute_max_new_entries_per_hour")
     if open_pos >= caps["absolute_max_open_positions"]:
         hit_reasons.append("absolute_max_open_positions")
 
-    return {
+    result: dict[str, Any] = {
         "absolute_caps": caps,
         "new_entries_today": entries_day,
         "new_entries_this_hour": entries_hour,
         "open_positions": open_pos,
-        "entries_today_remaining": max(0, caps["absolute_max_new_entries_per_day"] - entries_day),
+        "entries_today_remaining": None
+        if retired_daily
+        else max(0, caps["absolute_max_new_entries_per_day"] - entries_day),
         "entries_hour_remaining": max(0, caps["absolute_max_new_entries_per_hour"] - entries_hour),
         "open_positions_remaining": max(0, caps["absolute_max_open_positions"] - open_pos),
         "entry_cap_hit": bool(hit_reasons),
         "entry_cap_hit_reasons": hit_reasons,
     }
+
+    if retired_daily:
+        result.update(
+            {
+                "daily_entry_cap_mode": "retired",
+                "daily_entry_count_is_blocking": False,
+                "active_trade_gate": "adaptive_opportunity_budget",
+                "absolute_max_new_entries_per_day_semantics": {
+                    "value": caps["absolute_max_new_entries_per_day"],
+                    "mode": "legacy_telemetry",
+                    "blocking": False,
+                },
+            }
+        )
+    else:
+        result.update(
+            {
+                "daily_entry_cap_mode": "fixed_cap",
+                "daily_entry_count_is_blocking": True,
+                "active_trade_gate": "absolute_max_new_entries_per_day",
+            }
+        )
+
+    return result

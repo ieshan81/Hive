@@ -5,11 +5,13 @@ Proves:
   (a cap can never be turned into "unlimited")
 - absolute caps survive use_capital_allocator=True (opportunity mode)
 - the scheduler interval is floored at 60s (never sub-minute)
-- cap_status flags the daily entry cap as hit at the boundary
+- cap_status flags the daily entry cap as hit at the boundary only when the
+  fixed daily cap is still active (adaptive budget disabled)
+- with adaptive budget enabled, daily count is telemetry and does not set entry_cap_hit
 """
 
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -64,9 +66,9 @@ def test_interval_floor() -> None:
     print("caps: scheduler interval floored to 60s — PASS")
 
 
-def test_cap_status_entry_hit() -> None:
+def test_cap_status_entry_hit_legacy_mode() -> None:
     session = _mem_session()
-    cfg: dict = {}
+    cfg: dict = {"autonomous_paper_learning": {"opportunity_budget": {"enabled": False}}}
     base = cap_status(session, cfg)
     assert base["entry_cap_hit"] is False, base
 
@@ -89,12 +91,40 @@ def test_cap_status_entry_hit() -> None:
     assert hit["entry_cap_hit"] is True, hit
     assert "absolute_max_new_entries_per_day" in hit["entry_cap_hit_reasons"], hit
     session.close()
-    print("caps: cap_status flags daily entry cap at boundary — PASS")
+    print("caps: cap_status flags daily entry cap at boundary (legacy mode) — PASS")
+
+
+def test_cap_status_daily_telemetry_when_adaptive_budget() -> None:
+    session = _mem_session()
+    cfg: dict = {"autonomous_paper_learning": {"opportunity_budget": {"enabled": True}}}
+    cap = resolve_cap(cfg, "absolute_max_new_entries_per_day")
+    now = datetime.utcnow()
+    for i in range(cap):
+        session.add(
+            ExecutionLog(
+                event_id=f"e{i}",
+                cycle_run_id="c",
+                symbol="DOGE/USD",
+                side="buy",
+                status="paper_order_filled",
+                submitted_at=now - timedelta(hours=i * 2),
+            )
+        )
+    session.commit()
+
+    hit = cap_status(session, cfg)
+    assert hit["new_entries_today"] == cap, hit
+    assert hit["entry_cap_hit"] is False, hit
+    assert "absolute_max_new_entries_per_day" not in hit["entry_cap_hit_reasons"], hit
+    assert hit.get("daily_entry_cap_mode") == "retired", hit
+    session.close()
+    print("caps: daily count telemetry-only under adaptive budget — PASS")
 
 
 if __name__ == "__main__":
     test_defaults_never_unlimited()
     test_caps_survive_allocator()
     test_interval_floor()
-    test_cap_status_entry_hit()
+    test_cap_status_entry_hit_legacy_mode()
+    test_cap_status_daily_telemetry_when_adaptive_budget()
     print("ALL PASS: verify_paper_autopilot_caps")

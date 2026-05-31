@@ -19,19 +19,39 @@ function str(v: unknown, fallback = "—"): string {
 }
 
 /** One cap usage cell: current vs absolute max, tinted red when the cap is hit. */
-function CapCell({ label, used, max }: { label: string; used: number; max: number }) {
-  const hit = max > 0 && used >= max;
-  const near = max > 0 && used >= max - 1 && !hit;
-  const tone = hit
-    ? "border-rose-500/40 bg-rose-500/10 text-rose-200"
-    : near
-      ? "border-amber-500/40 bg-amber-500/10 text-amber-200"
-      : "border-white/10 text-slate-200";
+function CapCell({
+  label,
+  used,
+  max,
+  telemetryOnly = false,
+}: {
+  label: string;
+  used: number;
+  max: number;
+  telemetryOnly?: boolean;
+}) {
+  const hit = !telemetryOnly && max > 0 && used >= max;
+  const near = !telemetryOnly && max > 0 && used >= max - 1 && !hit;
+  const tone = telemetryOnly
+    ? "border-cyan-500/30 bg-cyan-500/5 text-cyan-100"
+    : hit
+      ? "border-rose-500/40 bg-rose-500/10 text-rose-200"
+      : near
+        ? "border-amber-500/40 bg-amber-500/10 text-amber-200"
+        : "border-white/10 text-slate-200";
   return (
     <div className={`rounded border p-2 ${tone}`}>
       <div className="text-[10px] text-slate-500">{label}</div>
       <div className="font-semibold tabular-nums">
-        {used} <span className="text-slate-500">/ {max > 0 ? max : "—"}</span>
+        {telemetryOnly ? (
+          <>
+            {used} <span className="text-slate-500">telemetry only</span>
+          </>
+        ) : (
+          <>
+            {used} <span className="text-slate-500">/ {max > 0 ? max : "—"}</span>
+          </>
+        )}
       </div>
     </div>
   );
@@ -92,16 +112,21 @@ export function PaperAutopilotPanel() {
         : "border-slate-500/30 bg-slate-500/10 text-slate-300";
 
   const caps = (sched?.absolute_caps as Dict) || {};
+  const adaptive = (sched?.adaptive_opportunity_budget as Dict) || {};
+  const dailyCapRetired =
+    sched?.daily_entry_cap_mode === "retired" || adaptive.replaces_fixed_daily_entry_cap === true;
   const entryCapHit = Boolean(sched?.entry_cap_hit);
   const reasons = (sched?.entry_cap_hit_reasons as string[]) || [];
+  const activeGate = str(sched?.active_trade_gate, dailyCapRetired ? "adaptive_opportunity_budget" : "—");
 
   const btn = "rounded border px-3 py-1.5 text-[10px] font-medium disabled:opacity-40";
 
   return (
     <GlassPanel title="Paper Autopilot" icon={<Gauge className="h-4 w-4" />}>
       <p className="text-[10px] text-slate-500 mb-3">
-        Always-on paper scheduler (cron POST /tick). Absolute caps below can never be disabled or exceeded and hold even
-        in capital-allocator mode. Live trading stays locked.
+        Always-on paper scheduler (cron POST /tick). Hourly and open-position caps remain hard limits. The retired
+        fixed daily entry count is telemetry only — entries are gated by the Adaptive Opportunity Budget. Live trading
+        stays locked.
       </p>
 
       {/* Status row */}
@@ -114,8 +139,16 @@ export function PaperAutopilotPanel() {
         </span>
         <span className="text-[10px] text-slate-500">
           Interval: {num(sched?.interval_seconds)}s · Allocator: {sched?.use_capital_allocator ? "ON" : "OFF"}
+          {dailyCapRetired && <> · Active gate: Adaptive Opportunity Budget</>}
         </span>
       </div>
+
+      {dailyCapRetired && (
+        <div className="mb-3 rounded border border-cyan-500/30 bg-cyan-500/5 px-3 py-2 text-[10px] text-cyan-100">
+          Daily fixed cap retired · Opportunity-based trading · Entries today: {num(sched?.new_entries_today)}{" "}
+          (telemetry only)
+        </div>
+      )}
 
       {/* Absolute caps bar */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3 text-[10px]">
@@ -125,9 +158,10 @@ export function PaperAutopilotPanel() {
           max={num(sched?.absolute_max_scheduler_ticks_per_day)}
         />
         <CapCell
-          label="New entries today"
+          label={dailyCapRetired ? "Entries today (telemetry)" : "New entries today"}
           used={num(sched?.new_entries_today)}
           max={num(caps.absolute_max_new_entries_per_day)}
+          telemetryOnly={dailyCapRetired}
         />
         <CapCell
           label="New entries / hour"
@@ -143,8 +177,7 @@ export function PaperAutopilotPanel() {
 
       {entryCapHit && (
         <div className="mb-3 rounded border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-[10px] text-rose-200">
-          Entry cap reached — new paper entries are blocked until the window rolls over.
-          {reasons.length > 0 && <> ({reasons.join(", ")})</>}
+          Entry blocked by active hard cap — {reasons.join(", ") || activeGate}
         </div>
       )}
 
