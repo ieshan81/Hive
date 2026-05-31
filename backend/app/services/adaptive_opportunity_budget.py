@@ -328,6 +328,7 @@ def decide_entry(
     broker_error_streak: int = 0,
     rejection_streak: int = 0,
     reconciliation_ok: bool = True,
+    setup: Optional[str] = None,
 ) -> BudgetDecision:
     """Collect inputs + run protections + evaluate the budget. Convenience entry point
     for the execution cage. Read-only."""
@@ -354,6 +355,7 @@ def decide_entry(
             drawdown_pct=inp.drawdown_pct,
             signal_score=signal_score,
             edge_after_cost_bps=edge_after_cost_bps,
+            setup=setup,
         )
         protection_result = run_all_protections(pctx, config)
     except Exception as exc:  # fail-open: protections never crash the cage

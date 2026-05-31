@@ -401,6 +401,7 @@ def run_preflight(
                 account=account,
                 positions=positions,
                 signal_score=signal_score,
+                setup=getattr(cand, "strategy", None) or (meta.get("strategy") if isinstance(meta, dict) else None),
             )
             evidence["adaptive_opportunity_budget"] = budget.as_dict()
             if not budget.allowed:
@@ -440,10 +441,65 @@ def run_preflight(
     if quote_age is not None and quote_age > max_age:
         return PreflightResult(False, "STALE_QUOTE", f"Quote age {quote_age}s > {max_age}s", evidence)
 
+    # ---- Entry-side spread protections (entries only; exits never affected here) ----
+    # Freeze new entries while an escalated exit is unresolved, and cool down / rotate away
+    # from a symbol that keeps hitting SPREAD_WIDENED. Both are entry-only and fail-open.
+    is_entry_side = (cand.side or "").lower() == "buy" or cand.signal_type == "entry"
+    if is_entry_side:
+        from app.services.spread_state_service import is_entry_cooldown_active, unresolved_exit_freeze
+
+        try:
+            frozen, frozen_syms = unresolved_exit_freeze(session, config)
+        except Exception:
+            frozen, frozen_syms = False, []
+        if frozen:
+            return PreflightResult(
+                False,
+                "FROZEN_UNRESOLVED_EXIT",
+                f"New entries frozen: unresolved exit on {', '.join(frozen_syms[:3])}",
+                {**evidence, "frozen_exit_symbols": frozen_syms},
+            )
+        try:
+            cd_active, cd_ev = is_entry_cooldown_active(session, config, cand.symbol)
+        except Exception:
+            cd_active, cd_ev = False, {}
+        if cd_active:
+            return PreflightResult(
+                False,
+                "SPREAD_WIDENED_COOLDOWN",
+                f"{cand.symbol} in spread cooldown — rotate to next candidate",
+                {**evidence, **cd_ev},
+            )
+
     spread = quote.get("spread_pct") or cand.spread_pct
     max_spread = float(config.get("max_spread_pct", 0.005))
     if spread is not None and spread > max_spread:
-        return PreflightResult(False, "SPREAD_WIDENED", f"Spread {spread:.4f} > max", evidence)
+        from app.services.spread_state_service import (
+            classify_exit_urgency,
+            evaluate_exit_spread,
+            record_spread_widened,
+        )
+
+        urgency = classify_exit_urgency(meta, cand.signal_type, cand.side)
+        if urgency is None:
+            # ENTRY: strict spread gate (unchanged) + track repeats for cooldown/rotation.
+            try:
+                evidence["spread_state"] = record_spread_widened(session, config, cand.symbol)
+            except Exception:
+                pass
+            return PreflightResult(False, "SPREAD_WIDENED", f"Spread {spread:.4f} > max", evidence)
+        # EXIT: never trap a controlled exit. Hard (stop/invalidation/emergency) exits bypass;
+        # soft exits are allowed up to a widened tolerance, delay briefly, then escalate.
+        dec = evaluate_exit_spread(
+            session, config, symbol=cand.symbol, urgency=urgency, spread=spread, max_spread=max_spread
+        )
+        evidence["exit_spread_policy"] = dec.evidence
+        evidence["exit_spread_action"] = dec.action
+        if dec.action == "delay":
+            return PreflightResult(
+                False, dec.code, f"Exit delayed (spread {spread:.4f} wide, risk controlled)", evidence
+            )
+        # allow / escalate -> fall through; the controlled exit proceeds despite the wide spread.
 
     exp_move = cand.expected_move_pct or meta.get("expected_move_pct")
     if exp_move is None and meta.get("training_trade"):

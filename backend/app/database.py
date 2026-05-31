@@ -1420,6 +1420,23 @@ def _migrate_columns() -> None:
                     conn.execute(text(ddl))
 
 
+class SymbolSpreadState(SQLModel, table=True):
+    """Per-symbol spread tracking: entry cooldown (spread-widened rotation) + failed-exit
+    escalation. Paper-only telemetry/state; never holds orders or secrets."""
+
+    __tablename__ = "symbol_spread_state"
+    symbol: str = Field(primary_key=True)  # normalized, e.g. SOLUSD
+    # Entry-side: repeated SPREAD_WIDENED -> cooldown + rotate to next candidate
+    spread_widened_count: int = 0
+    last_spread_widened_at: Optional[datetime] = None
+    spread_cooldown_until: Optional[datetime] = None
+    # Exit-side: repeated failed exit attempts -> escalate exit + freeze new entries
+    failed_exit_attempts: int = 0
+    first_failed_exit_at: Optional[datetime] = None
+    last_failed_exit_at: Optional[datetime] = None
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
     _migrate_columns()

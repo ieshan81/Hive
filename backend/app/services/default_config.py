@@ -466,6 +466,29 @@ DEFAULT_CONFIG = {
         "max_extension_count": 3,
         "max_extension_minutes": 60,
         "max_hold_round_trip_cost_bps": 40,
+        # --- Spread policy (entry cooldown/rotation + exit escalation; never traps exits) ---
+        "spread_policy": {
+            "spread_widened_repeat_threshold": 3,
+            "spread_widened_lookback_minutes": 30,
+            "spread_cooldown_minutes": 30,
+            "exit_spread_tolerance_multiplier": 3.0,
+            "max_exit_spread_delay_minutes": 10,
+            "max_failed_exit_attempts_before_escalation": 3,
+            "freeze_new_entries_on_unresolved_exit": True,
+        },
+        # --- Auto memory consolidation (raw -> visible learned memories each tick) ---
+        "memory_consolidation": {
+            "auto_enabled": True,
+            "auto_interval_minutes": 30,
+        },
+        # --- Idle autonomous research/backtest worker (paper-only, advisory; never trades) ---
+        "autonomous_research": {
+            "autonomous_backtest_worker_enabled": True,
+            "idle_research_max_runs_per_hour": 6,
+            "idle_research_max_runtime_seconds": 20,
+            "idle_research_cooldown_minutes": 5,
+            "idle_research_min_sample_size": 5,
+        },
         "refresh_market_data_before_tick": True,
         "refresh_stocks_during_market_hours": True,
         "refresh_lookback_hours": 36,

@@ -198,6 +198,7 @@ class AutonomousPaperScheduler:
             "use_capital_allocator": use_allocator,
             "live_locked": True,
             "adaptive_opportunity_budget": self._adaptive_budget_summary(),
+            **self._spread_research_status(),
             **caps,
         }
 
@@ -345,6 +346,12 @@ class AutonomousPaperScheduler:
         else:
             self._state["rejection_streak"] = 0
 
+        # Auto-consolidate raw memories into visible learned memories (throttled, DB-only).
+        # Previously consolidation only ran from a manual endpoint, so the Hive Mind stayed
+        # at thousands-of-raw / zero-learned ("fresh brain"). Never trades; never crashes the tick.
+        self._maybe_consolidate_memory(operator)
+        self._maybe_run_research(operator)
+
         self._persist_state(operator)
         self.session.flush()
         tick_result = {
@@ -356,6 +363,90 @@ class AutonomousPaperScheduler:
         self._journal_tick(operator, supervised, tick_result)
         self._maybe_rotate_daily(operator)
         return tick_result
+
+    def _maybe_consolidate_memory(self, operator: str) -> None:
+        """Throttled, fail-safe memory consolidation so raw lessons become visible learned
+        memories. Read/DB-only — never places orders, never enables live, never crashes the tick."""
+        apl = self.config.get("autonomous_paper_learning") or {}
+        mc = apl.get("memory_consolidation") or {}
+        if not bool(mc.get("auto_enabled", True)):
+            return
+        interval_min = float(mc.get("auto_interval_minutes", 30) or 30)
+        last = self._state.get("last_memory_consolidation_at")
+        if last:
+            try:
+                last_dt = datetime.fromisoformat(str(last).replace("Z", ""))
+                if (datetime.utcnow() - last_dt).total_seconds() < interval_min * 60:
+                    return
+            except ValueError:
+                pass
+        try:
+            from app.services.memory_consolidation_service import MemoryConsolidationService
+
+            MemoryConsolidationService(self.session, self.config).run()
+            self._state["last_memory_consolidation_at"] = datetime.utcnow().isoformat() + "Z"
+        except Exception:
+            pass  # memory work must never break the trading tick
+
+    def _spread_research_status(self) -> dict[str, Any]:
+        """Defensive diagnostics block: spread cooldown/rotation, idle research, memory."""
+        out: dict[str, Any] = {}
+        try:
+            from app.services.spread_state_service import spread_diagnostics
+
+            out["spread_policy"] = spread_diagnostics(self.session, self.config)
+        except Exception:
+            out["spread_policy"] = {}
+        try:
+            from app.services.autonomous_research_worker import AutonomousResearchWorker
+
+            out["autonomous_research"] = AutonomousResearchWorker(self.session, self.config).status()
+        except Exception:
+            out["autonomous_research"] = {}
+        try:
+            from app.services.memory_consolidation_service import MemoryConsolidationService
+
+            mc = MemoryConsolidationService(self.session, self.config).status()
+            out["memory"] = {
+                k: mc.get(k)
+                for k in (
+                    "raw_memory_count",
+                    "learned_memory_count",
+                    "nudge_count",
+                    "pattern_count",
+                    "system_issue_count",
+                    "last_consolidation_at",
+                    "latest_visible_memory_titles",
+                )
+            }
+        except Exception:
+            out["memory"] = {}
+        return out
+
+    def _maybe_run_research(self, operator: str) -> None:
+        """Throttled idle autonomous research/backtest. Safety + cadence gated inside the
+        worker; never trades, never enables live, never crashes the tick."""
+        apl = self.config.get("autonomous_paper_learning") or {}
+        ar = apl.get("autonomous_research") or {}
+        if not bool(ar.get("autonomous_backtest_worker_enabled", True)):
+            return
+        cooldown_min = float(ar.get("idle_research_cooldown_minutes", 5) or 5)
+        last = self._state.get("last_research_run_at")
+        if last:
+            try:
+                last_dt = datetime.fromisoformat(str(last).replace("Z", ""))
+                if (datetime.utcnow() - last_dt).total_seconds() < cooldown_min * 60:
+                    return
+            except ValueError:
+                pass
+        try:
+            from app.services.autonomous_research_worker import AutonomousResearchWorker
+
+            res = AutonomousResearchWorker(self.session, self.config).maybe_run()
+            if res.get("status") == "ok":
+                self._state["last_research_run_at"] = datetime.utcnow().isoformat() + "Z"
+        except Exception:
+            pass  # research must never break the trading tick
 
     # Block-reason codes that should halt a supervised burst so the operator can
     # review before any further ticks fire.

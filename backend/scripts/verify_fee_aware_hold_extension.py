@@ -19,11 +19,12 @@ from app.services.open_position_review_service import OpenPositionReviewService
 
 
 class _Pos:
-    def __init__(self, qty, mark, entry, upl):
+    def __init__(self, qty, mark, entry, upl, upl_pct=0.0):
         self.qty = qty
         self.current_price = mark
         self.avg_entry_price = entry
         self.unrealized_pl = upl
+        self.unrealized_pl_pct = upl_pct
 
 
 class _Svc:
@@ -39,8 +40,23 @@ EFFECTIVE_MAX = 30.0  # minutes; hard ceiling = 30 + 3*60 = 210
 def test_extend_when_fee_not_covered() -> None:
     # notional 100 * 40bps = $0.40 cost; upl $0.10 -> net -0.30 -> extend
     action, reason, status, ev = _Svc()._fee_aware_max_hold(_Pos(1.0, 100.0, 100.0, 0.10), 60.0, EFFECTIVE_MAX)
-    assert action == "hold" and reason == "max_hold_extended_fee_not_covered", (action, reason, ev)
-    print("fee-aware: fee-not-covered + valid -> EXTEND hold — PASS")
+    assert action == "hold" and reason == "MAX_HOLD_EXTENDED_FEE_NEGATIVE", (action, reason, ev)
+    print("fee-aware: fee-negative + valid + risk-ok -> EXTEND hold — PASS")
+
+
+def test_risk_breach_exits() -> None:
+    # upl -$5 <= -$4 loss band -> RISK_EXIT even though clock not at ceiling
+    action, reason, status, ev = _Svc()._fee_aware_max_hold(_Pos(1.0, 100.0, 100.0, -5.0), 60.0, EFFECTIVE_MAX)
+    assert action == "exit_recommended" and reason == "RISK_EXIT", (action, reason, ev)
+    print("fee-aware: risk band breached -> RISK_EXIT (never extends through risk) — PASS")
+
+
+def test_signal_invalidated_exits() -> None:
+    action, reason, status, ev = _Svc()._fee_aware_max_hold(
+        _Pos(1.0, 100.0, 100.0, 0.10), 60.0, EFFECTIVE_MAX, signal_valid=False
+    )
+    assert action == "exit_recommended" and reason == "EXIT_SIGNAL_INVALIDATED", (action, reason, ev)
+    print("fee-aware: signal invalidated -> EXIT_SIGNAL_INVALIDATED — PASS")
 
 
 def test_exit_when_fee_covered() -> None:
@@ -52,8 +68,8 @@ def test_exit_when_fee_covered() -> None:
 def test_exit_at_absolute_ceiling_even_if_fee_uncovered() -> None:
     # 5000 min >> absolute ceiling (72h=4320) -> exit regardless of fee
     action, reason, status, ev = _Svc()._fee_aware_max_hold(_Pos(1.0, 100.0, 100.0, 0.10), 5000.0, EFFECTIVE_MAX)
-    assert action == "exit_recommended" and reason == "max_hold_exit_absolute_ceiling", (action, reason, ev)
-    print("fee-aware: past absolute ceiling -> EXIT (emergency, no more extension) — PASS")
+    assert action == "exit_recommended" and reason == "EMERGENCY_MAX_HOLD_EXIT", (action, reason, ev)
+    print("fee-aware: past absolute ceiling -> EMERGENCY_MAX_HOLD_EXIT — PASS")
 
 
 def test_never_extends_past_hard_ceiling() -> None:
@@ -65,6 +81,8 @@ def test_never_extends_past_hard_ceiling() -> None:
 
 if __name__ == "__main__":
     test_extend_when_fee_not_covered()
+    test_risk_breach_exits()
+    test_signal_invalidated_exits()
     test_exit_when_fee_covered()
     test_exit_at_absolute_ceiling_even_if_fee_uncovered()
     test_never_extends_past_hard_ceiling()

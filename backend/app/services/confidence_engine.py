@@ -22,6 +22,7 @@ from app.services.live_lock_tripwire import live_lock_tripwire_status
 from app.services.nuke_epoch_service import filter_lessons_post_nuke, get_latest_reset_epoch
 from app.services.order_metrics import order_summary
 from app.services.session_engine import SessionEngine
+from app.services.timestamp_safety import safe_record_timestamp
 
 
 LABELS = [
@@ -62,7 +63,9 @@ class ConfidenceEngine:
         if not self._reset_epoch:
             return rows
         cutoff = self._reset_epoch.get("nuke_completed_at")
-        return [t for t in rows if t.created_at and self._is_after(t.created_at, cutoff)]
+        # Safe timestamp: a TradeRecord row missing created_at (schema drift) must not
+        # raise AttributeError and crash confidence/cockpit — fall back to opened_at etc.
+        return [t for t in rows if (ts := safe_record_timestamp(t)) and self._is_after(ts, cutoff)]
 
     def _post_nuke_lessons(self) -> list[LessonNode]:
         return filter_lessons_post_nuke(
@@ -74,7 +77,7 @@ class ConfidenceEngine:
         if not self._reset_epoch:
             return rows
         cutoff = self._reset_epoch.get("nuke_completed_at")
-        return [o for o in rows if o.created_at and self._is_after(o.created_at, cutoff)]
+        return [o for o in rows if (ts := safe_record_timestamp(o)) and self._is_after(ts, cutoff)]
 
     @staticmethod
     def _is_after(created: datetime, cutoff_iso: Optional[str]) -> bool:
@@ -147,7 +150,7 @@ class ConfidenceEngine:
         runs = list(self.session.exec(select(ResearchBacktestRun).order_by(ResearchBacktestRun.id.desc()).limit(20)).all())
         if self._reset_epoch:
             cutoff = self._reset_epoch.get("nuke_completed_at")
-            runs = [r for r in runs if r.created_at and self._is_after(r.created_at, cutoff)]
+            runs = [r for r in runs if (ts := safe_record_timestamp(r)) and self._is_after(ts, cutoff)]
         regs = list(self.session.exec(select(StrategyRegistry)).all())
         paper_ok = sum(1 for r in regs if r.current_stage in ("paper_experiment", "paper_active", "paper_candidate"))
         score = 40.0 + min(30, len(runs) * 3) + min(20, paper_ok * 5)
@@ -162,7 +165,7 @@ class ConfidenceEngine:
 
     def _memory_score(self) -> dict[str, Any]:
         since = datetime.utcnow() - timedelta(days=14)
-        lessons = [l for l in self._post_nuke_lessons() if l.created_at and l.created_at >= since]
+        lessons = [l for l in self._post_nuke_lessons() if (ts := safe_record_timestamp(l)) and ts >= since]
         mistakes = [l for l in lessons if "block" in (l.memory_type or "") or "reject" in (l.memory_type or "")]
         fixed = [l for l in lessons if "outcome" in (l.memory_type or "") or "filled" in (l.memory_type or "")]
         score = 45.0 + min(25, len(lessons)) + min(15, len(fixed) * 2) - min(20, len(mistakes))
@@ -343,7 +346,7 @@ class ConfidenceEngine:
             closed = [r for r in rows if r.status == "closed"]
             adj = base * 0.7 if not closed else base
             if closed:
-                wins = sum(1 for c in closed if (c.realized_pl or 0) > 0)
+                wins = sum(1 for c in closed if (c.pl_dollars or 0) > 0)
                 adj = min(100, base * 0.4 + (wins / len(closed)) * 60)
             out.append({"symbol": sym, "score": round(adj, 1), "label": score_label(adj), "trades": len(rows)})
         return {"status": "ok", "symbols": sorted(out, key=lambda x: -x["score"])[:30]}

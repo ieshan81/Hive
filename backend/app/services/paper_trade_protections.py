@@ -61,6 +61,12 @@ PROTECTION_DEFAULTS: dict[str, Any] = {
     "churn_lookback_hours": 6.0,
     "churn_max_flat_trades": 4,
     "churn_required_edge_after_cost_bps": 40.0,
+    # LowProfitSetupGuard (setup/strategy-level cooldown)
+    "low_profit_setup_min_trades": 4,
+    "low_profit_setup_net_threshold_usd": 0.0,
+    # LosingStreakGuard (stricter edge after consecutive fee-negative exits)
+    "losing_streak_threshold": 3,
+    "losing_streak_required_edge_after_cost_bps": 40.0,
 }
 
 
@@ -135,6 +141,45 @@ def low_profit_symbol_guard(
     return ProtectionResult(evidence={"symbol": symbol, "symbol_net_pnl_usd": _num(symbol_net_pnl_usd)})
 
 
+def low_profit_setup_guard(
+    setup: str,
+    setup_net_pnl_usd: float,
+    setup_trade_count: int,
+    min_trades: int,
+    net_threshold_usd: float,
+) -> ProtectionResult:
+    """Cool down a whole setup/strategy whose recent realized net (after fees) is <= threshold."""
+    if setup and setup_trade_count >= max(1, min_trades) and _num(setup_net_pnl_usd) <= net_threshold_usd:
+        return ProtectionResult(
+            True,
+            "LOW_PROFIT_SETUP_COOLDOWN",
+            f"setup {setup} net {setup_net_pnl_usd:+.2f} over {setup_trade_count} recent trades ≤ "
+            f"{net_threshold_usd:+.2f} — cooled down",
+            {"setup": setup, "setup_net_pnl_usd": _num(setup_net_pnl_usd), "setup_trade_count": setup_trade_count},
+        )
+    return ProtectionResult(evidence={"setup": setup, "setup_net_pnl_usd": _num(setup_net_pnl_usd)})
+
+
+def losing_streak_guard(
+    recent_losing_streak: int,
+    streak_threshold: int,
+    edge_after_cost_bps: Optional[float],
+    required_edge_bps: float,
+) -> ProtectionResult:
+    """After a run of consecutive fee-negative exits, demand a stronger edge to re-enter."""
+    if streak_threshold > 0 and recent_losing_streak >= streak_threshold:
+        edge = _num(edge_after_cost_bps, fallback=-1e9) if edge_after_cost_bps is not None else None
+        if edge is None or edge < required_edge_bps:
+            return ProtectionResult(
+                True,
+                "LOSING_STREAK_COOLDOWN",
+                f"{recent_losing_streak} consecutive fee-negative exits — require edge ≥ "
+                f"{required_edge_bps:g}bps (have {('n/a' if edge is None else f'{edge:.0f}bps')})",
+                {"recent_losing_streak": recent_losing_streak, "required_edge_bps": required_edge_bps},
+            )
+    return ProtectionResult(evidence={"recent_losing_streak": recent_losing_streak})
+
+
 def cooldown_after_exit(
     symbol: str,
     minutes_since_last_exit: Optional[float],
@@ -202,6 +247,10 @@ class ProtectionContext:
     recent_flat_trades: int = 0
     signal_score: Optional[float] = None
     edge_after_cost_bps: Optional[float] = None
+    setup: str = ""
+    setup_net_pnl_usd: float = 0.0
+    setup_trade_count: int = 0
+    recent_losing_streak: int = 0
     warnings: list[str] = field(default_factory=list)
 
 
@@ -213,6 +262,7 @@ def collect_protection_context(
     drawdown_pct: float = 0.0,
     signal_score: Optional[float] = None,
     edge_after_cost_bps: Optional[float] = None,
+    setup: Optional[str] = None,
 ) -> ProtectionContext:
     """Read recent paper-trade telemetry for the protections. Fail-open: any read
     error degrades the affected field to a neutral value with a warning, never raises."""
@@ -222,6 +272,7 @@ def collect_protection_context(
         drawdown_pct=abs(_num(drawdown_pct)),
         signal_score=signal_score,
         edge_after_cost_bps=edge_after_cost_bps,
+        setup=str(setup or ""),
     )
 
     now = datetime.utcnow()
@@ -244,25 +295,47 @@ def collect_protection_context(
         flat = 0
         sym_net = 0.0
         sym_trades = 0
+        setup_net = 0.0
+        setup_trades = 0
+        setup_norm = str(setup or "")
+        realized_seq: list[tuple[datetime, float]] = []
         for r in rows:
             reason = str(getattr(r, "exit_reason", "") or "").lower()
-            if any(k in reason for k in ("stop", "invalidat", "emergency")):
+            # Protective stops only — a time_stop / max_hold is NOT a stop-loss exit.
+            if "time_stop" not in reason and "time-stop" not in reason and any(
+                k in reason for k in ("stop_loss", "stoploss", "stop loss", "invalidat", "emergency", "liquidat")
+            ):
                 stops += 1
             realized_raw = getattr(r, "realized_pnl", None)
             net = _num(realized_raw, 0.0) - _num(getattr(r, "fees_estimated", None), 0.0)
+            cat = getattr(r, "created_at", None)
             if realized_raw is not None and net <= 0:
                 flat += 1
+            if realized_raw is not None and isinstance(cat, datetime):
+                realized_seq.append((cat, net))
             if str(getattr(r, "symbol", "") or "").upper().replace("/", "") == sym_norm:
                 if realized_raw is not None:
                     sym_net += net
                     sym_trades += 1
-                cat = getattr(r, "created_at", None)
                 if isinstance(cat, datetime) and (last_exit_dt is None or cat > last_exit_dt):
                     last_exit_dt = cat
+            if setup_norm and str(getattr(r, "strategy_id", "") or "") == setup_norm and realized_raw is not None:
+                setup_net += net
+                setup_trades += 1
+        # Recent losing streak = consecutive fee-negative exits from the most recent outcome.
+        streak = 0
+        for _, net in sorted(realized_seq, key=lambda x: x[0], reverse=True):
+            if net <= 0:
+                streak += 1
+            else:
+                break
         ctx.recent_stop_exits = stops
         ctx.recent_flat_trades = flat
         ctx.symbol_net_pnl_usd = sym_net
         ctx.symbol_trade_count = sym_trades
+        ctx.setup_net_pnl_usd = setup_net
+        ctx.setup_trade_count = setup_trades
+        ctx.recent_losing_streak = streak
         if last_exit_dt is not None:
             ctx.minutes_since_last_exit = max(0.0, (now - last_exit_dt).total_seconds() / 60.0)
     except Exception as exc:  # fail-open
@@ -306,9 +379,32 @@ def run_all_protections(ctx: ProtectionContext, config: dict) -> ProtectionResul
             ctx.edge_after_cost_bps,
             _num(cfg["churn_required_edge_after_cost_bps"], 40.0),
         ),
+        low_profit_setup_guard(
+            ctx.setup,
+            ctx.setup_net_pnl_usd,
+            ctx.setup_trade_count,
+            int(cfg["low_profit_setup_min_trades"]),
+            _num(cfg["low_profit_setup_net_threshold_usd"], 0.0),
+        ),
+        losing_streak_guard(
+            ctx.recent_losing_streak,
+            int(cfg["losing_streak_threshold"]),
+            ctx.edge_after_cost_bps,
+            _num(cfg["losing_streak_required_edge_after_cost_bps"], 40.0),
+        ),
     ]
+    # Entry-quality diagnostics surfaced regardless of block/pass.
+    diagnostics = {
+        "edge_after_cost": ctx.edge_after_cost_bps,
+        "recent_symbol_pnl_after_fees": round(ctx.symbol_net_pnl_usd, 4),
+        "recent_setup_pnl_after_fees": round(ctx.setup_net_pnl_usd, 4),
+        "recent_flat_trades": ctx.recent_flat_trades,
+        "recent_losing_streak": ctx.recent_losing_streak,
+        "churn_penalty": ctx.recent_flat_trades + ctx.recent_losing_streak,
+    }
     for res in checks:
         if res.blocked:
             res.warnings = list(ctx.warnings)
+            res.evidence = {**res.evidence, **diagnostics, "entry_quality_block_reason": res.code}
             return res
-    return ProtectionResult(warnings=list(ctx.warnings), evidence={"protections": "clean"})
+    return ProtectionResult(warnings=list(ctx.warnings), evidence={"protections": "clean", **diagnostics})

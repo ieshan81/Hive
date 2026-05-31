@@ -20,10 +20,11 @@ TIMESTAMP_FALLBACK_ORDER: tuple[str, ...] = (
     "created_at",
     "opened_at",
     "entry_time",
-    "closed_at",
-    "exit_time",
     "submitted_at",
     "filled_at",
+    "closed_at",
+    "exit_time",
+    "updated_at",
 )
 
 _PNL_KEYS: tuple[str, ...] = ("realized_pnl", "realized_pl", "pnl", "net_pnl", "profit")
