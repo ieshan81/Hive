@@ -223,25 +223,50 @@ def get_portfolio_decisions(cycle_run_id: str = "latest", session: Session = Dep
 
 @router.get("/execution/logs")
 def get_execution_logs(
-    cycle_run_id: str = "latest",
+    cycle_run_id: str | None = None,
     scope: str | None = None,
     limit: int = 100,
     session: Session = Depends(get_session),
 ):
+    """Read-model: default (no cycle_run_id) returns recent logs across ALL cycles so the
+    portfolio ledger isn't empty when the latest cycle had no orders. cycle_run_id=latest
+    still returns the latest cycle's logs; scope=all returns all recent. Diagnostics included."""
+    from sqlmodel import select as _select
+
+    from app.database import ExecutionLog
     from app.services.execution_logs_query_service import list_execution_logs
     from app.services.query_service import execution_logs_for_cycle
 
-    if scope:
-        return list_execution_logs(
-            session,
-            scope=scope,
-            cycle_run_id=cycle_run_id if cycle_run_id != "latest" else None,
-            limit=min(limit, 200),
-        )
+    capped = min(max(1, limit), 200)
+    try:
+        total = len(session.exec(_select(ExecutionLog.id)).all())
+    except Exception:
+        total = None
+    latest_cid = resolve_cycle_run_id(session, "latest")
 
-    cid = resolve_cycle_run_id(session, cycle_run_id)
-    rows = execution_logs_for_cycle(session, cycle_run_id)
-    return {"status": "ok", "cycle_run_id": cid, "count": len(rows), "execution_logs": rows}
+    # Explicit single-cycle view (cycle_run_id=<id> or =latest), unless scope overrides.
+    if cycle_run_id and not scope:
+        cid = resolve_cycle_run_id(session, cycle_run_id)
+        rows = execution_logs_for_cycle(session, cycle_run_id)
+        return {
+            "status": "ok",
+            "filter_scope": "cycle",
+            "cycle_run_id": cid,
+            "latest_cycle_run_id": latest_cid,
+            "returned_count": len(rows),
+            "total_execution_log_count": total,
+            "count": len(rows),
+            "execution_logs": rows,
+        }
+
+    # Default (no cycle_run_id) or explicit scope -> recent logs across ALL cycles.
+    eff_scope = scope or "all"
+    result = list_execution_logs(session, scope=eff_scope, cycle_run_id=None, limit=capped)
+    result["filter_scope"] = result.get("scope", eff_scope)
+    result["returned_count"] = result.get("count", len(result.get("execution_logs", [])))
+    result["total_execution_log_count"] = total
+    result["latest_cycle_run_id"] = latest_cid
+    return result
 
 
 @router.get("/execution/paper/status")
@@ -317,6 +342,22 @@ def get_orders(cycle_run_id: str = "latest", limit: int = 50, session: Session =
     if cid:
         rows = [r for r in rows if r.get("cycle_run_id") == cid or not r.get("cycle_run_id")]
     return {"status": "ok", "cycle_run_id": cid, "count": len(rows), "orders": rows}
+
+
+@router.get("/orders/ledger")
+def get_orders_ledger(limit: int = 100, session: Session = Depends(get_session)):
+    """Read-only normalized order ledger (qty/type/price fallbacks + missing_fields)."""
+    from app.services.order_ledger_service import build_order_ledger
+
+    return build_order_ledger(session, limit=limit)
+
+
+@router.get("/trades/ledger")
+def get_trades_ledger(limit: int = 100, session: Session = Depends(get_session)):
+    """Read-only FIFO-paired trade ledger (normalized symbols; gross P&L; honest fees)."""
+    from app.services.order_ledger_service import build_trade_ledger
+
+    return build_trade_ledger(session, limit=limit)
 
 
 @router.get("/positions")

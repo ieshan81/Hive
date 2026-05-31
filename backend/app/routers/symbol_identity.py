@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, Query
+from fastapi import APIRouter, Body, Depends, Query
+from sqlmodel import Session
 
+from app.database import get_session
 from app.services import symbol_identity_service
 
 router = APIRouter(prefix="/api/symbols", tags=["symbol-identity"])
@@ -12,6 +14,15 @@ router = APIRouter(prefix="/api/symbols", tags=["symbol-identity"])
 @router.get("/identity")
 def identity_status():
     return symbol_identity_service.status()
+
+
+@router.get("/metadata")
+def symbol_metadata(symbols: str = Query(default=""), session: Session = Depends(get_session)):
+    """Fast per-symbol metadata for hover cards (no slow discovery). symbols=BTC/USD,ETH/USD,AAPL"""
+    from app.services.symbol_metadata_service import metadata_many
+
+    syms = [s.strip() for s in str(symbols or "").split(",") if s.strip()]
+    return metadata_many(session, syms)
 
 
 @router.get("/identity/{symbol:path}")
