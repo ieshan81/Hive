@@ -181,6 +181,34 @@ def on_startup():
                 )
     except Exception as exc:
         logger.warning("Alpha Factory startup bootstrap skipped: %s", exc)
+    # Self-heal session metrics: scorecards built before session-aware research (PR #21) lack
+    # session_* fields. Backfill them once from existing candle evidence (research-only, never
+    # changes verdicts/promotion, never places orders). force=False -> idempotent no-op after
+    # the first deploy. Fail-safe: never blocks boot.
+    try:
+        from app.database import AlphaScorecard
+        from app.database import engine as db_engine
+        from app.services.autonomous_alpha_factory_service import AutonomousAlphaFactoryService
+
+        with Session(db_engine) as session:
+            existing = int(session.exec(_sel(_func.count()).select_from(AlphaScorecard)).one() or 0)
+            if existing > 0:
+                svc = AutonomousAlphaFactoryService(session)
+                sout = svc.backfill_session_metrics(force=False, operator="startup")
+                session.commit()
+                if sout.get("scorecards_seen"):
+                    # Consolidate session memory once, only after a backfill that did work
+                    # (idempotent no-op on later boots). Research-only; never places orders.
+                    svc.run_memory_consolidation_cycle(operator="startup")
+                    session.commit()
+                    logger.info(
+                        "Alpha Factory startup session backfill: available=%s unavailable=%s seen=%s",
+                        sout.get("session_metrics_available"),
+                        sout.get("session_metrics_unavailable"),
+                        sout.get("scorecards_seen"),
+                    )
+    except Exception as exc:
+        logger.warning("Alpha Factory startup session backfill skipped: %s", exc)
     if not settings.alpaca_configured:
         logger.warning("ALPACA_API_KEY / ALPACA_SECRET_KEY not set — broker sync unavailable")
     if not settings.gemini_configured:

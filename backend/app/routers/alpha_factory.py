@@ -54,6 +54,12 @@ def near_misses(limit: int = 10, session: Session = Depends(get_session)):
     return AlphaResearchReadModelService(session).near_misses(limit=limit)
 
 
+@router.get("/session-summary")
+def session_summary(session: Session = Depends(get_session)):
+    """READ ONLY: consolidated market-session research truth (metrics, scorecards, near-misses, memory)."""
+    return AlphaResearchReadModelService(session).session_summary()
+
+
 @router.get("/research-runs")
 def research_runs(limit: int = 50, session: Session = Depends(get_session)):
     """READ ONLY: autonomous alpha research run history."""

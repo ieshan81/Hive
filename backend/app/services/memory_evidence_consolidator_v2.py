@@ -76,6 +76,35 @@ class MemoryEvidenceConsolidatorV2:
             "latest": self._lesson_public(max(rows, key=lambda r: r.updated_at, default=None)),
         }
 
+    SESSION_MEMORY_TYPES = (
+        "validated_session_candidate",
+        "rejected_session_setup",
+        "session_near_miss",
+        "session_sample_insufficient",
+    )
+
+    def session_summary(self) -> dict[str, Any]:
+        """Consolidated session-memory truth (no raw spam): one lesson per session pattern."""
+        rows = list(
+            self.session.exec(
+                select(LessonNode).where(
+                    LessonNode.memory_type.in_(list(self.SESSION_MEMORY_TYPES)),
+                    LessonNode.status == "active",
+                )
+            ).all()
+        )
+        by_type: dict[str, int] = {}
+        for r in rows:
+            by_type[r.memory_type] = by_type.get(r.memory_type, 0) + 1
+        return {
+            "status": "ok",
+            "session_memory_count": len(rows),
+            "by_type": by_type,
+            "can_influence_ranking_count": sum(1 for r in rows if r.can_influence_ranking),
+            "raw_hidden_by_default": True,
+            "lessons": [self._lesson_public(r) for r in sorted(rows, key=lambda r: r.updated_at or datetime.min, reverse=True)[:50]],
+        }
+
     @staticmethod
     def _stable_pattern_key(sc: AlphaScorecard) -> str:
         timeframe = sc.timeframe or "5Min"

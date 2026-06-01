@@ -42,6 +42,21 @@ class AlphaResearchReadModelService:
     def near_misses(self, *, limit: int = 10) -> dict[str, Any]:
         return self.factory.get_near_misses(limit=limit)
 
+    def session_summary(self, *, limit: int = 200) -> dict[str, Any]:
+        """READ ONLY: consolidated session research truth for UI/diagnostics."""
+        near = self.factory.get_near_misses(limit=50).get("near_misses", [])
+        session_near = [
+            n for n in near
+            if n.get("best_session") or n.get("session_blocker") or (n.get("session_sample_size") or 0) > 0
+        ]
+        return {
+            "status": "ok",
+            "summary": self.factory.get_session_summary(),
+            "session_scorecards": self.factory.get_session_scorecards(limit=limit).get("session_scorecards", []),
+            "session_near_misses": session_near,
+            "session_memory": MemoryEvidenceConsolidatorV2(self.session, self.config).session_summary(),
+        }
+
     def research_runs(self, *, limit: int = 50) -> dict[str, Any]:
         jobs = list(
             self.session.exec(
