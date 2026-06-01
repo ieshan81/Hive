@@ -157,7 +157,7 @@ class OpenPositionReviewService:
             )
 
         spike = MemeVolatilitySpikeDetector(self.session, self.config).evaluate_symbol(symbol)
-        return {
+        out = {
             **truth,
             **hold,
             "tier": tier,
@@ -184,6 +184,13 @@ class OpenPositionReviewService:
             "live_trading_locked": True,
             "reviewed_at": datetime.utcnow().isoformat() + "Z",
         }
+        try:
+            from app.services.exit_decision_service import classify_exit_decision
+
+            out.update(classify_exit_decision(out))
+        except Exception:
+            pass
+        return out
 
     def _fee_aware_max_hold(
         self, pos: PositionSnapshot, true_hold: float, effective_max: float, *, signal_valid: bool = True

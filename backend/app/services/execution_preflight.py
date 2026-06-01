@@ -133,30 +133,38 @@ def _position_symbol(p: Any) -> str:
         return ""
 
 
-def _held_qty_for_symbol(session: Session, positions: list, symbol: str) -> float:
-    """Largest known held qty for a symbol across broker positions + local snapshots.
+def _held_qty_for_symbol(
+    session: Session,
+    positions: list,
+    symbol: str,
+    *,
+    broker_truth_available: bool = True,
+) -> float:
+    """Broker-truth duplicate quantity for entries.
 
-    Used for duplicate-buy / averaging-down prevention. We take the max (not the
-    sum) of the broker-position view and the local snapshot view so a stale row in
-    either source still blocks a re-buy, without double-counting.
+    Broker positions win over stale local memory. If broker truth is available
+    and flat, stale local open rows are diagnostic evidence, not a duplicate-buy
+    blocker. If broker truth is unavailable, local open trades remain a fallback
+    block through ExposureTruthService.
     """
-    target = (symbol or "").upper()
-    qty = 0.0
-    for p in positions or []:
-        if _position_symbol(p) == target:
-            qty = max(qty, _position_qty(p))
     try:
-        rows = session.exec(
-            select(PositionSnapshot).where(
-                PositionSnapshot.symbol == symbol,
-                PositionSnapshot.qty > 0,
-            )
-        ).all()
-        for r in rows:
-            qty = max(qty, float(getattr(r, "qty", 0) or 0))
+        from app.services.exposure_truth_service import ExposureTruthService
+
+        dupe = ExposureTruthService(session).duplicate_buy_decision(
+            symbol,
+            broker_positions=positions,
+            broker_truth_available=broker_truth_available,
+        )
+        if dupe.get("blocked"):
+            return float(dupe.get("broker_qty") or dupe.get("local_position_qty") or 1.0)
+        return 0.0
     except Exception:
-        pass
-    return qty
+        target = (symbol or "").upper()
+        qty = 0.0
+        for p in positions or []:
+            if _position_symbol(p) == target:
+                qty = max(qty, _position_qty(p))
+        return qty
 
 
 def _recent_buy_order_exists(session: Session, symbol: str, *, minutes: int) -> bool:
@@ -303,7 +311,25 @@ def run_preflight(
         apl = config.get("autonomous_paper_learning") or {}
         block_dupe = bool(apl.get("no_duplicate_symbol_buy", True)) or bool(apl.get("no_averaging_down", True))
         if block_dupe:
-            held = _held_qty_for_symbol(session, positions, cand.symbol)
+            broker_truth_available = not bool(getattr(alpaca, "broker_sync_rate_limited", False))
+            try:
+                from app.services.exposure_truth_service import ExposureTruthService
+
+                evidence["duplicate_buy"] = ExposureTruthService(session, config).duplicate_buy_decision(
+                    cand.symbol,
+                    broker_positions=positions,
+                    broker_truth_available=broker_truth_available,
+                )
+                if evidence["duplicate_buy"].get("allowed_reason"):
+                    evidence["duplicate_buy_allowed_reason"] = evidence["duplicate_buy"].get("allowed_reason")
+            except Exception as exc:
+                evidence["duplicate_buy_error"] = type(exc).__name__
+            held = _held_qty_for_symbol(
+                session,
+                positions,
+                cand.symbol,
+                broker_truth_available=broker_truth_available,
+            )
             if held > 0:
                 return PreflightResult(
                     False,
