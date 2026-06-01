@@ -84,6 +84,35 @@ def test_near_misses_and_breakdown() -> None:
           f"breakdown={fb}; cost blockers={sorted(blockers)} — PASS")
 
 
+def test_old_rows_without_round_trip_not_mislabeled_missing_cost_model() -> None:
+    """A pre-existing scorecard with a null round-trip cost_bps but populated spread/fee and a
+    real negative after-cost edge must NOT be reported as 'missing_cost_model'."""
+    from app.database import AlphaScorecard
+    from app.services.autonomous_alpha_factory_service import AutonomousAlphaFactoryService
+
+    s = _mem()
+    # Mirrors live prod rows created before the cost_bps column was populated.
+    s.add(AlphaScorecard(symbol="AVAX/USD", normalized_symbol="AVAXUSD", asset_class="crypto",
+                         strategy_family="momentum_continuation", strategy_id="crypto_push_pull_momentum",
+                         sample_size=26, expectancy=-0.02, profit_factor=0.5, max_drawdown_pct=9.0,
+                         cost_bps=None, spread_bps=20.0, slippage_bps=20.0, fee_bps=25.0,
+                         edge_after_cost_bps=-136.0, verdict="rejected"))
+    s.add(AlphaScorecard(symbol="LINK/USD", normalized_symbol="LINKUSD", asset_class="crypto",
+                         strategy_family="momentum_continuation", strategy_id="crypto_push_pull_baseline",
+                         sample_size=0, expectancy=None, profit_factor=None, max_drawdown_pct=None,
+                         cost_bps=None, spread_bps=20.0, slippage_bps=20.0, fee_bps=25.0,
+                         edge_after_cost_bps=None, verdict="unproven"))
+    s.commit()
+    fac = AutonomousAlphaFactoryService(s, CFG)
+    fb = fac.get_status()["alpha_failure_breakdown"]
+    assert fb.get("missing_cost_model", 0) == 0, f"old rows mislabeled missing_cost_model: {fb}"
+    assert fb.get("negative_expectancy", 0) >= 1, fb     # AVAX: real reason surfaced
+    assert fb.get("data_insufficient", 0) >= 1, fb        # LINK: zero sample
+    s.close()
+    print(f"failure-breakdown: null round-trip not mislabeled; honest categories={fb} — PASS")
+
+
 if __name__ == "__main__":
     test_near_misses_and_breakdown()
+    test_old_rows_without_round_trip_not_mislabeled_missing_cost_model()
     print("ALL PASS: verify_alpha_near_misses_and_failure_breakdown")

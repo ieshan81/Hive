@@ -826,10 +826,13 @@ class AutonomousAlphaFactoryService:
         pf = sc.profit_factor
         edge = sc.edge_after_cost_bps
         gross = (sc.scorecard_json or {}).get("gross_expectancy_bps")
-        if sc.cost_bps is None:
-            return "missing_cost_model"
         if sample == 0:
             return "data_insufficient"
+        # Only "missing_cost_model" when there is genuinely no cost evidence at all — a null
+        # round-trip on a row that still has spread/slippage/fee is not a missing model.
+        has_cost = any(v is not None for v in (sc.cost_bps, sc.spread_bps, sc.slippage_bps, sc.fee_bps))
+        if not has_cost:
+            return "missing_cost_model"
         if exp is not None and exp <= 0:
             return "negative_expectancy"
         if pf is not None and pf < min_pf:
