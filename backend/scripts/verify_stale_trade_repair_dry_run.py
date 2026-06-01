@@ -13,6 +13,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 import app.database  # noqa: F401
 from app.database import AccountSnapshot, TradeRecord
+from app.services.exposure_truth_service import ExposureTruthService
 from app.services.trade_state_repair_service import TradeStateRepairService
 
 
@@ -32,7 +33,12 @@ def main() -> None:
         )
         session.add(trade)
         session.commit()
-        out = TradeStateRepairService(session).repair_stale_open_trades_when_broker_flat(dry_run=True)
+        original = ExposureTruthService.fresh_broker_positions
+        ExposureTruthService.fresh_broker_positions = lambda self: ([], True, {"source": "fixture_fresh_broker_flat"})
+        try:
+            out = TradeStateRepairService(session).repair_stale_open_trades_when_broker_flat(dry_run=True)
+        finally:
+            ExposureTruthService.fresh_broker_positions = original
         session.refresh(trade)
     assert out["status"] == "ok", out
     assert out["dry_run"] is True and out["affected_count"] == 1, out

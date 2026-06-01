@@ -98,8 +98,8 @@ class OpenPositionReviewService:
             if action == "exit_recommended":
                 self._stale_memory(symbol, strategy, true_hold, effective_max, pos)
         elif true_hold >= effective_max * 0.9:
-            action = "exit_recommended"
-            reason = "at_or_near_max_hold"
+            action = "tighten_stop"
+            reason = "near_max_hold_tighten_only"
             stale_status = "warning"
         elif true_hold > effective_max * 0.8:
             action = "tighten_stop"

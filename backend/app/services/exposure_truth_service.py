@@ -7,12 +7,11 @@ it is available. This service never places orders and never deletes records.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any, Optional
 
 from sqlmodel import Session, select
 
-from app.database import AccountSnapshot, PositionSnapshot, TradeRecord
+from app.database import PositionSnapshot, TradeRecord
 from app.services.order_ledger_service import display_symbol, normalize_symbol
 
 
@@ -84,6 +83,36 @@ class ExposureTruthService:
         self.session = session
         self.config = config or {}
 
+    def fresh_broker_positions(self) -> tuple[list[Any], bool, dict[str, Any]]:
+        """Fetch authoritative broker positions once.
+
+        Cached PositionSnapshot rows are useful fallback evidence, but they are
+        not broker truth for repair/decision-state decisions. A caller that needs
+        broker authority should call this once and pass the returned positions
+        into get_symbol_exposure/stale_local_summary.
+        """
+        try:
+            from app.services.alpaca_adapter import AlpacaAdapter
+
+            adapter = AlpacaAdapter(self.session)
+            if not adapter.configured:
+                return [], False, {"source": "fresh_broker_sync", "reason": "alpaca_not_configured"}
+            positions = adapter.sync_positions_cached(force=True)
+            if getattr(adapter, "broker_sync_rate_limited", False):
+                return [], False, {"source": "fresh_broker_sync", "reason": "broker_sync_rate_limited"}
+            if getattr(adapter, "broker_sync_failed", False):
+                return [], False, {"source": "fresh_broker_sync", "reason": "broker_sync_failed"}
+            return list(positions or []), True, {
+                "source": "fresh_broker_sync",
+                "position_count": len(positions or []),
+            }
+        except Exception as exc:
+            return [], False, {
+                "source": "fresh_broker_sync",
+                "reason": "broker_sync_failed",
+                "error_type": type(exc).__name__,
+            }
+
     def _broker_truth_available(
         self,
         *,
@@ -94,26 +123,10 @@ class ExposureTruthService:
             return bool(explicit), {"source": "explicit", "broker_truth_available": bool(explicit)}
         if broker_positions is not None:
             return True, {"source": "provided_positions", "position_count": len(broker_positions or [])}
-        latest_account = self.session.exec(
-            select(AccountSnapshot).order_by(AccountSnapshot.synced_at.desc()).limit(1)
-        ).first()
-        latest_pos = self.session.exec(
-            select(PositionSnapshot).order_by(PositionSnapshot.synced_at.desc()).limit(1)
-        ).first()
-        latest_sync = latest_account.synced_at if latest_account else (latest_pos.synced_at if latest_pos else None)
-        max_age_minutes = float(
-            ((self.config.get("autonomous_paper_learning") or {}).get("broker_truth_max_age_minutes") or 30)
-        )
-        available = False
-        age_seconds = None
-        if latest_sync:
-            age_seconds = max(0.0, (datetime.utcnow() - latest_sync).total_seconds())
-            available = age_seconds <= max_age_minutes * 60.0
-        return available, {
-            "source": "cached_broker_snapshot",
-            "latest_sync_at": latest_sync.isoformat() + "Z" if latest_sync else None,
-            "age_seconds": round(age_seconds, 1) if age_seconds is not None else None,
-            "max_age_minutes": max_age_minutes,
+        return False, {
+            "source": "local_fallback_only",
+            "broker_truth_available": False,
+            "reason": "fresh_or_explicit_broker_positions_required",
         }
 
     def _position_rows(self, broker_positions: Optional[list[Any]]) -> list[Any]:
@@ -234,19 +247,36 @@ class ExposureTruthService:
             **exposure,
         }
 
-    def stale_local_summary(self) -> dict[str, Any]:
+    def stale_local_summary(
+        self,
+        *,
+        broker_positions: Optional[list[Any]] = None,
+        broker_truth_available: Optional[bool] = None,
+    ) -> dict[str, Any]:
         rows = list(self.session.exec(select(TradeRecord).where(TradeRecord.status == "open")).all())
         symbols = sorted({display_symbol(r.symbol) for r in rows})
         broker_flat_symbols = []
         for sym in symbols:
-            exp = self.get_symbol_exposure(sym)
+            exp = self.get_symbol_exposure(
+                sym,
+                broker_positions=broker_positions,
+                broker_truth_available=broker_truth_available,
+            )
             if exp.get("stale_local_open"):
                 broker_flat_symbols.append(sym)
+        exposure_by_symbol = {
+            sym: self.get_symbol_exposure(
+                sym,
+                broker_positions=broker_positions,
+                broker_truth_available=broker_truth_available,
+            )
+            for sym in broker_flat_symbols
+        }
         return {
             "stale_local_open_trade_count": len(rows),
             "stale_local_open_symbols": symbols,
             "broker_flat_stale_trade_count": sum(
-                int(self.get_symbol_exposure(sym).get("local_open_trade_count") or 0)
+                int(exposure_by_symbol[sym].get("local_open_trade_count") or 0)
                 for sym in broker_flat_symbols
             ),
             "broker_flat_stale_symbols": broker_flat_symbols,
