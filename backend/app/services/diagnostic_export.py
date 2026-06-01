@@ -999,6 +999,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             StrategyScorecard,
             StrategyValidationResult,
             SystemValidationAudit,
+            AlphaScorecard,
         )
         from app.services.strategy_registry_service import StrategyRegistryService
 
@@ -1084,6 +1085,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         from app.services.strategy_proposal_service import StrategyProposalService
         from app.services.promotion_readiness_service import PromotionReadinessService
         from app.services.research_lab_service import ResearchLabService
+        from app.services.alpha_research_read_model_service import AlphaResearchReadModelService
 
         apl_svc = AutonomousPaperLearningService(session, cfg_brain)
         apl_sched = AutonomousPaperScheduler(session, cfg_brain)
@@ -1091,6 +1093,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         elig_svc = AccountPairEligibilityService(session, cfg_brain)
         prop_svc = StrategyProposalService(session, cfg_brain)
         promo_svc = PromotionReadinessService(session, cfg_brain)
+        alpha_read = AlphaResearchReadModelService(session, cfg_brain)
         exit_only_svc = FastTrainingExitOnlyService(session, cfg_brain)
         exit_diag = build_exit_diagnostic_exports(session, cfg_brain)
         candle_svc = TechnicalCandleAnalysisService(session, cfg_brain)
@@ -1129,6 +1132,16 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             "experiment_blocked_strategies.json": elig.get("blocked", []),
             "strategy_lifecycle_events.json": [_serialize_row(r) for r in session.exec(select(StrategyLifecycleEvent)).all()],
             "strategy_scorecards.json": [_serialize_row(r) for r in session.exec(select(StrategyScorecard)).all()],
+            "alpha_factory_status.json": safe_export_section(
+                "alpha_factory_status.json", alpha_read.status, export_errors
+            ),
+            "alpha_scorecards.json": [_serialize_row(r) for r in session.exec(select(AlphaScorecard)).all()],
+            "alpha_best_candidates.json": safe_export_section(
+                "alpha_best_candidates.json", alpha_read.best_candidates, export_errors
+            ),
+            "alpha_memory_summary.json": safe_export_section(
+                "alpha_memory_summary.json", alpha_read.memory_summary, export_errors
+            ),
             "strategy_validation_results.json": [_serialize_row(r) for r in session.exec(select(StrategyValidationResult)).all()],
             "strategy_promotion_audit.json": [_serialize_row(r) for r in session.exec(select(SystemValidationAudit)).all()],
             "strategy_rejections.json": ensure_strategy_rejection_records(session),

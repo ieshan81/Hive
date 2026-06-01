@@ -7,6 +7,7 @@ import { apiGet, apiPostOperator } from "@/lib/apiClient";
 
 type ResearchStatus = {
   agent_loop_status?: Record<string, unknown>;
+  alpha_factory?: Record<string, unknown>;
 };
 
 type AgentRuns = {
@@ -41,11 +42,15 @@ export function AgentGraphStatusPanel() {
   }
 
   const loop = status?.agent_loop_status || {};
+  const alpha = status?.alpha_factory || {};
 
   return (
     <GlassPanel title="Agent Graph" icon={<GitBranch className="h-4 w-4" />}>
       <p className="text-[10px] text-slate-500 mb-3">
         Research agents write auditable state. They cannot submit orders, approve promotion, or change live flags.
+      </p>
+      <p className="mb-3 rounded border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] text-slate-400">
+        Alpha Factory: {String(alpha.plain_english ?? "no autonomous alpha state yet")}
       </p>
       <div className="grid grid-cols-3 gap-2 text-[10px] mb-3">
         <div className="rounded border border-white/10 p-2">

@@ -117,6 +117,18 @@ RESEARCH_MEMORY_TYPES = frozenset(
         "repeated_losing_parameter_family",
         "strategy_discovery_verdict",
         "backtest_research_lesson",
+        "alpha_evidence",
+        "validated_alpha_candidate",
+        "rejected_alpha_candidate",
+        "alpha_candidate_unproven",
+        "strategy_failure",
+        "churn_pattern",
+        "cost_spread_drag",
+        "data_quality_issue",
+        "paper_outcome_lesson",
+        "autonomous_research_lesson",
+        "autonomous_promotion_lesson",
+        "autonomous_quarantine_lesson",
     }
 )
 
@@ -203,6 +215,24 @@ EXPERIMENT_MEMORY_TYPES = frozenset(
 
 def memory_graph_cluster(memory_type: str) -> str:
     """Cluster id for graph hub nodes."""
+    if memory_type in ("validated_alpha_candidate", "alpha_evidence"):
+        return "cluster-alpha-candidates"
+    if memory_type in ("rejected_alpha_candidate", "strategy_failure"):
+        return "cluster-strategy-failures"
+    if memory_type in ("churn_pattern",):
+        return "cluster-churn-patterns"
+    if memory_type in ("cost_spread_drag",):
+        return "cluster-cost"
+    if memory_type in ("data_quality_issue", "alpha_candidate_unproven"):
+        return "cluster-data-stale"
+    if memory_type in ("paper_outcome_lesson",):
+        return "cluster-paper-outcomes"
+    if memory_type in ("autonomous_research_lesson",):
+        return "cluster-autonomous-research"
+    if memory_type in ("autonomous_promotion_lesson",):
+        return "cluster-autonomous-promotions"
+    if memory_type in ("autonomous_quarantine_lesson",):
+        return "cluster-autonomous-quarantines"
     if memory_type in EXPERIMENT_MEMORY_TYPES:
         return "cluster-experiments"
     if memory_type == "rejected_strategy_memory":
@@ -227,6 +257,13 @@ def memory_graph_cluster(memory_type: str) -> str:
 
 
 HIVE_BRAIN_CLUSTERS = {
+    "cluster-alpha-candidates": "Alpha Candidates",
+    "cluster-strategy-failures": "Strategy Failures",
+    "cluster-churn-patterns": "Churn Patterns",
+    "cluster-paper-outcomes": "Paper Outcomes",
+    "cluster-autonomous-research": "Autonomous Research",
+    "cluster-autonomous-promotions": "Autonomous Promotions",
+    "cluster-autonomous-quarantines": "Autonomous Quarantines",
     "cluster-broker-truth": "Broker Truth",
     "cluster-active-positions": "Active Positions",
     "cluster-strategy-lessons": "Strategy Lessons",

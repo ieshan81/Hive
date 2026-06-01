@@ -17,6 +17,7 @@ export const ALLOWED_POST_PREFIXES = [
   "/api/backtesting/",
   "/api/lab/",
   "/api/research/",
+  "/api/alpha-factory/",
   "/api/research/targeted-experiment/",
   "/api/tradingview/",
   "/api/live-flags/",

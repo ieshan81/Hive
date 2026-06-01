@@ -58,6 +58,15 @@ type Cockpit = {
     agent_loop_status?: { latest_status?: string | null; orders_submitted?: number; live_flags_changed?: boolean } | null;
     next_research_action?: string;
   };
+  alpha_factory?: {
+    can_trade_paper_now?: boolean;
+    reason?: string;
+    paper_candidate_count?: number;
+    rejected_strategy_count?: number;
+    best_candidate?: { symbol?: string; strategy_family?: string; edge_after_cost_bps?: number } | null;
+    autonomous_status?: { plain_english?: string; enabled?: boolean } | null;
+    plain_english?: string;
+  };
   paper_execution?: {
     paper_broker_connected?: boolean;
     paper_broker?: boolean;
@@ -128,6 +137,7 @@ export function CockpitDashboard() {
   );
   const canSubmitEntries = Boolean(paper.bot_can_submit_paper_entries_now ?? paper.can_place_paper_orders_now ?? ctrl.bot_can_place);
   const drawdownReason = paper.drawdown_blocker?.message;
+  const alpha = data?.alpha_factory ?? {};
 
   async function checkPaperReadiness() {
     setCheckingReadiness(true);
@@ -290,6 +300,34 @@ export function CockpitDashboard() {
           </p>
         </GlassPanel>
       )}
+
+      <GlassPanel title="Alpha Factory" icon={<FlaskConical className="h-4 w-4" />}>
+        <div className="grid gap-3 md:grid-cols-4 text-xs">
+          <div>
+            <p className="text-slate-500 uppercase text-[10px]">Paper entry</p>
+            <p className={alpha.can_trade_paper_now ? "text-emerald-300 font-semibold" : "text-amber-300 font-semibold"}>
+              {alpha.can_trade_paper_now ? "evidence ready" : "blocked"}
+            </p>
+          </div>
+          <div>
+            <p className="text-slate-500 uppercase text-[10px]">Candidates</p>
+            <p className="text-white font-semibold">{alpha.paper_candidate_count ?? 0}</p>
+          </div>
+          <div>
+            <p className="text-slate-500 uppercase text-[10px]">Rejected</p>
+            <p className="text-white font-semibold">{alpha.rejected_strategy_count ?? 0}</p>
+          </div>
+          <div>
+            <p className="text-slate-500 uppercase text-[10px]">Best setup</p>
+            <p className="text-white font-semibold">{alpha.best_candidate?.symbol ?? "none"}</p>
+          </div>
+        </div>
+        <p className="mt-3 text-[11px] text-slate-400">
+          {alpha.plain_english ??
+            alpha.autonomous_status?.plain_english ??
+            "No alpha scorecards yet. Research must produce evidence before paper entry."}
+        </p>
+      </GlassPanel>
 
       {data?.ai_brain && (data.ai_brain.active_lessons ?? 0) > 0 && (
         <p className="text-[10px] text-violet-200/80">

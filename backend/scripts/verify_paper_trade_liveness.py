@@ -31,6 +31,7 @@ from sqlmodel import Session, select  # noqa: E402
 
 from app.database import (  # noqa: E402
     AccountSnapshot,
+    AlphaScorecard,
     HistoricalBar,
     OrderRecord,
     PaperExperimentConfig,
@@ -227,6 +228,36 @@ def _seed_bars(session: Session) -> None:
 
 def _seed_learning_decision(session: Session) -> PaperExperimentDecision:
     session.add(
+        AlphaScorecard(
+            symbol=SYMBOL,
+            normalized_symbol="BTCUSD",
+            asset_class="crypto",
+            strategy_family="momentum_continuation",
+            strategy_id="crypto_push_pull_baseline",
+            timeframe="5Min",
+            current_stage="paper_candidate",
+            sample_size=24,
+            backtest_count=1,
+            walk_forward_count=1,
+            win_rate=0.58,
+            expectancy=0.004,
+            profit_factor=1.22,
+            max_drawdown_pct=4.0,
+            cost_bps=2.0,
+            spread_bps=1.36,
+            slippage_bps=0.0,
+            fee_bps=0.0,
+            edge_after_cost_bps=38.0,
+            data_freshness_status="fresh",
+            bar_count=48,
+            quote_freshness="fresh",
+            verdict="paper_candidate",
+            promotion_reason="Fixture alpha evidence allows bounded paper liveness.",
+            evidence_ids_json=["fixture_backtest", "fixture_walk_forward"],
+            scorecard_json={"fixture": True, "composite_score": 1.0},
+        )
+    )
+    session.add(
         PaperExperimentConfig(
             profile="aggressive_paper_learning",
             mode_enabled=True,
@@ -317,6 +348,7 @@ def main() -> None:
 
     proof = {
         "candidate_symbol": SYMBOL,
+        "alpha_candidate_evidence": "paper_candidate scorecard fixture",
         "sizing_result": {"approved_notional": decision.approved_notional, "order_qty": order.qty},
         "cage_approval": {
             "execution_status": result["execution_status"],

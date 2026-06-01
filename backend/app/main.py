@@ -11,6 +11,7 @@ from app.database import init_db
 from app.routers import (
     account_eligibility,
     admin,
+    alpha_factory,
     ai_manager,
     api,
     autonomous_paper_learning,
@@ -129,6 +130,7 @@ app.include_router(strategy.router)
 app.include_router(live_promotion.router)
 app.include_router(system_meta.router)
 app.include_router(admin.router)
+app.include_router(alpha_factory.router)
 app.include_router(control_center.router)
 app.include_router(sentiment.router)
 app.include_router(ai_advisor.router)

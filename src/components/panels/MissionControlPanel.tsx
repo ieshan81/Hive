@@ -37,6 +37,7 @@ type MissionControlStatus = {
   diagnostics?: Record<string, unknown>;
   worker?: Record<string, unknown>;
   research_os?: Record<string, unknown>;
+  alpha_factory?: Record<string, unknown>;
   latest_order_summary?: Record<string, unknown>;
   next_recommended_operator_action?: string;
   system_warnings?: string[];
@@ -117,6 +118,7 @@ export function MissionControlPanel() {
   const funnel = universe.funnel ?? {};
   const diagnostics = data?.diagnostics ?? {};
   const researchOs = data?.research_os ?? {};
+  const alphaFactory = data?.alpha_factory ?? {};
   const memory = data?.memory ?? {};
   const pushPull = data?.push_pull ?? {};
   const latestOrder = (data?.latest_order_summary?.latest_order ?? null) as Record<string, unknown> | null;
@@ -228,6 +230,17 @@ export function MissionControlPanel() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
+        <GlassPanel title="Alpha Factory" icon={<FlaskConical className="h-4 w-4" />}>
+          <div className="grid grid-cols-3 gap-2">
+            <Stat labelText="Paper" value={alphaFactory.can_trade_paper_now ? "Ready" : "Blocked"} tone={alphaFactory.can_trade_paper_now ? "text-emerald-300" : "text-amber-300"} />
+            <Stat labelText="Candidates" value={String(alphaFactory.paper_candidate_count ?? 0)} />
+            <Stat labelText="Rejected" value={String(alphaFactory.rejected_strategy_count ?? 0)} />
+          </div>
+          <p className="mt-2 text-[11px] text-slate-500">
+            {String(alphaFactory.plain_english ?? "No alpha scorecards yet. Research cycle must create evidence before paper entry.")}
+          </p>
+        </GlassPanel>
+
         <GlassPanel title="Research OS" icon={<FlaskConical className="h-4 w-4" />}>
           <div className="grid grid-cols-3 gap-2">
             <Stat labelText="Jobs" value={String(researchOs.research_jobs_running ?? 0)} />

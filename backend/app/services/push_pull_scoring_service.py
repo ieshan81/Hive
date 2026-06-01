@@ -148,6 +148,55 @@ def _paper_probe_eligible(row: dict[str, Any], config: Optional[dict] = None) ->
     return bool(data_ready)
 
 
+def _apply_alpha_evidence_gate(session: Session, config: dict, ranked: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Require autonomous alpha evidence before a paper entry can be selected.
+
+    This keeps exploration from becoming random churn: soft scoring can find a
+    setup, but the Alpha Factory must have produced a paper-candidate scorecard
+    before the scan can create an approved paper decision.
+    """
+
+    if not bool(cfg_get(config, "alpha_factory.require_alpha_candidate_for_paper_entry", True)):
+        return ranked, next((r for r in ranked if r.get("entry_allowed")), None)
+    try:
+        from app.services.autonomous_alpha_factory_service import AutonomousAlphaFactoryService
+
+        alpha = AutonomousAlphaFactoryService(session, config)
+    except Exception as exc:
+        updated = []
+        for row in ranked:
+            if row.get("entry_allowed"):
+                row = dict(row)
+                row["entry_allowed"] = False
+                row["no_trade_reason"] = f"ALPHA_GATE_ERROR:{type(exc).__name__}"
+                row["alpha_candidate_gate"] = {"allowed": False, "reason": row["no_trade_reason"]}
+            updated.append(row)
+        return updated, None
+    updated: list[dict[str, Any]] = []
+    selected: dict[str, Any] | None = None
+    for row in ranked:
+        if not row.get("entry_allowed"):
+            updated.append(row)
+            continue
+        gate = alpha.can_trade_paper(
+            str(row.get("symbol") or ""),
+            strategy_id=str(row.get("strategy_id") or "") or None,
+        )
+        row = dict(row)
+        row["alpha_candidate_gate"] = gate
+        if gate.get("allowed"):
+            row["alpha_scorecard"] = gate.get("scorecard")
+            if selected is None:
+                selected = row
+        else:
+            row["entry_allowed"] = False
+            row["no_trade_reason"] = gate.get("reason") or "ALPHA_NOT_READY"
+            row["soft_concerns"] = list(dict.fromkeys((row.get("soft_concerns") or []) + [row["no_trade_reason"]]))
+            row["thesis"] = gate.get("plain_english") or "Autonomous alpha evidence is not ready for this setup."
+        updated.append(row)
+    return updated, selected
+
+
 def _metrics_from_bars(bars: list[dict], quote: dict) -> dict[str, Any]:
     if len(bars) < 3:
         return {}
@@ -527,12 +576,14 @@ def score_active_universe(
                 ranked[idx] = _promote_paper_row(row)
                 selected = ranked[idx]
                 break
+    ranked, selected = _apply_alpha_evidence_gate(session, cfg, ranked)
     rejected = [
         {
             "symbol": r.get("symbol"),
             "trade_quality_score": r.get("trade_quality_score"),
             "no_trade_reason": r.get("no_trade_reason"),
             "push_score": r.get("push_score"),
+            "alpha_candidate_gate": r.get("alpha_candidate_gate"),
         }
         for r in ranked
         if r.get("symbol") != (selected or {}).get("symbol")
