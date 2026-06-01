@@ -84,8 +84,82 @@ class AlphaResearchReadModelService:
     def memory_summary(self) -> dict[str, Any]:
         return MemoryEvidenceConsolidatorV2(self.session, self.config).summary()
 
+    def get_unified_autonomous_alpha_status(self) -> dict[str, Any]:
+        """Canonical autonomous status unifying the Alpha Factory scheduler with the legacy
+        autonomous_research worker. Never reports 'never_run' when legacy research has run."""
+        from sqlmodel import func
+
+        from app.database import AlphaScorecard, ResearchBacktestRun, WalkForwardResult
+        from app.services.engine_config import cfg_get
+
+        def _ts(v: Any) -> Optional[str]:
+            return v.isoformat() + "Z" if hasattr(v, "isoformat") else None
+
+        sched = AutonomousAlphaScheduler(self.session, self.config).status()
+        alpha_enabled = bool(cfg_get(self.config, "alpha_factory.scheduler_enabled", False))
+        old_enabled = bool(
+            cfg_get(self.config, "autonomous_paper_learning.autonomous_research.autonomous_backtest_worker_enabled", True)
+        )
+        latest_run = self.session.exec(
+            select(ResearchBacktestRun).order_by(ResearchBacktestRun.created_at.desc()).limit(1)
+        ).first()
+        legacy_run = self.session.exec(
+            select(ResearchBacktestRun)
+            .where(ResearchBacktestRun.source == "autonomous_research_worker")
+            .order_by(ResearchBacktestRun.created_at.desc())
+            .limit(1)
+        ).first()
+        latest_wf = self.session.exec(
+            select(WalkForwardResult).order_by(WalkForwardResult.created_at.desc()).limit(1)
+        ).first()
+        latest_cycle = self.session.exec(
+            select(SettingsActionAudit)
+            .where(SettingsActionAudit.action.in_(["autonomous_alpha_cycle", "autonomous_alpha_bootstrap", "autonomous_alpha_promotion"]))
+            .order_by(SettingsActionAudit.created_at.desc())
+            .limit(1)
+        ).first()
+        latest_sc = self.session.exec(
+            select(AlphaScorecard).order_by(AlphaScorecard.updated_at.desc()).limit(1)
+        ).first()
+        sc_count = int(self.session.exec(select(func.count()).select_from(AlphaScorecard)).one() or 0)
+        legacy_detected = legacy_run is not None
+        try:
+            mem = MemoryEvidenceConsolidatorV2(self.session, self.config).summary()
+            mem_written = int(mem.get("alpha_memory_count") or mem.get("count") or 0)
+        except Exception:
+            mem_written = 0
+
+        if sc_count > 0 and legacy_detected:
+            plain = "Legacy research has run; Alpha Factory has converted evidence into scorecards."
+        elif sc_count > 0:
+            plain = "Alpha Factory bootstrapped scorecards from existing research evidence."
+        elif legacy_detected:
+            plain = "Legacy research has run; Alpha Factory has not yet converted evidence."
+        else:
+            plain = "No autonomous research evidence yet."
+
+        return {
+            "status": "ok",
+            "enabled": alpha_enabled or old_enabled,
+            "alpha_factory_enabled": alpha_enabled,
+            "old_research_enabled": old_enabled,
+            "legacy_research_detected": legacy_detected,
+            "source": "alpha_factory" if alpha_enabled else ("legacy_research" if legacy_detected else "idle"),
+            "last_research_at": _ts(legacy_run.created_at) if legacy_run else (_ts(latest_run.created_at) if latest_run else None),
+            "last_alpha_cycle_at": _ts(latest_cycle.created_at) if latest_cycle else None,
+            "last_backtest_at": _ts(latest_run.created_at) if latest_run else None,
+            "last_walk_forward_at": _ts(latest_wf.created_at) if latest_wf else None,
+            "last_alpha_scorecard_write_at": _ts(latest_sc.updated_at) if latest_sc else None,
+            "scorecards_written": sc_count,
+            "memory_written": mem_written,
+            "skipped_reason": sched.get("skipped_reason") or sched.get("skip_reason"),
+            "scheduler": sched,
+            "plain_english": plain,
+            "orders_authority": "none",
+        }
+
     def autonomous_status(self) -> dict[str, Any]:
-        return AutonomousAlphaScheduler(self.session, self.config).status()
+        return self.get_unified_autonomous_alpha_status()
 
     def parameter_sweep_summary(self) -> dict[str, Any]:
         return ParameterSweepService(self.session, self.config).latest_summary()

@@ -64,6 +64,7 @@ class AutonomousAlphaFactoryService:
         job = self._job("alpha_autonomous_cycle", body, operator)
         phases: list[dict[str, Any]] = []
         try:
+            phases.append({"phase": "bootstrap", **self.bootstrap_scorecards_from_existing_evidence(operator=operator)})
             phases.append({"phase": "research", **self.run_research_cycle(body, operator=operator)})
             phases.append({"phase": "backtest", **self.run_backtest_cycle(body, operator=operator)})
             phases.append({"phase": "promotion", **self.run_candidate_promotion_cycle(operator=operator)})
@@ -181,6 +182,68 @@ class AutonomousAlphaFactoryService:
             "candidates_rejected": rejected,
             "orders_created": 0,
         }
+
+    def bootstrap_scorecards_from_existing_evidence(self, *, limit: int = 2000, operator: str = "bootstrap") -> dict[str, Any]:
+        """Idempotently convert EXISTING research evidence into AlphaScorecards.
+
+        Root cause this fixes: scorecards stayed 0 in production because the promotion
+        cycle (which converts ResearchBacktestRun -> AlphaScorecard) only runs when the
+        scheduler/operator triggers it, and the prod scheduler is disabled. This scans ALL
+        existing backtest evidence (including legacy autonomous_research_worker runs) and
+        builds/updates one scorecard per (strategy_id, normalized_symbol) using the SAME
+        deterministic promotion rules.
+
+        Safety: reuses _scorecard_from_backtest (persists + dedupes via _find_scorecard) and
+        promotion.evaluate (enforces zero-sample -> unproven, negative expectancy ->
+        rejected, only sufficient+positive -> paper_candidate; also updates StrategyRegistry).
+        Never fabricates profit, never promotes weak evidence, never places orders, idempotent.
+        """
+        runs = list(
+            self.session.exec(
+                select(ResearchBacktestRun).order_by(ResearchBacktestRun.created_at.asc()).limit(limit)
+            ).all()
+        )
+        before = int(self.session.exec(select(func.count()).select_from(AlphaScorecard)).one() or 0)
+        seen: set[tuple[str, str]] = set()
+        written = promoted = rejected = unproven = 0
+        for run in runs:
+            for symbol in (run.symbols or []):
+                sym = str(symbol or "").strip()
+                if not sym:
+                    continue
+                sc = self._scorecard_from_backtest(run, sym)
+                sc = self.promotion.evaluate(sc)
+                seen.add((run.strategy_id, _norm(sym)))
+                written += 1
+                if sc.verdict in PAPER_ALLOWED_VERDICTS:
+                    promoted += 1
+                elif sc.verdict in ("rejected", "paper_quarantined"):
+                    rejected += 1
+                elif sc.verdict == "unproven":
+                    unproven += 1
+        self.session.flush()
+        after = int(self.session.exec(select(func.count()).select_from(AlphaScorecard)).one() or 0)
+        if not runs:
+            plain = "No research evidence available to bootstrap scorecards yet."
+        elif promoted:
+            plain = f"Alpha Factory bootstrapped scorecards from existing research evidence; {promoted} paper candidate(s) qualify."
+        else:
+            plain = "Scorecards built, but no paper candidate is currently qualified."
+        out = {
+            "status": "ok",
+            "evidence_runs_scanned": len(runs),
+            "distinct_targets": len(seen),
+            "scorecards_written": written,
+            "scorecards_total": after,
+            "scorecards_created": max(0, after - before),
+            "paper_candidates": promoted,
+            "rejected": rejected,
+            "unproven": unproven,
+            "orders_created": 0,
+            "plain_english": plain,
+        }
+        self._audit("autonomous_alpha_bootstrap", operator, out)
+        return out
 
     def run_memory_consolidation_cycle(self, *, operator: str = "operator") -> dict[str, Any]:
         out = self.memory.consolidate_scorecards()

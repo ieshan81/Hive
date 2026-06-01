@@ -159,6 +159,28 @@ def on_startup():
             repair_database_bootstrap(session)
     except Exception as exc:
         logger.warning("Startup bootstrap repair skipped: %s", exc)
+    # Self-heal: if Alpha Factory has no scorecards but research evidence exists, convert it
+    # once (idempotent, read/score only — never places orders). Fail-safe: never blocks boot.
+    try:
+        from sqlmodel import func as _func, select as _sel
+
+        from app.database import AlphaScorecard
+        from app.database import engine as db_engine
+        from app.services.autonomous_alpha_factory_service import AutonomousAlphaFactoryService
+
+        with Session(db_engine) as session:
+            existing = int(session.exec(_sel(_func.count()).select_from(AlphaScorecard)).one() or 0)
+            if existing == 0:
+                out = AutonomousAlphaFactoryService(session).bootstrap_scorecards_from_existing_evidence(operator="startup")
+                session.commit()
+                logger.info(
+                    "Alpha Factory startup bootstrap: written=%s total=%s candidates=%s",
+                    out.get("scorecards_written"),
+                    out.get("scorecards_total"),
+                    out.get("paper_candidates"),
+                )
+    except Exception as exc:
+        logger.warning("Alpha Factory startup bootstrap skipped: %s", exc)
     if not settings.alpaca_configured:
         logger.warning("ALPACA_API_KEY / ALPACA_SECRET_KEY not set — broker sync unavailable")
     if not settings.gemini_configured:
