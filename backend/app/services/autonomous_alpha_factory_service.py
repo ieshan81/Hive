@@ -376,6 +376,12 @@ class AutonomousAlphaFactoryService:
             "metrics": metrics,
             "composite_score": self._rank_score(row),
             "source": "autonomous_alpha_factory",
+            "recent_loss_evidence": {
+                "recent_loss_sources": recent.get("recent_loss_sources") or [],
+                "strategy_filter_applied": recent.get("strategy_filter_applied", False),
+                "skipped_other_strategy_trade_count": recent.get("skipped_other_strategy_trade_count", 0),
+                "strategy_unknown_fallback_count": recent.get("strategy_unknown_fallback_count", 0),
+            },
         }
         row.updated_at = datetime.utcnow()
         self.session.add(row)
@@ -450,22 +456,78 @@ class AutonomousAlphaFactoryService:
         pnl = 0.0
         count = 0
         churn = 0
+        recent_loss_sources: list[dict[str, Any]] = []
+        skipped_other_strategy_trade_count = 0
+        strategy_unknown_fallback_count = 0
+        strategy_filter_applied = bool(strategy_id)
+
         for row in outcomes:
             if _norm(row.symbol) != _norm(symbol) or row.strategy_id != strategy_id:
                 continue
             count += 1
             pnl += float(row.realized_pnl or 0.0)
+            recent_loss_sources.append(
+                {
+                    "source": "paper_experiment_outcome",
+                    "strategy_id": row.strategy_id,
+                    "pl": float(row.realized_pnl or 0.0),
+                }
+            )
             if str(row.exit_reason or "").lower() in ("time", "time_stop", "max_hold", "churn"):
                 churn += 1
+
         for row in trades:
             if _norm(row.symbol) != _norm(symbol):
                 continue
+            row_strategy = (row.strategy or "").strip()
+            if strategy_id and row_strategy:
+                if row_strategy != strategy_id:
+                    skipped_other_strategy_trade_count += 1
+                    continue
+                recent_loss_sources.append(
+                    {
+                        "source": "trade_record",
+                        "strategy": row_strategy,
+                        "strategy_filter_applied": True,
+                        "pl": float(row.pl_dollars or 0.0),
+                    }
+                )
+            elif strategy_id and not row_strategy:
+                strategy_unknown_fallback_count += 1
+                recent_loss_sources.append(
+                    {
+                        "source": "trade_record",
+                        "strategy": None,
+                        "strategy_filter_applied": False,
+                        "strategy_unknown_fallback": True,
+                        "pl": float(row.pl_dollars or 0.0),
+                    }
+                )
+            else:
+                recent_loss_sources.append(
+                    {
+                        "source": "trade_record",
+                        "strategy": row_strategy or None,
+                        "strategy_filter_applied": False,
+                        "pl": float(row.pl_dollars or 0.0),
+                    }
+                )
             count += 1
             pnl += float(row.pl_dollars or 0.0)
+
         cooldown_until = None
         if count >= 2 and pnl < 0:
             cooldown_until = datetime.utcnow() + timedelta(minutes=int(cfg_get(self.config, "alpha_factory.quarantine_cooldown_minutes", 120) or 120))
-        return {"count": count, "pnl": round(pnl, 6), "churn": churn, "cooldown_until": cooldown_until}
+        return {
+            "count": count,
+            "pnl": round(pnl, 6),
+            "churn": churn,
+            "cooldown_until": cooldown_until,
+            "recent_loss_sources": recent_loss_sources,
+            "strategy_filter_applied": strategy_filter_applied,
+            "skipped_other_strategy_trade_count": skipped_other_strategy_trade_count,
+            "strategy_unknown_fallback_count": strategy_unknown_fallback_count,
+        }
 
     def _latest_walk_forward_id(self, strategy_id: str) -> str | None:
         row = self.session.exec(
