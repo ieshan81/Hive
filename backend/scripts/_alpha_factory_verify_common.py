@@ -79,6 +79,37 @@ def seed_bars(session: Session, symbol: str = "BTC/USD", n: int = 80) -> None:
     session.commit()
 
 
+def seed_session_bars(
+    session: Session,
+    *,
+    symbol: str = "BTC/USD",
+    timeframe: str = "5Min",
+    utc_hour: int = 14,
+    n: int = 12,
+    direction: float = 0.6,
+) -> None:
+    base_day = datetime(2026, 5, 28, utc_hour, 0)
+    for idx in range(n):
+        base = 100.0 + idx * 0.2
+        close = base + direction
+        session.add(
+            HistoricalBar(
+                symbol=symbol,
+                asset_class="crypto" if "/" in symbol else "stock",
+                timeframe=timeframe,
+                timestamp=base_day + timedelta(minutes=5 * idx),
+                open=base,
+                high=max(base, close) + 0.2,
+                low=min(base, close) - 0.2,
+                close=close,
+                volume=2500 + idx,
+                source="session_fixture",
+                synthetic=False,
+            )
+        )
+    session.commit()
+
+
 def seed_backtest(
     session: Session,
     *,

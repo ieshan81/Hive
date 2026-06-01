@@ -891,6 +891,17 @@ class AlphaScorecard(SQLModel, table=True):
     last_walk_forward_run_id: Optional[str] = Field(default=None, index=True)
     evidence_ids_json: list = Field(default_factory=list, sa_column=Column(JSON))
     autonomous_generated: bool = True
+    best_session: Optional[str] = Field(default=None, index=True)
+    worst_session: Optional[str] = None
+    session_sample_size: int = 0
+    session_win_rate: Optional[float] = None
+    session_expectancy: Optional[float] = None
+    session_profit_factor: Optional[float] = None
+    session_edge_after_cost_bps: Optional[float] = None
+    london_session_metrics_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    new_york_session_metrics_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    london_new_york_overlap_metrics_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    low_liquidity_session_warning: Optional[str] = None
     scorecard_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -1339,6 +1350,28 @@ def _migrate_columns() -> None:
                 conn.execute(text("ALTER TABLE diagnostic_export_jobs ADD COLUMN current_step VARCHAR"))
             if "last_completed_file" not in job_cols:
                 conn.execute(text("ALTER TABLE diagnostic_export_jobs ADD COLUMN last_completed_file VARCHAR"))
+
+    if insp.has_table("alpha_scorecards"):
+        alpha_cols = {c["name"] for c in insp.get_columns("alpha_scorecards")}
+        with engine.begin() as conn:
+            for col, typ, default in [
+                ("best_session", "VARCHAR", None),
+                ("worst_session", "VARCHAR", None),
+                ("session_sample_size", "INTEGER", "0"),
+                ("session_win_rate", "FLOAT", None),
+                ("session_expectancy", "FLOAT", None),
+                ("session_profit_factor", "FLOAT", None),
+                ("session_edge_after_cost_bps", "FLOAT", None),
+                ("london_session_metrics_json", "JSON", None),
+                ("new_york_session_metrics_json", "JSON", None),
+                ("london_new_york_overlap_metrics_json", "JSON", None),
+                ("low_liquidity_session_warning", "VARCHAR", None),
+            ]:
+                if col not in alpha_cols:
+                    ddl = f"ALTER TABLE alpha_scorecards ADD COLUMN {col} {typ}"
+                    if default is not None:
+                        ddl += f" DEFAULT {default}"
+                    conn.execute(text(ddl))
 
     if insp.has_table("strategy_states"):
         state_cols = {c["name"] for c in insp.get_columns("strategy_states")}

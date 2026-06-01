@@ -37,6 +37,8 @@ class MemoryEvidenceConsolidatorV2:
         for sc in rows:
             if self._from_scorecard(sc):
                 written += 1
+            if self._from_session_scorecard(sc):
+                written += 1
         return {
             "status": "ok",
             "scorecards_seen": len(rows),
@@ -48,6 +50,10 @@ class MemoryEvidenceConsolidatorV2:
         types = set(MEMORY_TYPE_BY_VERDICT.values()) | {
             "alpha_evidence",
             "strategy_failure",
+            "validated_session_candidate",
+            "rejected_session_setup",
+            "session_near_miss",
+            "session_sample_insufficient",
             "churn_pattern",
             "cost_spread_drag",
             "data_quality_issue",
@@ -135,6 +141,12 @@ class MemoryEvidenceConsolidatorV2:
             "profit_factor": sc.profit_factor,
             "edge_after_cost_bps": sc.edge_after_cost_bps,
             "blocker_reasons": sc.blocker_reasons_json or [],
+            "best_session": sc.best_session,
+            "session_sample_size": sc.session_sample_size,
+            "session_expectancy": sc.session_expectancy,
+            "session_profit_factor": sc.session_profit_factor,
+            "session_edge_after_cost_bps": sc.session_edge_after_cost_bps,
+            "low_liquidity_session_warning": sc.low_liquidity_session_warning,
         }
         if superseded_ids:
             evidence["superseded_memory_ids"] = superseded_ids
@@ -217,6 +229,99 @@ class MemoryEvidenceConsolidatorV2:
         self.session.add(row)
         return True
 
+    def _from_session_scorecard(self, sc: AlphaScorecard) -> bool:
+        if not sc.best_session:
+            return False
+        session_metrics = (sc.scorecard_json or {}).get("session_metrics") or {}
+        reason = session_metrics.get("session_blocker")
+        if not reason:
+            if sc.verdict in ("paper_candidate", "paper_active"):
+                reason = "validated_session_candidate"
+            elif sc.verdict == "rejected":
+                reason = "rejected_session_setup"
+            else:
+                reason = "session_near_miss"
+        mtype = {
+            "validated_session_candidate": "validated_session_candidate",
+            "session_sample_insufficient": "session_sample_insufficient",
+            "negative_expectancy": "rejected_session_setup",
+            "costs_too_high": "rejected_session_setup",
+        }.get(str(reason), "session_near_miss")
+        pattern_key = f"alpha_session|{sc.strategy_id}|{sc.symbol}|{sc.best_session}|{reason}"
+        title = f"Session evidence: {sc.symbol} {sc.best_session}"
+        summary = (
+            f"{sc.symbol} {sc.strategy_family} session={sc.best_session}, sample={sc.session_sample_size}, "
+            f"edge_after_cost_bps={sc.session_edge_after_cost_bps}, verdict={sc.verdict}."
+        )
+        evidence = {
+            "scorecard_id": sc.id,
+            "symbol": sc.symbol,
+            "strategy_id": sc.strategy_id,
+            "strategy_family": sc.strategy_family,
+            "session": sc.best_session,
+            "reason": reason,
+            "session_sample_size": sc.session_sample_size,
+            "session_win_rate": sc.session_win_rate,
+            "session_expectancy": sc.session_expectancy,
+            "session_profit_factor": sc.session_profit_factor,
+            "session_edge_after_cost_bps": sc.session_edge_after_cost_bps,
+            "session_next_action": session_metrics.get("session_next_action"),
+            "low_liquidity_session_warning": sc.low_liquidity_session_warning,
+        }
+        can_rank = mtype == "validated_session_candidate" and sc.verdict in ("paper_candidate", "paper_active")
+        existing = self.session.exec(select(LessonNode).where(LessonNode.pattern_key == pattern_key)).first()
+        if existing:
+            existing.memory_type = mtype
+            existing.title = title
+            existing.summary = summary
+            existing.detailed_lesson = summary
+            existing.evidence_json = evidence
+            existing.visible_in_graph = True
+            existing.visible_to_ai = True
+            existing.can_influence_ranking = can_rank
+            existing.symbol = sc.symbol
+            existing.strategy_name = sc.strategy_id
+            existing.tags = ["alpha_factory", "session", str(sc.best_session), str(reason)]
+            existing.is_consolidated = True
+            existing.memory_level = "consolidated_lesson"
+            existing.occurrence_count += 1
+            existing.last_seen_at = datetime.utcnow()
+            existing.updated_at = datetime.utcnow()
+            self.session.add(existing)
+            return False
+        self.session.add(
+            LessonNode(
+                category="research_memory",
+                memory_type=mtype,
+                title=title,
+                summary=summary,
+                detailed_lesson=summary,
+                severity="LOW",
+                confidence=self._confidence(sc),
+                source="alpha_factory",
+                symbol=sc.symbol,
+                strategy_name=sc.strategy_id,
+                related_entity_type="alpha_session_scorecard",
+                related_entity_id=str(sc.id),
+                evidence_json=evidence,
+                proposed_action="paper_candidate_allowed" if can_rank else "research_more",
+                action_status="none",
+                visible_in_graph=True,
+                visible_to_ai=True,
+                can_influence_ranking=can_rank,
+                human_review_status="pending",
+                system_validation_status="passed",
+                pattern_key=pattern_key,
+                tags=["alpha_factory", "session", str(sc.best_session), str(reason)],
+                is_consolidated=True,
+                memory_level="consolidated_lesson",
+                memory_scope="strategy",
+                importance_score=0.8 if can_rank else 0.6,
+                strength=self._confidence(sc),
+            )
+        )
+        return True
+
     @staticmethod
     def _title(sc: AlphaScorecard) -> str:
         if sc.verdict in ("paper_candidate", "paper_active"):
@@ -233,7 +338,8 @@ class MemoryEvidenceConsolidatorV2:
         return (
             f"Alpha scorecard {sc.id} for {sc.symbol}/{sc.strategy_id}: verdict={sc.verdict}, "
             f"sample={sc.sample_size}, expectancy={sc.expectancy}, PF={sc.profit_factor}, "
-            f"edge_after_cost_bps={sc.edge_after_cost_bps}, blockers={blockers}."
+            f"edge_after_cost_bps={sc.edge_after_cost_bps}, best_session={sc.best_session}, "
+            f"session_edge_after_cost_bps={sc.session_edge_after_cost_bps}, blockers={blockers}."
         )
 
     @staticmethod

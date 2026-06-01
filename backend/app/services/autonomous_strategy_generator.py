@@ -118,6 +118,75 @@ STRATEGY_FAMILIES: list[dict[str, Any]] = [
         "longer_horizon": True,
         "majors_only": ["BTC/USD", "ETH/USD", "SOL/USD", "LTC/USD", "LINK/USD", "AVAX/USD", "DOGE/USD", "UNI/USD"],
     },
+    {
+        "strategy_family": "new_york_opening_range_breakout",
+        "strategy_id": "session_new_york_opening_range_breakout",
+        "candidate_name": "New York Opening Range Breakout",
+        "session_filter": "us_regular_market_hours",
+        "asset_classes": ["stock"],
+        "parameter_ranges": {
+            "opening_range_minutes": [15, 30],
+            "breakout_confirm_bars": [1, 2],
+            "atr_stop_multiplier": [0.8, 1.2],
+            "take_profit_r_multiple": [1.2, 1.8],
+        },
+        "hypothesis": "The regular-session open can create directional range breakouts when volume confirms and costs are low.",
+        "expected_behavior": "Research-only until sample size, cost, and walk-forward evidence pass.",
+        "invalidation_rules": ["range_reentry", "volume_fade", "spread_too_wide"],
+        "required_data": ["bars_1m", "bars_5m", "volume", "spread"],
+        "risk_notes": "Not available outside U.S. regular market hours.",
+    },
+    {
+        "strategy_family": "london_session_momentum",
+        "strategy_id": "session_london_momentum",
+        "candidate_name": "London Session Momentum",
+        "session_filter": "london_session",
+        "parameter_ranges": {
+            "session_open_buffer_minutes": [15, 30],
+            "momentum_threshold": [0.004, 0.008],
+            "atr_stop_multiplier": [1.0, 1.4],
+        },
+        "hypothesis": "London liquidity can support continuation if spread and cost remain small.",
+        "expected_behavior": "Tests London-only momentum against after-cost edge.",
+        "invalidation_rules": ["spread_expansion", "momentum_reversal", "low_volume"],
+        "required_data": ["bars_5m", "quote", "spread"],
+        "risk_notes": "Session signal cannot promote without normal Alpha Factory evidence.",
+        "majors_only": ["BTC/USD", "ETH/USD", "SOL/USD", "LTC/USD", "LINK/USD", "AVAX/USD", "DOGE/USD", "UNI/USD"],
+    },
+    {
+        "strategy_family": "london_new_york_overlap_continuation",
+        "strategy_id": "session_london_ny_overlap_continuation",
+        "candidate_name": "London/New York Overlap Continuation",
+        "session_filter": "london_new_york_overlap",
+        "parameter_ranges": {
+            "lookback_bars": [6, 12],
+            "liquidity_score_min": [0.7, 0.85],
+            "atr_stop_multiplier": [1.0, 1.5],
+        },
+        "hypothesis": "The London/New York overlap can improve cost-adjusted continuation quality.",
+        "expected_behavior": "Requires higher liquidity and positive edge after cost.",
+        "invalidation_rules": ["liquidity_weak", "spread_shock", "failed_continuation"],
+        "required_data": ["bars_5m", "volume", "spread"],
+        "risk_notes": "Overlap feature is advisory and cannot override cost/risk gates.",
+        "majors_only": ["BTC/USD", "ETH/USD", "SOL/USD", "LTC/USD", "LINK/USD", "AVAX/USD", "DOGE/USD", "UNI/USD"],
+    },
+    {
+        "strategy_family": "liquidity_sweep_reversal",
+        "strategy_id": "session_liquidity_sweep_reversal",
+        "candidate_name": "Liquidity Sweep Reversal",
+        "session_filter": "london_new_york_overlap",
+        "parameter_ranges": {
+            "sweep_lookback_bars": [12, 24],
+            "reclaim_confirm_bars": [1, 2],
+            "atr_stop_multiplier": [0.7, 1.0],
+        },
+        "hypothesis": "A sweep of prior high/low followed by reclaim can produce reversal edge only with strict stops.",
+        "expected_behavior": "Rejects if sample or cost evidence is weak.",
+        "invalidation_rules": ["no_reclaim", "spread_too_wide", "stop_distance_too_small"],
+        "required_data": ["bars_1m", "bars_5m", "spread"],
+        "risk_notes": "No paper candidate without sufficient sample and positive after-cost edge.",
+        "majors_only": ["BTC/USD", "ETH/USD", "SOL/USD", "LTC/USD", "LINK/USD", "AVAX/USD", "DOGE/USD", "UNI/USD"],
+    },
 ]
 
 
@@ -132,6 +201,9 @@ class AutonomousStrategyGenerator:
         for sym in universe:
             asset_class = "crypto" if "/" in sym else "stock"
             for family in STRATEGY_FAMILIES:
+                asset_classes = family.get("asset_classes")
+                if asset_classes and asset_class not in asset_classes:
+                    continue
                 if asset_class == "stock" and str(family["strategy_id"]).startswith("crypto_"):
                     continue
                 # Longer-horizon experiments are limited to the approved majors only.
