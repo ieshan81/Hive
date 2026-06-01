@@ -1086,6 +1086,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         from app.services.promotion_readiness_service import PromotionReadinessService
         from app.services.research_lab_service import ResearchLabService
         from app.services.alpha_research_read_model_service import AlphaResearchReadModelService
+        from app.services.memory_evidence_consolidator_v2 import MemoryEvidenceConsolidatorV2
 
         apl_svc = AutonomousPaperLearningService(session, cfg_brain)
         apl_sched = AutonomousPaperScheduler(session, cfg_brain)
@@ -1141,6 +1142,22 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             ),
             "alpha_memory_summary.json": safe_export_section(
                 "alpha_memory_summary.json", alpha_read.memory_summary, export_errors
+            ),
+            "alpha_session_summary.json": safe_export_section(
+                "alpha_session_summary.json", alpha_read.factory.get_session_summary, export_errors
+            ),
+            "alpha_session_scorecards.json": safe_export_section(
+                "alpha_session_scorecards.json", alpha_read.factory.get_session_scorecards, export_errors
+            ),
+            "alpha_session_near_misses.json": safe_export_section(
+                "alpha_session_near_misses.json",
+                lambda: {"session_near_misses": alpha_read.session_summary().get("session_near_misses", [])},
+                export_errors,
+            ),
+            "alpha_session_memory.json": safe_export_section(
+                "alpha_session_memory.json",
+                lambda: MemoryEvidenceConsolidatorV2(session, cfg_brain).session_summary(),
+                export_errors,
             ),
             "strategy_validation_results.json": [_serialize_row(r) for r in session.exec(select(StrategyValidationResult)).all()],
             "strategy_promotion_audit.json": [_serialize_row(r) for r in session.exec(select(SystemValidationAudit)).all()],

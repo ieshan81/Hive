@@ -71,6 +71,7 @@ class AutonomousAlphaFactoryService:
             phases.append({"phase": "research", **self.run_research_cycle(body, operator=operator)})
             phases.append({"phase": "backtest", **self.run_backtest_cycle(body, operator=operator)})
             phases.append({"phase": "promotion", **self.run_candidate_promotion_cycle(operator=operator)})
+            phases.append({"phase": "session_backfill", **self.backfill_session_metrics(force=True, operator=operator)})
             phases.append({"phase": "memory", **self.run_memory_consolidation_cycle(operator=operator)})
             paper = self.run_paper_selection_cycle(operator=operator)
             phases.append({"phase": "paper_selection", **paper})
@@ -248,6 +249,89 @@ class AutonomousAlphaFactoryService:
         self._audit("autonomous_alpha_bootstrap", operator, out)
         return out
 
+    def _session_bars_for(self, symbol: str, timeframe: Optional[str], *, limit: int = 600) -> list[HistoricalBar]:
+        tf = str(timeframe or "5Min")
+        bars = list(
+            self.session.exec(
+                select(HistoricalBar)
+                .where(HistoricalBar.symbol == symbol, HistoricalBar.timeframe == tf)
+                .order_by(HistoricalBar.timestamp.desc())
+                .limit(limit)
+            ).all()
+        )
+        if not bars:
+            bars = list(
+                self.session.exec(
+                    select(HistoricalBar)
+                    .where(HistoricalBar.symbol == symbol)
+                    .order_by(HistoricalBar.timestamp.desc())
+                    .limit(limit)
+                ).all()
+            )
+        return bars
+
+    def backfill_session_metrics(self, *, force: bool = False, limit: int = 5000, operator: str = "session_backfill") -> dict[str, Any]:
+        """Backfill session metrics onto EXISTING scorecards from available candle evidence.
+
+        Why: PR #21 added session-aware research, but scorecards created before it deployed have
+        no session_* fields, and the startup bootstrap only runs when scorecards==0 — so prod
+        kept session_scorecards=0. This recomputes session windows via MarketSessionService and
+        fills the session_* fields on every scorecard.
+
+        Safety: research-only. NEVER changes verdict / expectancy / promotion (session signal
+        alone never promotes), never places orders, idempotent. A scorecard with no timestamped
+        candle evidence is left otherwise unchanged and marked session_metrics_available=false
+        with reason no_timestamped_trade_evidence.
+        """
+        cards = list(
+            self.session.exec(
+                select(AlphaScorecard).order_by(AlphaScorecard.updated_at.desc()).limit(limit)
+            ).all()
+        )
+        svc = MarketSessionService()
+        seen = available = unavailable = skipped = with_session_scorecard = 0
+        for sc in cards:
+            existing_sm = (sc.scorecard_json or {}).get("session_metrics") or {}
+            if not force and "session_metrics_available" in existing_sm:
+                skipped += 1
+                if existing_sm.get("session_metrics_available"):
+                    with_session_scorecard += 1
+                continue
+            seen += 1
+            prior_verdict = sc.verdict  # invariant: verdict must not change during backfill
+            bars = self._session_bars_for(sc.symbol, sc.timeframe)
+            summary = svc.summarize_candles(bars, asset_class=sc.asset_class or "crypto", cost_bps=sc.cost_bps)
+            self._apply_session_summary(sc, summary)  # mutates summary + sets row.session_* fields
+            merged = dict(sc.scorecard_json or {})
+            merged["session_metrics"] = summary
+            sc.scorecard_json = merged
+            sc.verdict = prior_verdict  # belt-and-suspenders: session backfill never re-grades
+            sc.updated_at = datetime.utcnow()
+            self.session.add(sc)
+            if summary.get("session_metrics_available"):
+                available += 1
+                with_session_scorecard += 1
+            else:
+                unavailable += 1
+        self.session.flush()
+        out = {
+            "status": "ok",
+            "scorecards_seen": seen,
+            "scorecards_skipped_already_marked": skipped,
+            "session_metrics_available": available,
+            "session_metrics_unavailable": unavailable,
+            "session_scorecard_count": with_session_scorecard,
+            "orders_created": 0,
+            "plain_english": (
+                f"Session backfill: {available} scorecard(s) gained session metrics, "
+                f"{unavailable} had no timestamped evidence (explained), {skipped} already current."
+                if (seen or skipped)
+                else "No scorecards to backfill session metrics."
+            ),
+        }
+        self._audit("autonomous_alpha_session_backfill", operator, out)
+        return out
+
     def run_memory_consolidation_cycle(self, *, operator: str = "operator") -> dict[str, Any]:
         out = self.memory.consolidate_scorecards()
         self._audit("autonomous_alpha_memory", operator, out)
@@ -328,6 +412,40 @@ class AutonomousAlphaFactoryService:
         )
         ranked = sorted(rows, key=self._rank_score, reverse=True)
         return {"status": "ok", "candidates": [self._scorecard_public(r) for r in ranked[:limit]]}
+
+    @staticmethod
+    def _has_session(sc: AlphaScorecard) -> bool:
+        return bool(sc.best_session) or "session_metrics" in (sc.scorecard_json or {})
+
+    def get_session_scorecards(self, *, limit: int = 200) -> dict[str, Any]:
+        """READ ONLY: scorecards that carry session evidence (or an explained absence)."""
+        rows = list(
+            self.session.exec(select(AlphaScorecard).order_by(AlphaScorecard.updated_at.desc()).limit(limit)).all()
+        )
+        session_rows = [r for r in rows if self._has_session(r)]
+        return {
+            "status": "ok",
+            "session_scorecards": [self._scorecard_public(r) for r in session_rows],
+            "count": len(session_rows),
+        }
+
+    def get_session_summary(self) -> dict[str, Any]:
+        """READ ONLY: aggregate session research truth across all scorecards."""
+        cards = list(
+            self.session.exec(select(AlphaScorecard).order_by(AlphaScorecard.updated_at.desc()).limit(200)).all()
+        )
+
+        def _avail(c: AlphaScorecard):
+            return (c.scorecard_json or {}).get("session_metrics", {}).get("session_metrics_available")
+
+        return {
+            "status": "ok",
+            **self._session_research_summary(cards),
+            "session_metrics_available_count": sum(1 for c in cards if _avail(c) is True),
+            "session_metrics_unavailable_count": sum(1 for c in cards if _avail(c) is False),
+            "scorecards_total": len(cards),
+            "orders_authority": "none",
+        }
 
     def get_near_misses(self, *, limit: int = 10) -> dict[str, Any]:
         """READ ONLY: scorecards closest to qualifying, with the single missing requirement.
@@ -577,12 +695,22 @@ class AutonomousAlphaFactoryService:
         best_session = summary.get("best_session")
         best_metrics = sessions.get(best_session) if best_session else {}
         sample = int(best_metrics.get("sample_size") or summary.get("session_sample_size") or 0)
-        if sample < min_session_sample:
-            summary["session_blocker"] = "session_sample_insufficient"
-            summary["session_next_action"] = f"Collect {min_session_sample - sample} more valid session sample(s)."
+        # No timestamped candle/trade evidence -> session metrics are unavailable (explained,
+        # not faked). The scorecard is otherwise left unchanged; session signal never promotes.
+        if not sessions or not best_session:
+            summary["session_metrics_available"] = False
+            summary["session_metrics_reason"] = "no_timestamped_trade_evidence"
+            summary["session_blocker"] = "session_metrics_unavailable"
+            summary["session_next_action"] = "No timestamped candle/trade evidence to derive session metrics."
         else:
-            summary["session_blocker"] = None
-            summary["session_next_action"] = "Session sample is large enough for comparison."
+            summary["session_metrics_available"] = True
+            summary["session_metrics_reason"] = None
+            if sample < min_session_sample:
+                summary["session_blocker"] = "session_sample_insufficient"
+                summary["session_next_action"] = f"Collect {min_session_sample - sample} more valid session sample(s)."
+            else:
+                summary["session_blocker"] = None
+                summary["session_next_action"] = "Session sample is large enough for comparison."
         row.best_session = best_session
         row.worst_session = summary.get("worst_session")
         row.session_sample_size = sample
@@ -833,6 +961,8 @@ class AutonomousAlphaFactoryService:
             "low_liquidity_session_warning": sc.low_liquidity_session_warning,
             "session_blocker": (sc.scorecard_json or {}).get("session_metrics", {}).get("session_blocker"),
             "session_next_action": (sc.scorecard_json or {}).get("session_metrics", {}).get("session_next_action"),
+            "session_metrics_available": (sc.scorecard_json or {}).get("session_metrics", {}).get("session_metrics_available"),
+            "session_metrics_reason": (sc.scorecard_json or {}).get("session_metrics", {}).get("session_metrics_reason"),
             "updated_at": _iso(sc.updated_at),
             "rank_score": self._rank_score(sc),
         }
