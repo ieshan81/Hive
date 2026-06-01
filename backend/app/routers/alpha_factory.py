@@ -60,6 +60,32 @@ def session_summary(session: Session = Depends(get_session)):
     return AlphaResearchReadModelService(session).session_summary()
 
 
+@router.get("/paper-exploration")
+def paper_exploration(session: Session = Depends(get_session)):
+    """READ ONLY: paper-exploration lane status + current near-miss exploration candidate."""
+    from app.services.paper_exploration_service import PaperExplorationService
+
+    return PaperExplorationService(session).status()
+
+
+@router.post("/run-exploration")
+def run_exploration(
+    body: dict = Body(default_factory=dict),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
+    """OPERATOR ACTION: submit at most one tiny PAPER-ONLY exploration probe through the cage.
+    Never live, never forced, notional-capped. Respects kill switch (catastrophic blocks)."""
+    from app.services.paper_exploration_service import PaperExplorationService
+
+    _block_ai_actor(body)
+    out = PaperExplorationService(session).run_exploration_cycle(
+        operator=_actor(body), dry_run=bool(body.get("dry_run", False))
+    )
+    session.commit()
+    return out
+
+
 @router.get("/research-runs")
 def research_runs(limit: int = 50, session: Session = Depends(get_session)):
     """READ ONLY: autonomous alpha research run history."""

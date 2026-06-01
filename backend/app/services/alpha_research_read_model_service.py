@@ -25,12 +25,15 @@ class AlphaResearchReadModelService:
 
     def status(self) -> dict[str, Any]:
         from app.services.kronos_market_model_service import KronosMarketModelService
+        from app.services.paper_exploration_service import PaperExplorationService
 
         return {
             **self.factory.get_status(),
             "autonomous_scheduler": AutonomousAlphaScheduler(self.session, self.config).status(),
             # Optional market-model adapter (OFF by default; advisory-only, never promotes).
             **KronosMarketModelService(self.config).status_summary(),
+            # Paper-exploration lane truth (paper-only; real money always locked).
+            **PaperExplorationService(self.session, self.config).status(),
         }
 
     def scorecards(self, *, limit: int = 100) -> dict[str, Any]:
@@ -40,7 +43,12 @@ class AlphaResearchReadModelService:
         return self.factory.get_best_candidates(limit=limit)
 
     def near_misses(self, *, limit: int = 10) -> dict[str, Any]:
-        return self.factory.get_near_misses(limit=limit)
+        from app.services.paper_exploration_service import PaperExplorationService
+
+        out = self.factory.get_near_misses(limit=limit)
+        explorer = PaperExplorationService(self.session, self.config)
+        out["near_misses"] = [{**nm, **explorer.evaluate(nm)} for nm in out.get("near_misses", [])]
+        return out
 
     def session_summary(self, *, limit: int = 200) -> dict[str, Any]:
         """READ ONLY: consolidated session research truth for UI/diagnostics."""
