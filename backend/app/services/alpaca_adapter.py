@@ -50,6 +50,7 @@ class AlpacaAdapter:
         self._client = None
         self._data_client = None
         self.broker_sync_rate_limited = _is_rate_limited()
+        self.broker_sync_failed = False
 
     @property
     def configured(self) -> bool:
@@ -199,6 +200,7 @@ class AlpacaAdapter:
             return list(self.session.exec(select(PositionSnapshot)).all())
         client = self._get_trading_client()
         if client is None:
+            self.broker_sync_failed = True
             prior = list(self.session.exec(select(PositionSnapshot)).all())
             return prior
         try:
@@ -224,10 +226,12 @@ class AlpacaAdapter:
                 self.session.add(snap)
             self.session.commit()
             self.broker_sync_rate_limited = False
+            self.broker_sync_failed = False
             return staged
         except Exception as exc:
             _mark_rate_limited(exc)
             self.broker_sync_rate_limited = _is_rate_limited()
+            self.broker_sync_failed = True
             self._log_error("sync_positions", str(exc))
             self.session.rollback()
             prior = list(self.session.exec(select(PositionSnapshot)).all())

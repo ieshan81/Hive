@@ -21,6 +21,8 @@ from app.trading_cage.push_pull_engine import score_push_pull_setup
 
 STRATEGY_VERSION_DEFAULT = "baseline"
 SCORING_MODEL = "score_push_pull_setup"
+STALE_DATA_REASONS = {"STALE_BAR", "DATA_STALE", "NO_BARS"}
+NO_PROBE_REASONS = STALE_DATA_REASONS | {"RECENT_NEGATIVE_EXPECTANCY"}
 
 
 def _strategy_version(session: Session) -> str:
@@ -96,6 +98,22 @@ def _promote_paper_row(row: dict[str, Any]) -> dict[str, Any]:
     return probe
 
 
+def _stale_data_for_probe(row: dict[str, Any]) -> bool:
+    gates = row.get("gate_results") or {}
+    reason = str(row.get("no_trade_reason") or "").upper()
+    if reason in STALE_DATA_REASONS:
+        return True
+    if row.get("bar_freshness") != "fresh":
+        return True
+    if row.get("quote_freshness") != "fresh":
+        return True
+    if gates.get("bar_fresh") is False:
+        return True
+    if gates.get("quote_fresh") is False:
+        return True
+    return False
+
+
 def _paper_probe_eligible(row: dict[str, Any], config: Optional[dict] = None) -> bool:
     cfg = config or {}
     levels = row.get("dynamic_exit_levels") or {}
@@ -105,6 +123,10 @@ def _paper_probe_eligible(row: dict[str, Any], config: Optional[dict] = None) ->
     if row.get("entry_allowed") is True:
         return False
     reason = str(row.get("no_trade_reason") or "").upper()
+    if reason in NO_PROBE_REASONS:
+        return False
+    if _stale_data_for_probe(row):
+        return False
     if "SCORE_ERROR" in reason or "INSUFFICIENT" in reason:
         return False
 
@@ -114,7 +136,7 @@ def _paper_probe_eligible(row: dict[str, Any], config: Optional[dict] = None) ->
 
     if _trade_all_eligible_on(cfg):
         # Full-universe paper mode: pattern SL/TP bands define risk; structure/edge are soft.
-        return int(row.get("bars_count") or 0) >= 10
+        return int(row.get("bars_count") or 10) >= 10
 
     if gates.get("long_structure_ok") is False:
         return False
@@ -389,6 +411,21 @@ def score_symbol(
         "thesis": _thesis_for(pattern, entry_allowed, no_trade_reason, pattern_direction),
     }
     row = apply_paper_ratchet_entry(row, config, bars=bars)
+    try:
+        from app.services.symbol_expectancy_guard_service import SymbolExpectancyGuardService
+
+        expectancy = SymbolExpectancyGuardService(session, config).evaluate(symbol, strategy_id)
+        if expectancy.get("blocked"):
+            row["entry_allowed"] = False
+            row["no_trade_reason"] = "RECENT_NEGATIVE_EXPECTANCY"
+            row["expectancy_guard"] = expectancy
+            row["soft_concerns"] = list(dict.fromkeys((row.get("soft_concerns") or []) + ["RECENT_NEGATIVE_EXPECTANCY"]))
+            row.setdefault("score_components", {})["recent_expectancy_guard"] = expectancy
+            row["thesis"] = (
+                f"{symbol} is cooling down after recent negative paper expectancy."
+            )
+    except Exception as exc:
+        row["expectancy_guard"] = {"status": "error", "error_type": type(exc).__name__}
     return row
 
 

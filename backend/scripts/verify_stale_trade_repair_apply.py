@@ -13,6 +13,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import app.database  # noqa: F401
 from app.database import AccountSnapshot, OrderRecord, TradeRecord
+from app.services.exposure_truth_service import ExposureTruthService
 from app.services.trade_state_repair_service import TradeStateRepairService
 
 
@@ -42,7 +43,12 @@ def main() -> None:
             )
         )
         session.commit()
-        out = TradeStateRepairService(session).repair_stale_open_trades_when_broker_flat(dry_run=False)
+        original = ExposureTruthService.fresh_broker_positions
+        ExposureTruthService.fresh_broker_positions = lambda self: ([], True, {"source": "fixture_fresh_broker_flat"})
+        try:
+            out = TradeStateRepairService(session).repair_stale_open_trades_when_broker_flat(dry_run=False)
+        finally:
+            ExposureTruthService.fresh_broker_positions = original
         session.commit()
         repaired = session.get(TradeRecord, trade.id)
         trade_count = len(session.exec(select(TradeRecord)).all())

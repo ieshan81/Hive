@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 from sqlmodel import Session, select
 
-from app.database import ActivityLog, OrderRecord, PositionSnapshot, TradeRecord
+from app.database import ActivityLog, OrderRecord, TradeRecord
 from app.services.exposure_truth_service import ExposureTruthService
 from app.services.order_ledger_service import display_symbol, normalize_symbol
 
@@ -25,15 +25,17 @@ def _num(v: Any) -> Optional[float]:
         return None
 
 
+def _pos_symbol(pos: Any) -> str:
+    if isinstance(pos, dict):
+        return str(pos.get("symbol") or pos.get("sym") or "")
+    return str(getattr(pos, "symbol", "") or "")
+
+
 class TradeStateRepairService:
     def __init__(self, session: Session, config: Optional[dict] = None):
         self.session = session
         self.config = config or {}
         self.exposure = ExposureTruthService(session, self.config)
-
-    def _broker_truth_available(self) -> bool:
-        probe = self.exposure.get_symbol_exposure("BTC/USD")
-        return bool((probe.get("evidence") or {}).get("broker_truth_available"))
 
     def _open_trades_by_symbol(self) -> dict[str, list[TradeRecord]]:
         rows = list(self.session.exec(select(TradeRecord).where(TradeRecord.status == "open")).all())
@@ -106,19 +108,21 @@ class TradeStateRepairService:
         symbols: Optional[list[str]] = None,
         require_no_broker_positions: bool = False,
     ) -> dict[str, Any]:
-        if not self._broker_truth_available():
+        broker_positions, broker_available, broker_evidence = self.exposure.fresh_broker_positions()
+        if not broker_available:
             return {
                 "status": "refused",
                 "reason": "broker_truth_unavailable",
+                "broker_truth": broker_evidence,
                 "dry_run": dry_run,
                 "actions": [],
             }
-        open_positions = list(self.session.exec(select(PositionSnapshot).where(PositionSnapshot.qty > 0)).all())
+        open_positions = [p for p in broker_positions if _num(getattr(p, "qty", None) if not isinstance(p, dict) else p.get("qty"))]
         if require_no_broker_positions and open_positions and not symbols:
             return {
                 "status": "refused",
                 "reason": "broker_positions_open_symbol_specific_required",
-                "open_broker_symbols": [display_symbol(p.symbol) for p in open_positions],
+                "open_broker_symbols": [display_symbol(_pos_symbol(p)) for p in open_positions],
                 "dry_run": dry_run,
                 "actions": [],
             }
@@ -129,7 +133,11 @@ class TradeStateRepairService:
         for norm, trades in self._open_trades_by_symbol().items():
             if wanted and norm not in wanted:
                 continue
-            exposure = self.exposure.get_symbol_exposure(trades[0].symbol)
+            exposure = self.exposure.get_symbol_exposure(
+                trades[0].symbol,
+                broker_positions=broker_positions,
+                broker_truth_available=True,
+            )
             if exposure.get("broker_position_open"):
                 skipped.append({"symbol": exposure.get("display_symbol"), "reason": "broker_position_open"})
                 continue
@@ -145,7 +153,7 @@ class TradeStateRepairService:
             "affected_count": len(actions),
             "actions": actions,
             "skipped": skipped,
-            "broker_truth": "available",
+            "broker_truth": {"status": "available", **broker_evidence},
             "records_deleted": 0,
         }
         if not dry_run:

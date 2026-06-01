@@ -25,7 +25,7 @@ from typing import Any, Optional
 
 from sqlmodel import Session, select
 
-from app.database import LessonNode, PaperExperimentOutcome, ResearchBacktestRun
+from app.database import AccountSnapshot, LessonNode, PaperExperimentOutcome, PositionSnapshot, ResearchBacktestRun
 
 RESEARCH_DEFAULTS: dict[str, Any] = {
     "autonomous_backtest_worker_enabled": True,
@@ -125,34 +125,62 @@ class AutonomousResearchWorker:
         """Defensive read of system safety signals; fail-closed (no research) on any error."""
         try:
             from app.services.broker_safety import is_paper_broker_url, live_lock_status
-            from app.services.kill_switch_service import kill_switch_active
+        except ImportError as exc:
+            return ResearchSafety(False, f"safety_not_ok:missing_dependency:{getattr(exc, 'name', None) or type(exc).__name__}")
 
-            paper = bool(is_paper_broker_url())
-            locked = live_lock_status(self.config).get("live_lock_status") == "locked"
-            try:
-                ks = bool(kill_switch_active(self.session, self.config))
-            except Exception:
-                ks = True  # fail closed
-            unmanaged = 0
-            urgent = False
-            try:
-                from app.services.exit_monitor_service import open_positions_missing_exit_plan
+        paper = bool(is_paper_broker_url())
+        locked = live_lock_status(self.config).get("live_lock_status") == "locked"
 
-                unmanaged = len(open_positions_missing_exit_plan(self.session, self.config, []) or [])
-            except Exception:
-                unmanaged = 0
-            return evaluate_research_safety(
-                paper_mode=paper,
-                live_locked=locked,
-                kill_switch_active=ks,
-                broker_synced=True,
-                unmanaged_open_positions=unmanaged,
-                urgent_exit_pending=urgent,
-                reconciliation_ok=True,
-                scheduler_healthy=True,
-            )
+        try:
+            from app.services.kill_switch_service import KillSwitchService
+
+            ks_status = KillSwitchService(self.session, self.config).status()
+            ks = not bool(ks_status.get("entries_allowed"))
+            ks_reason = "kill_switch_active" if ks else "ok"
+        except ImportError as exc:
+            return ResearchSafety(False, f"safety_not_ok:missing_dependency:{getattr(exc, 'name', None) or type(exc).__name__}")
         except Exception as exc:
-            return ResearchSafety(False, f"safety_probe_error:{type(exc).__name__}")
+            ks = True
+            ks_reason = f"kill_switch_unknown:{type(exc).__name__}"
+
+        unmanaged = 0
+        urgent = False
+        try:
+            from app.services.exit_monitor_service import open_positions_missing_exit_plan
+
+            unmanaged = len(open_positions_missing_exit_plan(self.session, self.config, []) or [])
+        except ImportError as exc:
+            return ResearchSafety(False, f"safety_not_ok:missing_dependency:{getattr(exc, 'name', None) or type(exc).__name__}")
+        except Exception:
+            unmanaged = 0
+
+        try:
+            latest_account = self.session.exec(
+                select(AccountSnapshot).order_by(AccountSnapshot.synced_at.desc()).limit(1)
+            ).first()
+            latest_pos = self.session.exec(
+                select(PositionSnapshot).order_by(PositionSnapshot.synced_at.desc()).limit(1)
+            ).first()
+            latest_sync = latest_account.synced_at if latest_account else (latest_pos.synced_at if latest_pos else None)
+            broker_synced = bool(
+                latest_sync and (datetime.utcnow() - latest_sync).total_seconds() <= 30 * 60
+            )
+        except Exception:
+            broker_synced = False
+
+        safety = evaluate_research_safety(
+            paper_mode=paper,
+            live_locked=locked,
+            kill_switch_active=ks,
+            broker_synced=broker_synced,
+            unmanaged_open_positions=unmanaged,
+            urgent_exit_pending=urgent,
+            reconciliation_ok=True,
+            scheduler_healthy=True,
+        )
+        if not safety.ok and ks_reason != "ok" and safety.reason == "kill_switch_active":
+            return ResearchSafety(False, f"safety_not_ok:{ks_reason}")
+        return safety
 
     def _runs_last_hour(self) -> int:
         since = datetime.utcnow() - timedelta(hours=1)
