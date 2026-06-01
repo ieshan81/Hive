@@ -570,6 +570,14 @@ def build_mission_control_status(session: Session) -> dict[str, Any]:
             fromlist=["ResearchOSReadService"],
         ).ResearchOSReadService(session).status(),
     )
+    alpha_factory = _safe(
+        "alpha_factory",
+        warnings,
+        lambda: __import__(
+            "app.services.alpha_research_read_model_service",
+            fromlist=["AlphaResearchReadModelService"],
+        ).AlphaResearchReadModelService(session, cfg).status(),
+    )
     latest_order = _safe("latest_order", warnings, lambda: _latest_order_summary(session))
     positions = _safe("positions", warnings, lambda: {"items": _positions_payload(session)}).get("items") or []
     recent_trades = _safe("recent_trades", warnings, lambda: {"items": _recent_trades_payload(session)}).get("items") or []
@@ -653,11 +661,13 @@ def build_mission_control_status(session: Session) -> dict[str, Any]:
         "diagnostics": diagnostics,
         "worker": worker,
         "research_os": research_os,
+        "alpha_factory": alpha_factory,
         "system_warnings": warnings,
         "next_recommended_operator_action": next_action,
         "operator_actions": [
             {"label": "Refresh market data", "method": "POST", "endpoint": "/api/market-data/refresh-bars"},
             {"label": "Run universe scan", "method": "POST", "endpoint": "/api/universe/refresh"},
+            {"label": "Run alpha research cycle", "method": "POST", "endpoint": "/api/alpha-factory/run-cycle"},
             {"label": "Run paper-learning cycle", "method": "POST", "endpoint": "/api/autonomous-paper-learning/run-one-cycle"},
             {"label": "Start diagnostic export", "method": "POST", "endpoint": "/api/diagnostics/export/run"},
         ],

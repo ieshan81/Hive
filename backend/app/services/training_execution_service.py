@@ -120,6 +120,44 @@ class TrainingExecutionService:
         if dec.execution_status in ("submitted", "filled"):
             return {"status": "skipped", "message": "Already executed", "execution_status": dec.execution_status}
 
+        if dec.side == "buy" and bool(cfg_get(self.config, "alpha_factory.require_alpha_candidate_for_execution", True)):
+            try:
+                from app.services.autonomous_alpha_factory_service import AutonomousAlphaFactoryService
+
+                gate = AutonomousAlphaFactoryService(self.session, self.config).can_trade_paper(
+                    dec.symbol,
+                    strategy_id=dec.strategy_id,
+                )
+            except Exception as exc:
+                gate = {
+                    "allowed": False,
+                    "reason": f"ALPHA_GATE_ERROR:{type(exc).__name__}",
+                    "plain_english": "Alpha candidate gate could not be evaluated.",
+                }
+            if not gate.get("allowed"):
+                dec.execution_status = "blocked_alpha_not_ready"
+                self.session.add(dec)
+                self._training_memory("training_blocked_memory", dec, [gate.get("reason") or "ALPHA_NOT_READY"])
+                self._audit_truth(
+                    "training_order_alpha_gate",
+                    "blocked",
+                    {
+                        "symbol": dec.symbol,
+                        "strategy_id": dec.strategy_id,
+                        "reason": gate.get("reason") or "ALPHA_NOT_READY",
+                        "message": gate.get("plain_english") or "Autonomous alpha candidate evidence is required before paper entry.",
+                    },
+                )
+                return {
+                    "status": "blocked",
+                    "reason": gate.get("reason") or "ALPHA_NOT_READY",
+                    "alpha_candidate_gate": gate,
+                    "broker_mode": "paper",
+                    "live_trading_locked": True,
+                    "submitted": False,
+                    "blocked_before_broker": True,
+                }
+
         spike = MemeVolatilitySpikeDetector(self.session, self.config).evaluate_symbol(dec.symbol)
         if spike.get("suggested_action") == "block":
             dec.execution_status = "blocked_spike"

@@ -23,9 +23,13 @@ export function HiveMindSection() {
   } | null>(null);
   const [meta, setMeta] = useState<PanelLoadMeta>({ source: "empty", lastUpdated: new Date().toISOString() });
   const [showArchived, setShowArchived] = useState(false);
+  const [alphaMemory, setAlphaMemory] = useState<Record<string, unknown> | null>(null);
 
   const load = useCallback(async () => {
-    const result = await apiGet<Record<string, unknown>>("/api/memory/hive-mind", { timeoutMs: 5000 });
+    const [result, alpha] = await Promise.all([
+      apiGet<Record<string, unknown>>("/api/memory/hive-mind", { timeoutMs: 5000 }),
+      apiGet<Record<string, unknown>>("/api/alpha-factory/memory-summary", { timeoutMs: 5000 }),
+    ]);
     if (result.ok && result.data) {
       setMind(result.data as typeof mind);
       setMeta({
@@ -44,6 +48,7 @@ export function HiveMindSection() {
         error: result.error || `HTTP ${result.status}`,
       });
     }
+    if (alpha.ok && alpha.data) setAlphaMemory(alpha.data);
   }, []);
 
   useEffect(() => {
@@ -88,6 +93,14 @@ export function HiveMindSection() {
       <HiveMemoryGraphPanel compact showArchived={showArchived} categoryFilter="all" />
 
       <div className="grid md:grid-cols-3 gap-3">
+        <GlassPanel title="Alpha evidence">
+          <p className="text-xs text-slate-400">
+            Meaningful lessons: {String(alphaMemory?.meaningful_memory_count ?? 0)}
+          </p>
+          <p className="mt-1 text-[10px] text-slate-500">
+            Raw events are hidden by default. Alpha promotions, quarantines, and scorecards become consolidated lessons.
+          </p>
+        </GlassPanel>
         <GlassPanel title="Trading memories">
           <ul className="text-xs space-y-2 max-h-36 overflow-y-auto scrollbar-thin">
             {(mind?.trading_recent || []).map((l) => (

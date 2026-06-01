@@ -843,6 +843,59 @@ class StrategyScorecard(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class AlphaScorecard(SQLModel, table=True):
+    """Symbol-level autonomous alpha evidence.
+
+    This complements ``StrategyScorecard`` instead of replacing it. Existing
+    strategy scorecards are strategy-level; this table tracks whether a concrete
+    symbol/strategy/timeframe has enough research evidence to govern paper entry.
+    """
+
+    __tablename__ = "alpha_scorecards"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    symbol: str = Field(index=True)
+    normalized_symbol: str = Field(index=True)
+    asset_class: str = Field(default="crypto", index=True)
+    strategy_family: str = Field(index=True)
+    strategy_id: str = Field(index=True)
+    timeframe: str = "5Min"
+    current_stage: str = Field(default="unproven", index=True)
+    sample_size: int = 0
+    backtest_count: int = 0
+    walk_forward_count: int = 0
+    win_rate: Optional[float] = None
+    expectancy: Optional[float] = None
+    profit_factor: Optional[float] = None
+    max_drawdown_pct: Optional[float] = None
+    sharpe_if_available: Optional[float] = None
+    avg_trade_duration: Optional[float] = None
+    average_win: Optional[float] = None
+    average_loss: Optional[float] = None
+    payoff_ratio: Optional[float] = None
+    cost_bps: Optional[float] = None
+    spread_bps: Optional[float] = None
+    slippage_bps: Optional[float] = None
+    fee_bps: Optional[float] = None
+    edge_after_cost_bps: Optional[float] = None
+    recent_paper_trade_count: int = 0
+    recent_paper_pnl: float = 0.0
+    recent_churn_count: int = 0
+    recent_loss_cooldown_until: Optional[datetime] = None
+    data_freshness_status: str = "unknown"
+    bar_count: int = 0
+    quote_freshness: str = "unknown"
+    verdict: str = Field(default="unproven", index=True)
+    blocker_reasons_json: list = Field(default_factory=list, sa_column=Column(JSON))
+    promotion_reason: Optional[str] = None
+    last_backtest_run_id: Optional[str] = Field(default=None, index=True)
+    last_walk_forward_run_id: Optional[str] = Field(default=None, index=True)
+    evidence_ids_json: list = Field(default_factory=list, sa_column=Column(JSON))
+    autonomous_generated: bool = True
+    scorecard_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class StrategyPromotionRule(SQLModel, table=True):
     __tablename__ = "strategy_promotion_rules"
     id: Optional[int] = Field(default=None, primary_key=True)

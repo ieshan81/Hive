@@ -139,6 +139,7 @@ class ResearchOSReadService:
                 "latest_node": latest_agent.node_name if latest_agent else None,
                 "latest_status": latest_agent.status if latest_agent else "not_run",
             },
+            "alpha_factory": self._alpha_factory_status(),
             "optional_dependencies": optional_dependency_status(),
             "next_research_action": self._next_action(backtest, risk, running),
         }
@@ -163,6 +164,21 @@ class ResearchOSReadService:
         if risk.pass_fail != "pass":
             return "Review risk audit blockers before promotion."
         return "Review promotion proposal or run walk-forward validation."
+
+    def _alpha_factory_status(self) -> dict[str, Any]:
+        try:
+            from app.services.alpha_research_read_model_service import AlphaResearchReadModelService
+
+            st = AlphaResearchReadModelService(self.session, {}).status()
+            return {
+                "can_trade_paper_now": st.get("can_trade_paper_now"),
+                "reason": st.get("reason"),
+                "paper_candidate_count": st.get("paper_candidate_count"),
+                "best_candidate": st.get("best_candidate"),
+                "plain_english": st.get("plain_english"),
+            }
+        except Exception as exc:
+            return {"status": "degraded", "error": f"{type(exc).__name__}: {exc}"[:200]}
 
 
 class ResearchOSService:

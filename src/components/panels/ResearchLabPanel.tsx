@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { FlaskConical, Play, RefreshCw } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { PanelError } from "@/components/ui/PanelError";
+import { AlphaFactoryPanel } from "@/components/panels/AlphaFactoryPanel";
 import { apiGet, apiPostOperator } from "@/lib/apiClient";
 import type { PanelLoadMeta } from "@/types/api";
 
@@ -175,6 +176,8 @@ export function ResearchLabPanel() {
         </p>
       )}
       {lastAction && <p className="text-[10px] text-slate-500 font-mono">{lastAction}</p>}
+
+      <AlphaFactoryPanel compact={false} />
 
       {memoryProposals.length > 0 && (
         <GlassPanel title="Proposed from memory" icon={<FlaskConical className="h-4 w-4" />}>
