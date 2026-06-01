@@ -24,9 +24,13 @@ class AlphaResearchReadModelService:
         self.factory = AutonomousAlphaFactoryService(session, config)
 
     def status(self) -> dict[str, Any]:
+        from app.services.kronos_market_model_service import KronosMarketModelService
+
         return {
             **self.factory.get_status(),
             "autonomous_scheduler": AutonomousAlphaScheduler(self.session, self.config).status(),
+            # Optional market-model adapter (OFF by default; advisory-only, never promotes).
+            **KronosMarketModelService(self.config).status_summary(),
         }
 
     def scorecards(self, *, limit: int = 100) -> dict[str, Any]:

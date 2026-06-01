@@ -153,7 +153,7 @@ UI_PANEL_DATA_SOURCES: list[dict[str, Any]] = [
 
 def build_frontend_endpoint_status(session) -> list[dict[str, Any]]:
     """In-process probe of the same data backing API routes (no HTTP/CORS)."""
-    from app.config import get_settings
+    from app.config import settings
     from app.services.config_manager import ConfigManager
     from app.services.decisions_service import blocked_decisions, latest_summary
     from app.services.lesson_memory_service import LessonMemoryService
@@ -177,7 +177,7 @@ def build_frontend_endpoint_status(session) -> list[dict[str, Any]]:
         ("/api/orders", lambda: {"orders": orders_history(session)}),
         ("/api/trades/history", lambda: {"trades": trades_history(session)}),
     ]
-    base_hint = f"http://{get_settings().api_host}:{get_settings().api_port}"
+    base_hint = f"http://{settings.api_host}:{settings.api_port}"
     out: list[dict[str, Any]] = []
     for path, fn in probes:
         row: dict[str, Any] = {
