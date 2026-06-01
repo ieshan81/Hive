@@ -217,6 +217,15 @@ def apl_diagnostics(days: int = 14, session: Session = Depends(get_session)):
     return {"status": "ok", **daily_diagnostics(session, days=max(1, min(int(days or 14), 60)))}
 
 
+@router.get("/decision-state")
+def autopilot_decision_state(session: Session = Depends(get_session)):
+    """READ ONLY: current paper-autopilot business decision state."""
+    from app.services.config_manager import ConfigManager
+    from app.services.autopilot_decision_state_service import AutopilotDecisionStateService
+
+    return AutopilotDecisionStateService(session, ConfigManager(session).get_current()).state()
+
+
 @router.get("/export-bundle")
 def apl_export_bundle(session: Session = Depends(get_session)):
     """One-click Paper Autopilot bundle as JSON (paper telemetry; no secrets)."""

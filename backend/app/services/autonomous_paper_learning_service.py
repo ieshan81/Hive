@@ -244,6 +244,16 @@ class AutonomousPaperLearningService:
         ensure_crypto_push_pull_baseline(self.session, self.config)
         log_activity(self.session, "tick_started", "Push-pull tick started", {"operator": operator}, commit=False)
 
+        trade_state_repair: dict[str, Any] = {"status": "skipped"}
+        try:
+            from app.services.trade_state_repair_service import TradeStateRepairService
+
+            trade_state_repair = TradeStateRepairService(self.session, self.config).repair_stale_open_trades_when_broker_flat(
+                dry_run=False
+            )
+        except Exception as exc:
+            trade_state_repair = {"status": "error", "reason": type(exc).__name__, "message": str(exc)[:200]}
+
         refresh_summary: dict[str, Any] = {"status": "skipped", "reason": "disabled"}
         if bool(cfg_get(self.config, "autonomous_paper_learning.refresh_market_data_before_tick", True)):
             try:
@@ -331,6 +341,7 @@ class AutonomousPaperLearningService:
             "orders_created": max(0, orders_after - orders_before),
             "cycle_type": "autonomous_paper_learning",
             "market_data_refresh": refresh_summary,
+            "trade_state_repair": trade_state_repair,
         }
         if entries.get("action") == "no_trade" or entries.get("reason") == "no_account_eligible_symbols":
             out["status"] = "ok"
@@ -345,6 +356,7 @@ class AutonomousPaperLearningService:
             "new_orders": out["orders_created"],
             "orders_created": out["orders_created"],
             "market_data_refresh": refresh_summary,
+            "trade_state_repair": trade_state_repair,
             "scanner_stack": scanner_summary,
             "backtest_lab": backtest_summary,
             "action": out.get("action") or entries.get("action"),

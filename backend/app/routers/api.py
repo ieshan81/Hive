@@ -109,6 +109,14 @@ def health_check(session: Session = Depends(get_session)):
     }
 
 
+@router.get("/autopilot/decision-state")
+def autopilot_decision_state_alias(session: Session = Depends(get_session)):
+    """READ ONLY: canonical paper-autopilot decision state compatibility alias."""
+    from app.services.autopilot_decision_state_service import AutopilotDecisionStateService
+
+    return AutopilotDecisionStateService(session, ConfigManager(session).get_current()).state()
+
+
 @router.get("/live-lock/status")
 def live_lock_status_endpoint(session: Session = Depends(get_session)):
     from app.services.broker_safety import broker_base_url, is_paper_broker_url, live_lock_status

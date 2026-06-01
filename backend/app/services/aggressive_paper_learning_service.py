@@ -255,6 +255,7 @@ class AggressivePaperLearningService:
         approved = 0.0
         decision = "blocked"
         reason_code = "not_eligible"
+        preflight_evidence: dict[str, Any] = {}
         if not self.cfg.get("mode_enabled"):
             reason_code = "mode_disabled"
             reason = "Paper learning mode disabled"
@@ -268,6 +269,7 @@ class AggressivePaperLearningService:
                 side=side,
                 signal_meta=signal_meta or {},
             )
+            preflight_evidence = dict(getattr(self, "_last_preflight_evidence", {}) or {})
             if block:
                 reason_code, reason = block[0], block[1]
             else:
@@ -295,6 +297,7 @@ class AggressivePaperLearningService:
                 "tier": self.symbol_tier(symbol),
                 "signal_meta": signal_meta or {},
                 "dynamic_requested_notional": requested,
+                "preflight_evidence": preflight_evidence,
             },
         )
         self.session.add(row)
@@ -393,6 +396,7 @@ class AggressivePaperLearningService:
         side: str = "buy",
         signal_meta: Optional[dict[str, Any]] = None,
     ) -> Optional[tuple[str, str]]:
+        self._last_preflight_evidence = {}
         if not is_paper_broker_url():
             return "broker_not_paper", "Broker must be paper"
         if cfg_get(self.config, "live_trading_enabled", False):
@@ -420,8 +424,18 @@ class AggressivePaperLearningService:
             return "daily_loss_cap", "Daily paper loss cap reached"
         if self._weekly_loss_exceeded():
             return "weekly_loss_cap", "Weekly paper loss cap reached"
-        if side.lower() == "buy" and self.cfg.get("no_duplicate_symbol_buy", True) and self._has_open_or_pending_buy(symbol):
-            return "duplicate_buy", "Duplicate buy blocked for symbol"
+        if side.lower() == "buy" and self.cfg.get("no_duplicate_symbol_buy", True):
+            try:
+                from app.services.exposure_truth_service import ExposureTruthService
+
+                dupe = ExposureTruthService(self.session, self.config).duplicate_buy_decision(symbol)
+                self._last_preflight_evidence["duplicate_buy"] = dupe
+                if dupe.get("blocked"):
+                    return "duplicate_buy", "Duplicate buy blocked for real exposure"
+            except Exception as exc:
+                self._last_preflight_evidence["duplicate_buy_error"] = type(exc).__name__
+            if self._has_open_or_pending_buy(symbol):
+                return "duplicate_buy", "Duplicate buy blocked for recent pending/submitted buy"
         if side.lower() == "buy" and self.cfg.get("no_averaging_down", True) and self._averaging_down_blocked(symbol):
             return "averaging_down", "Averaging down not allowed without research approval"
         tier = self.symbol_tier(symbol)

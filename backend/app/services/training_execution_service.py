@@ -127,13 +127,25 @@ class TrainingExecutionService:
             self._training_memory("training_blocked_memory", dec, spike.get("reason_codes", []))
             return {"status": "blocked", "reason": "meme_spike_detector", "spike": spike}
 
-        existing = self.session.exec(
-            select(PositionSnapshot).where(
-                PositionSnapshot.symbol == dec.symbol, PositionSnapshot.qty > 0
-            )
-        ).first()
-        if existing and dec.side == "buy":
-            return {"status": "blocked", "reason": "same_symbol_position_conflict"}
+        if dec.side == "buy":
+            try:
+                from app.services.exposure_truth_service import ExposureTruthService
+
+                dupe = ExposureTruthService(self.session, self.config).duplicate_buy_decision(dec.symbol)
+                if dupe.get("blocked"):
+                    return {
+                        "status": "blocked",
+                        "reason": "same_symbol_position_conflict",
+                        "exposure_truth": dupe,
+                    }
+            except Exception:
+                existing = self.session.exec(
+                    select(PositionSnapshot).where(
+                        PositionSnapshot.symbol == dec.symbol, PositionSnapshot.qty > 0
+                    )
+                ).first()
+                if existing:
+                    return {"status": "blocked", "reason": "same_symbol_position_conflict"}
 
         return self._submit_training_order(dec, spike)
 

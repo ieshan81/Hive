@@ -172,6 +172,18 @@ class AutonomousPaperScheduler:
             caps = cap_status(self.session, self.config)
         except Exception:
             caps = {}
+        try:
+            from app.services.exposure_truth_service import ExposureTruthService
+
+            exposure_diag = ExposureTruthService(self.session, self.config).stale_local_summary()
+        except Exception:
+            exposure_diag = {
+                "stale_local_open_trade_count": None,
+                "stale_local_open_symbols": [],
+                "broker_flat_stale_trade_count": None,
+                "broker_flat_stale_symbols": [],
+                "duplicate_buy_source_of_truth": "broker_truth_first_with_local_fallback",
+            }
         return {
             "scheduler_enabled": bool(self.cfg.get("scheduler_enabled")),
             "paused": bool(self._state.get("paused")),
@@ -197,6 +209,13 @@ class AutonomousPaperScheduler:
             ),
             "use_capital_allocator": use_allocator,
             "live_locked": True,
+            "stale_local_open_trade_count": exposure_diag.get("stale_local_open_trade_count"),
+            "stale_local_open_symbols": exposure_diag.get("stale_local_open_symbols"),
+            "broker_flat_stale_trade_count": exposure_diag.get("broker_flat_stale_trade_count"),
+            "broker_flat_stale_symbols": exposure_diag.get("broker_flat_stale_symbols"),
+            "last_trade_state_repair_at": self._state.get("last_trade_state_repair_at"),
+            "last_trade_state_repair_result": self._state.get("last_trade_state_repair_result"),
+            "duplicate_buy_source_of_truth": exposure_diag.get("duplicate_buy_source_of_truth"),
             "adaptive_opportunity_budget": self._adaptive_budget_summary(),
             **self._spread_research_status(),
             **caps,
@@ -321,6 +340,13 @@ class AutonomousPaperScheduler:
         result = svc.run_one_cycle(operator=operator)
         rejected_after = self._rejected_count()
         rejected_this_tick = max(0, rejected_after - rejected_before)
+        repair = result.get("trade_state_repair") or {}
+        self._state["last_trade_state_repair_at"] = datetime.utcnow().isoformat() + "Z"
+        self._state["last_trade_state_repair_result"] = {
+            "status": repair.get("status"),
+            "affected_count": repair.get("affected_count", 0),
+            "reason": repair.get("reason"),
+        }
         self._state["ticks_today"] = int(self._state.get("ticks_today", 0)) + 1
         self._state["last_tick_at"] = datetime.utcnow().isoformat() + "Z"
 

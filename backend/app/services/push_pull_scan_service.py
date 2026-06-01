@@ -144,8 +144,11 @@ class PushPullScanService:
                 skipped_count += 1
                 continue
 
-            ev = self.pl.evaluate(strategy_id, sym, side="buy", signal_meta=row_score)
-            ev = {**ev, "live_score": row_score}
+            from app.services.entry_quality_decision_service import EntryQualityDecisionService
+
+            quality_decision = EntryQualityDecisionService(self.session, self.config).decide(row_score)
+            ev = self.pl.evaluate(strategy_id, sym, side="buy", signal_meta={**row_score, "entry_quality_decision": quality_decision})
+            ev = {**ev, "live_score": row_score, "entry_quality_decision": quality_decision}
             decisions_out.append(ev)
             rc = ev.get("reason_code") or "unknown"
             if ev.get("decision") == "approved":
@@ -173,6 +176,8 @@ class PushPullScanService:
                         reason_counts[str(ex.get("reject_reason")).lower()] += 1
                     decisions_out.append({"execute": ex, "score": row_score})
             else:
+                from app.services.autopilot_decision_classifier import classify_block_reason
+
                 skipped_count += 1
                 if rc in ("spread_check",):
                     reason_counts["spread_too_wide"] += 1
@@ -186,6 +191,12 @@ class PushPullScanService:
                     reason_counts["allocator_block"] += 1
                 else:
                     reason_counts[rc] += 1
+                ev.update(
+                    {
+                        **classify_block_reason(rc),
+                        "next_candidate_considered": True,
+                    }
+                )
 
         if eligible_strategy_count == 0:
             reason_counts["no_eligible_strategy"] += 1

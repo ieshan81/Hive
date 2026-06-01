@@ -170,6 +170,7 @@ class AutonomousResearchWorker:
     def status(self) -> dict[str, Any]:
         latest = []
         rejected, watch = [], []
+        last_run_at = None
         try:
             rows = list(
                 self.session.exec(
@@ -179,6 +180,8 @@ class AutonomousResearchWorker:
                     .limit(20)
                 ).all()
             )
+            if rows:
+                last_run_at = rows[0].created_at.isoformat() + "Z" if rows[0].created_at else None
             for r in rows:
                 m = r.metrics_json or {}
                 verdict = m.get("verdict")
@@ -191,11 +194,38 @@ class AutonomousResearchWorker:
                     watch.extend(r.symbols or [])
         except Exception:
             pass
+        targets = self._default_targets()
+        runs_hour = self._runs_last_hour()
+        safety = self._gather_safety()
+        last_skip_reason = None
+        last_skip_evidence: dict[str, Any] = {}
+        if not bool(self.cfg["autonomous_backtest_worker_enabled"]):
+            last_skip_reason = "disabled"
+        elif not targets:
+            last_skip_reason = "no_targets"
+        elif runs_hour >= int(self.cfg["idle_research_max_runs_per_hour"]):
+            last_skip_reason = "hourly_budget"
+        elif not safety.ok:
+            reason = safety.reason
+            if "broker" in reason:
+                last_skip_reason = "broker_not_synced"
+            elif "scheduler" in reason:
+                last_skip_reason = "safety_not_ok"
+            elif "kill_switch" in reason:
+                last_skip_reason = "safety_not_ok"
+            else:
+                last_skip_reason = reason or "safety_not_ok"
+            last_skip_evidence = {"safety_reason": safety.reason}
         return {
             "enabled": bool(self.cfg["autonomous_backtest_worker_enabled"]),
-            "runs_last_hour": self._runs_last_hour(),
+            "target_count": len(targets),
+            "last_run_at": last_run_at,
+            "runs_last_hour": runs_hour,
             "max_runs_per_hour": int(self.cfg["idle_research_max_runs_per_hour"]),
+            "last_skip_reason": last_skip_reason,
+            "last_skip_evidence": last_skip_evidence,
             "latest_idle_backtests": latest,
+            "last_verdicts": latest,
             "latest_verdicts": [e.get("verdict") for e in latest],
             "symbols_rejected_by_research": sorted(set(rejected))[:20],
             "symbols_promoted_to_watch": sorted(set(watch))[:20],
