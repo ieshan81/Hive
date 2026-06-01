@@ -244,10 +244,22 @@ def _execution_safety(session: Session, cfg: dict) -> dict[str, Any]:
         if plain_blockers
         else "Paper entries may submit when a candidate passes the cage."
     )
+    # Entries-vs-exits separation: the kill switch / drawdown gate blocks NEW ENTRIES only.
+    # Exits (risk-reducing closes) are never blocked while the paper broker is connected.
+    new_entries_allowed = can_place
+    exits_allowed = bool(paper_broker)
+    if not new_entries_allowed and exits_allowed:
+        entries_exits_summary = "New paper entries are paused; the bot can still manage and exit open positions."
+    elif new_entries_allowed:
+        entries_exits_summary = "Paper entries and exits are both available (paper-only; live trading locked)."
+    else:
+        entries_exits_summary = "Paper broker not connected: neither entries nor exits can submit."
     return {
         "status": "ok" if not blockers else "blocked",
         "paper_broker": paper_broker,
         "paper_broker_connected": paper_broker,
+        "broker_connected": paper_broker,
+        "paper_mode_active": bool(paper_broker and live.get("live_lock_status") == "locked" and not live_orders_enabled),
         "broker_mode": "paper" if paper_broker else "unknown",
         "live_lock_status": live.get("live_lock_status"),
         "live_trading_locked": live.get("live_lock_status") == "locked",
@@ -257,7 +269,12 @@ def _execution_safety(session: Session, cfg: dict) -> dict[str, Any]:
         "scheduler_enabled": scheduler_enabled,
         "can_place_paper_orders_now": can_place,
         "bot_can_submit_paper_entries_now": can_place,
+        # Canonical entries-vs-exits truth for the cockpit (no gating-logic change).
+        "new_entries_allowed": new_entries_allowed,
+        "exits_allowed": exits_allowed,
+        "entries_exits_summary": entries_exits_summary,
         "kill_switch_active": not bool(kill.get("entries_allowed")),
+        "kill_switch_blocks_exits": False,
         "drawdown_blocker": drawdown_blocker,
         "open_positions_count": open_positions_count,
         "active_orders_count": active_orders_count,

@@ -79,6 +79,13 @@ type Cockpit = {
     active_orders_count?: number;
     can_place_paper_orders_now?: boolean;
     bot_can_submit_paper_entries_now?: boolean;
+    broker_connected?: boolean;
+    paper_mode_active?: boolean;
+    new_entries_allowed?: boolean;
+    exits_allowed?: boolean;
+    kill_switch_blocks_exits?: boolean;
+    entries_exits_summary?: string;
+    live_trading_locked?: boolean;
     blockers?: string[];
     next_action?: string;
     kill_switch?: { account_daily_pl_pct?: number | null; account_drawdown_pct?: number | null; state?: string };
@@ -135,7 +142,16 @@ export function CockpitDashboard() {
     data?.shortlist ??
     (data?.scores ?? []).filter((s) => s.entry_allowed)
   );
-  const canSubmitEntries = Boolean(paper.bot_can_submit_paper_entries_now ?? paper.can_place_paper_orders_now ?? ctrl.bot_can_place);
+  const canSubmitEntries = Boolean(paper.new_entries_allowed ?? paper.bot_can_submit_paper_entries_now ?? paper.can_place_paper_orders_now ?? ctrl.bot_can_place);
+  // Exits are never blocked by the kill switch — the bot can always manage/close open positions while the paper broker is connected.
+  const exitsAllowed = Boolean(paper.exits_allowed ?? (paper.broker_connected ?? paper.paper_broker_connected ?? paper.paper_broker));
+  const entriesExitsSummary = paper.entries_exits_summary ?? (
+    canSubmitEntries
+      ? "Paper entries and exits are both available (paper-only; live trading locked)."
+      : exitsAllowed
+        ? "New paper entries are paused; the bot can still manage and exit open positions."
+        : "Paper broker not connected: neither entries nor exits can submit."
+  );
   const drawdownReason = paper.drawdown_blocker?.message;
   const alpha = data?.alpha_factory ?? {};
 
@@ -204,7 +220,7 @@ export function CockpitDashboard() {
       <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
         {[
           ["Paper learning", ctrl.paper_learning_on ? "ON" : "OFF", ctrl.paper_learning_on ? "#00FF66" : "#F59E0B"],
-          ["Bot can trade", canSubmitEntries ? "YES" : "NO", canSubmitEntries ? "#00FF66" : "#F59E0B"],
+          ["New paper entries", canSubmitEntries ? "ON" : "PAUSED", canSubmitEntries ? "#00FF66" : "#F59E0B"],
           ["Equity", data?.account?.equity != null ? `$${data.account.equity.toFixed(2)}` : "-", "#fff"],
           [
             "Crypto pairs",
@@ -245,7 +261,8 @@ export function CockpitDashboard() {
             ["Kill switch active", paper.kill_switch_active ? "Yes" : "No", !paper.kill_switch_active],
             ["Open positions", String(paper.open_positions_count ?? data?.positions?.length ?? 0), true],
             ["Active orders", String(paper.active_orders_count ?? 0), true],
-            ["Can submit entries", canSubmitEntries ? "Yes" : "No", canSubmitEntries],
+            ["New entries allowed", canSubmitEntries ? "Yes" : "No", canSubmitEntries],
+            ["Exits allowed", exitsAllowed ? "Yes" : "No", exitsAllowed],
           ].map(([label, value, ok]) => (
             <div key={String(label)} className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
               <p className="text-[10px] uppercase text-slate-500">{label}</p>
@@ -254,12 +271,13 @@ export function CockpitDashboard() {
           ))}
         </div>
         <div className="mt-3 rounded-lg border border-amber-300/20 bg-amber-300/10 p-3 text-[11px] text-amber-100">
+          <p className="font-semibold text-amber-50">{entriesExitsSummary}</p>
           {drawdownReason ? (
-            <p>Paper entries blocked by daily drawdown kill switch. Wait for window reset or intentionally change risk config. Detail: {drawdownReason}</p>
+            <p className="mt-1">New paper entries are paused by the daily drawdown kill switch (exits still allowed). Wait for window reset or intentionally change risk config. Detail: {drawdownReason}</p>
           ) : canSubmitEntries ? (
-            <p>Paper entries can submit only when a candidate passes the deterministic execution cage.</p>
+            <p className="mt-1">Paper entries can submit only when a candidate passes the deterministic execution cage.</p>
           ) : (
-            <p>{paper.next_action ?? paper.blockers?.[0] ?? "Paper entries are currently blocked; check operator controls and latest scan freshness."}</p>
+            <p className="mt-1">{paper.next_action ?? paper.blockers?.[0] ?? "New paper entries are currently paused; check operator controls and latest scan freshness."}</p>
           )}
         </div>
         <button

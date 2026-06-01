@@ -6,11 +6,17 @@ does not call an LLM and never approves or submits trades.
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any, Optional
 
 from sqlmodel import Session, select
 
 from app.database import ResearchBacktestRun, SymbolCandidate
+from app.services.engine_config import cfg_get
+
+
+def _norm(symbol: str) -> str:
+    return str(symbol or "").upper().replace("/", "").replace("-", "").strip()
 
 
 STRATEGY_FAMILIES: list[dict[str, Any]] = [
@@ -90,6 +96,28 @@ STRATEGY_FAMILIES: list[dict[str, Any]] = [
         "required_data": ["bars_5m", "quote", "public_sentiment"],
         "risk_notes": "Never trades from sentiment alone.",
     },
+    {
+        # Longer-horizon experiment: higher timeframe momentum has a larger move budget
+        # relative to round-trip cost, so the corrected cost model can leave net edge.
+        "strategy_family": "higher_timeframe_momentum",
+        "strategy_id": "crypto_push_pull_baseline",
+        "candidate_name": "Higher-Timeframe Momentum (1h/4h)",
+        "timeframe": "1h",
+        "parameter_ranges": {
+            "timeframe": ["1h", "4h"],
+            "lookback_bars": [6, 12, 24],
+            "momentum_threshold": [0.01, 0.02, 0.035],
+            "atr_stop_multiplier": [1.2, 1.6, 2.0],
+            "take_profit_r_multiple": [1.5, 2.0, 3.0],
+        },
+        "hypothesis": "On 1h/4h bars the expected move is large vs round-trip cost, so a small after-cost edge can survive.",
+        "expected_behavior": "Fewer, larger paper entries; only after positive after-cost evidence on the higher timeframe.",
+        "invalidation_rules": ["stale_bar", "spread_expansion", "momentum_reversal", "trend_exhaustion"],
+        "required_data": ["bars_1h", "bars_4h", "quote", "spread"],
+        "risk_notes": "Longer holds; promotion still requires sufficient sample and positive edge after the corrected cost model.",
+        "longer_horizon": True,
+        "majors_only": ["BTC/USD", "ETH/USD", "SOL/USD", "LTC/USD", "LINK/USD", "AVAX/USD", "DOGE/USD", "UNI/USD"],
+    },
 ]
 
 
@@ -106,34 +134,56 @@ class AutonomousStrategyGenerator:
             for family in STRATEGY_FAMILIES:
                 if asset_class == "stock" and str(family["strategy_id"]).startswith("crypto_"):
                     continue
+                # Longer-horizon experiments are limited to the approved majors only.
+                majors = family.get("majors_only")
+                if majors and sym not in majors:
+                    continue
                 out.append({**family, "symbol": sym, "asset_class": asset_class, "autonomous_generated": True})
         return out
 
     def _symbols(self, symbols: Optional[list[str]], *, limit: int) -> list[str]:
         if symbols:
             return list(dict.fromkeys([str(s).strip().upper() for s in symbols if str(s).strip()]))[:limit]
-        rows = list(
-            self.session.exec(
-                select(SymbolCandidate).order_by(SymbolCandidate.scanned_at.desc()).limit(limit * 2)
-            ).all()
-        )
-        picked: list[str] = []
-        for row in rows:
+        # Build a de-duplicated pool from scanned candidates, then recent research targets.
+        pool: list[str] = []
+        for row in self.session.exec(
+            select(SymbolCandidate).order_by(SymbolCandidate.scanned_at.desc()).limit(limit * 3)
+        ).all():
             sym = str(row.symbol or "").upper()
-            if sym and sym not in picked:
-                picked.append(sym)
-            if len(picked) >= limit:
-                return picked
-        recent = list(
-            self.session.exec(
-                select(ResearchBacktestRun).order_by(ResearchBacktestRun.created_at.desc()).limit(20)
-            ).all()
-        )
-        for run in recent:
+            if sym and sym not in pool:
+                pool.append(sym)
+        for run in self.session.exec(
+            select(ResearchBacktestRun).order_by(ResearchBacktestRun.created_at.desc()).limit(30)
+        ).all():
             for sym in run.symbols or []:
                 s = str(sym).upper()
-                if s and s not in picked:
-                    picked.append(s)
-                if len(picked) >= limit:
-                    return picked
-        return picked or ["BTC/USD", "ETH/USD", "SOL/USD"]
+                if s and s not in pool:
+                    pool.append(s)
+        if not pool:
+            pool = ["BTC/USD", "ETH/USD", "SOL/USD"]
+        # Rotation: push symbols whose recent research keeps coming back insufficient-sample to
+        # the back so fresh setups are researched first instead of re-churning the same thin one.
+        thin = self._repeatedly_thin_symbols()
+        pool.sort(key=lambda s: 1 if _norm(s) in thin else 0)  # stable: thin symbols last
+        return pool[:limit]
+
+    def _repeatedly_thin_symbols(self, *, window: int = 3, min_repeats: int = 2) -> set[str]:
+        """Symbols with >= min_repeats insufficient-sample runs among their last `window` runs."""
+        min_sample = int(cfg_get(self.config, "alpha_factory.min_sample_size", 5) or 5)
+        runs = list(
+            self.session.exec(
+                select(ResearchBacktestRun).order_by(ResearchBacktestRun.created_at.desc()).limit(200)
+            ).all()
+        )
+        seen: Counter = Counter()
+        thin_hits: Counter = Counter()
+        for run in runs:  # newest first
+            sample = int(run.sample_size or run.num_trades or 0)
+            for sym in run.symbols or []:
+                key = _norm(sym)
+                if seen[key] >= window:
+                    continue
+                seen[key] += 1
+                if sample < min_sample:
+                    thin_hits[key] += 1
+        return {k for k, hits in thin_hits.items() if hits >= min_repeats}
