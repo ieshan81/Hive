@@ -31,6 +31,7 @@ from app.services.config_manager import ConfigManager
 from app.services.cost_model_service import CostModelService
 from app.services.engine_config import cfg_get
 from app.services.memory_evidence_consolidator_v2 import MemoryEvidenceConsolidatorV2
+from app.services.market_session_service import MarketSessionService
 from app.services.parameter_sweep_service import ParameterSweepService
 from app.services.order_ledger_service import classify_asset
 from app.services.research_cost_model import COST_MODEL_VERSION, round_trip_cost_pct
@@ -307,6 +308,7 @@ class AutonomousAlphaFactoryService:
             "blocked_symbols": self._blocked_symbols(cards),
             "alpha_failure_breakdown": self._failure_breakdown(cards, min_sample, min_pf),
             "top_cost_blockers": self._top_cost_blockers(cards),
+            "session_research": self._session_research_summary(cards),
             "cost_model_version": COST_MODEL_VERSION,
             "near_miss_count": sum(1 for sc in cards if self._classify_failure(sc, min_sample, min_pf) == "near_miss"),
             "next_research_action": self._next_action(cards, latest_backtest),
@@ -350,6 +352,11 @@ class AutonomousAlphaFactoryService:
                 "failure_category": self._classify_failure(sc, min_sample, min_pf),
                 "distance_to_qualify": round(distance, 4),
                 "next_research_action": action,
+                "session_blocker": pub.get("session_blocker"),
+                "session_edge_after_cost_bps": pub.get("session_edge_after_cost_bps"),
+                "session_sample_size": pub.get("session_sample_size"),
+                "session_next_action": pub.get("session_next_action")
+                or self._session_next_action(sc, min_sample),
             })
             out.append(pub)
         out.sort(key=lambda c: c["distance_to_qualify"])
@@ -362,8 +369,8 @@ class AutonomousAlphaFactoryService:
             "min_profit_factor": min_pf,
             "orders_authority": "none",
             "plain_english": (
-                f"{out[0]['symbol']} {out[0]['strategy_family']} is closest: needs {out[0]['missing_requirement']} "
-                f"({out[0]['required_metric']}, now {out[0]['current_metric']})."
+                f"{out[0]['symbol']} {out[0]['best_session'] or out[0]['strategy_family']} is closest: "
+                f"needs {out[0]['missing_requirement']} ({out[0]['required_metric']}, now {out[0]['current_metric']})."
                 if out else "No scorecards yet; run autonomous research."
             ),
         }
@@ -433,6 +440,23 @@ class AutonomousAlphaFactoryService:
             .order_by(HistoricalBar.timestamp.desc())
             .limit(1)
         ).first()
+        session_bars = list(
+            self.session.exec(
+                select(HistoricalBar)
+                .where(HistoricalBar.symbol == symbol, HistoricalBar.timeframe == str(metrics.get("timeframe") or "5Min"))
+                .order_by(HistoricalBar.timestamp.desc())
+                .limit(600)
+            ).all()
+        )
+        if not session_bars:
+            session_bars = list(
+                self.session.exec(
+                    select(HistoricalBar)
+                    .where(HistoricalBar.symbol == symbol)
+                    .order_by(HistoricalBar.timestamp.desc())
+                    .limit(600)
+                ).all()
+            )
         edge_after_cost_bps = self._edge_bps(metrics, cost)
         if edge_after_cost_bps is None:
             exp = self._float(metrics.get("expectancy"))
@@ -482,6 +506,12 @@ class AutonomousAlphaFactoryService:
         if row.fee_bps is None:
             row.fee_bps = cm["fee_bps"]
         row.edge_after_cost_bps = edge_after_cost_bps
+        session_summary = MarketSessionService().summarize_candles(
+            session_bars,
+            asset_class=row.asset_class,
+            cost_bps=row.cost_bps,
+        )
+        self._apply_session_summary(row, session_summary)
         row.recent_paper_trade_count = recent["count"]
         row.recent_paper_pnl = recent["pnl"]
         row.recent_churn_count = recent["churn"]
@@ -509,6 +539,7 @@ class AutonomousAlphaFactoryService:
                 round(cm["round_trip_bps"] / abs(row.edge_after_cost_bps), 3) if row.edge_after_cost_bps else None
             ),
             "metrics": metrics,
+            "session_metrics": session_summary,
             "composite_score": self._rank_score(row),
             "source": "autonomous_alpha_factory",
             "recent_loss_evidence": {
@@ -539,6 +570,30 @@ class AutonomousAlphaFactoryService:
         if not rows:
             return None
         return sorted(rows, key=self._rank_score, reverse=True)[0]
+
+    def _apply_session_summary(self, row: AlphaScorecard, summary: dict[str, Any]) -> None:
+        min_session_sample = int(cfg_get(self.config, "alpha_factory.session_min_sample_size", 5) or 5)
+        sessions = summary.get("sessions") or {}
+        best_session = summary.get("best_session")
+        best_metrics = sessions.get(best_session) if best_session else {}
+        sample = int(best_metrics.get("sample_size") or summary.get("session_sample_size") or 0)
+        if sample < min_session_sample:
+            summary["session_blocker"] = "session_sample_insufficient"
+            summary["session_next_action"] = f"Collect {min_session_sample - sample} more valid session sample(s)."
+        else:
+            summary["session_blocker"] = None
+            summary["session_next_action"] = "Session sample is large enough for comparison."
+        row.best_session = best_session
+        row.worst_session = summary.get("worst_session")
+        row.session_sample_size = sample
+        row.session_win_rate = self._float(best_metrics.get("win_rate"))
+        row.session_expectancy = self._float(best_metrics.get("expectancy"))
+        row.session_profit_factor = self._float(best_metrics.get("profit_factor"))
+        row.session_edge_after_cost_bps = self._float(best_metrics.get("edge_after_cost_bps"))
+        row.london_session_metrics_json = sessions.get("london_session") or {}
+        row.new_york_session_metrics_json = sessions.get("new_york_session") or {}
+        row.london_new_york_overlap_metrics_json = sessions.get("london_new_york_overlap") or {}
+        row.low_liquidity_session_warning = summary.get("low_liquidity_session_warning")
 
     def _job(self, job_type: str, payload: dict[str, Any], operator: str) -> ResearchJob:
         job = ResearchJob(
@@ -677,6 +732,14 @@ class AutonomousAlphaFactoryService:
     @staticmethod
     def _family_for(strategy_id: str) -> str:
         sid = str(strategy_id or "")
+        if "opening_range" in sid:
+            return "new_york_opening_range_breakout"
+        if "london_ny_overlap" in sid or "overlap_continuation" in sid:
+            return "london_new_york_overlap_continuation"
+        if "liquidity_sweep" in sid:
+            return "liquidity_sweep_reversal"
+        if "london_momentum" in sid:
+            return "london_session_momentum"
         if "mean_reversion" in sid:
             return "mean_reversion_snapback"
         if "volatility_breakout" in sid:
@@ -757,6 +820,19 @@ class AutonomousAlphaFactoryService:
             "last_walk_forward_run_id": sc.last_walk_forward_run_id,
             "evidence_ids": sc.evidence_ids_json or [],
             "autonomous_generated": sc.autonomous_generated,
+            "best_session": sc.best_session,
+            "worst_session": sc.worst_session,
+            "session_sample_size": sc.session_sample_size,
+            "session_win_rate": sc.session_win_rate,
+            "session_expectancy": sc.session_expectancy,
+            "session_profit_factor": sc.session_profit_factor,
+            "session_edge_after_cost_bps": sc.session_edge_after_cost_bps,
+            "london_session_metrics": sc.london_session_metrics_json or {},
+            "new_york_session_metrics": sc.new_york_session_metrics_json or {},
+            "london_new_york_overlap_metrics": sc.london_new_york_overlap_metrics_json or {},
+            "low_liquidity_session_warning": sc.low_liquidity_session_warning,
+            "session_blocker": (sc.scorecard_json or {}).get("session_metrics", {}).get("session_blocker"),
+            "session_next_action": (sc.scorecard_json or {}).get("session_metrics", {}).get("session_next_action"),
             "updated_at": _iso(sc.updated_at),
             "rank_score": self._rank_score(sc),
         }
@@ -877,6 +953,39 @@ class AutonomousAlphaFactoryService:
         return rows[:limit]
 
     @staticmethod
+    def _session_research_summary(cards: list[AlphaScorecard]) -> dict[str, Any]:
+        with_session = [c for c in cards if c.best_session]
+        best_counts = Counter(c.best_session for c in with_session if c.best_session)
+        low_warnings = sum(1 for c in with_session if c.low_liquidity_session_warning)
+        closest = sorted(
+            with_session,
+            key=lambda c: (
+                0 if c.verdict not in PAPER_ALLOWED_VERDICTS else -1,
+                -(c.session_edge_after_cost_bps or -999999.0),
+            ),
+        )
+        return {
+            "session_scorecard_count": len(with_session),
+            "best_session_counts": dict(best_counts),
+            "low_liquidity_warning_count": low_warnings,
+            "closest_session_candidate": None
+            if not closest
+            else {
+                "symbol": closest[0].symbol,
+                "strategy_family": closest[0].strategy_family,
+                "best_session": closest[0].best_session,
+                "session_sample_size": closest[0].session_sample_size,
+                "session_edge_after_cost_bps": closest[0].session_edge_after_cost_bps,
+                "verdict": closest[0].verdict,
+            },
+            "plain_english": (
+                "No session scorecards yet."
+                if not with_session
+                else f"{len(with_session)} scorecard(s) include session context; most common best session: {best_counts.most_common(1)[0][0]}."
+            ),
+        }
+
+    @staticmethod
     def _near_miss_detail(sc: AlphaScorecard, min_sample: int, min_pf: float):
         """(missing_requirement, required_metric, current_metric, distance, next_action). Lower distance = closer."""
         sample = int(sc.sample_size or 0)
@@ -901,6 +1010,16 @@ class AutonomousAlphaFactoryService:
                     (min_sample - sample) / max(1, min_sample),
                     f"Collect {min_sample - sample} more qualified trades (have {sample}).")
         return ("none", "all gates", None, 5.0, "No single unmet gate; re-evaluate scorecard.")
+
+    @staticmethod
+    def _session_next_action(sc: AlphaScorecard, min_sample: int) -> str:
+        if (sc.session_sample_size or 0) < min_sample:
+            return f"{sc.symbol} {sc.best_session or 'session'} needs {min_sample - int(sc.session_sample_size or 0)} more valid session sample(s)."
+        if sc.session_edge_after_cost_bps is not None and sc.session_edge_after_cost_bps <= 0:
+            return f"{sc.symbol} {sc.best_session or 'session'} has no positive session edge after cost."
+        if sc.low_liquidity_session_warning:
+            return f"{sc.symbol} session evidence has low-liquidity warning: {sc.low_liquidity_session_warning}"
+        return f"{sc.symbol} {sc.best_session or 'session'} session evidence is available for review."
 
     def _recent_loss_summary(self) -> dict[str, Any]:
         cards = list(

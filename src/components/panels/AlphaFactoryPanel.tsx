@@ -21,6 +21,11 @@ type AlphaStatus = {
     backtests_run?: number;
     memory_written_count?: number;
   };
+  session_research?: {
+    session_scorecard_count?: number;
+    closest_session_candidate?: Record<string, unknown> | null;
+    plain_english?: string;
+  };
 };
 
 type Scorecards = { scorecards?: Record<string, unknown>[] };
@@ -92,6 +97,11 @@ export function AlphaFactoryPanel({ compact = false }: { compact?: boolean }) {
         </div>
       </div>
 
+      <div className="mt-2 rounded border border-cyan-300/20 bg-cyan-300/5 p-2 text-[10px] text-cyan-100">
+        <p className="uppercase tracking-wide text-cyan-300/80">Session research</p>
+        <p>{status?.session_research?.plain_english || "Session evidence not built yet."}</p>
+      </div>
+
       <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-3 text-xs">
         <p className="text-white">
           Best: {best ? `${String(best.symbol)} · ${label(best.strategy_family)} · ${label(best.verdict)}` : "none"}
@@ -138,6 +148,11 @@ export function AlphaFactoryPanel({ compact = false }: { compact?: boolean }) {
                   {label(row.verdict)}
                 </span>{" "}
                 · PF {String(row.profit_factor ?? "-")} · E {String(row.expectancy ?? "-")}
+                {row.best_session ? (
+                  <span className="text-cyan-300">
+                    {" "}· {label(row.best_session)} edge {String(row.session_edge_after_cost_bps ?? "-")} bps
+                  </span>
+                ) : null}
               </li>
             ))}
             {!scorecards.length ? <li>No alpha scorecards yet. Run the Alpha cycle after market data is cached.</li> : null}
