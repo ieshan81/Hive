@@ -48,6 +48,12 @@ def best_candidates(limit: int = 10, session: Session = Depends(get_session)):
     return AlphaResearchReadModelService(session).best_candidates(limit=limit)
 
 
+@router.get("/near-misses")
+def near_misses(limit: int = 10, session: Session = Depends(get_session)):
+    """READ ONLY: scorecards closest to qualifying + the single missing requirement. No trade/promote."""
+    return AlphaResearchReadModelService(session).near_misses(limit=limit)
+
+
 @router.get("/research-runs")
 def research_runs(limit: int = 50, session: Session = Depends(get_session)):
     """READ ONLY: autonomous alpha research run history."""

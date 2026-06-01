@@ -39,6 +39,9 @@ class AlphaResearchReadModelService:
     def best_candidates(self, *, limit: int = 10) -> dict[str, Any]:
         return self.factory.get_best_candidates(limit=limit)
 
+    def near_misses(self, *, limit: int = 10) -> dict[str, Any]:
+        return self.factory.get_near_misses(limit=limit)
+
     def research_runs(self, *, limit: int = 50) -> dict[str, Any]:
         jobs = list(
             self.session.exec(

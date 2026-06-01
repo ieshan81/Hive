@@ -32,6 +32,8 @@ from app.services.cost_model_service import CostModelService
 from app.services.engine_config import cfg_get
 from app.services.memory_evidence_consolidator_v2 import MemoryEvidenceConsolidatorV2
 from app.services.parameter_sweep_service import ParameterSweepService
+from app.services.order_ledger_service import classify_asset
+from app.services.research_cost_model import COST_MODEL_VERSION, round_trip_cost_pct
 from app.services.research_lab_service import ResearchLabService
 from app.services.walk_forward_validation_service import WalkForwardValidationService
 
@@ -279,6 +281,8 @@ class AutonomousAlphaFactoryService:
         best = self.get_best_candidates(limit=1)["candidates"]
         can_trade = bool(best and best[0].get("verdict") in PAPER_ALLOWED_VERDICTS)
         reason = "alpha_candidate_ready" if can_trade else self._reason_no_trade(cards)
+        min_sample = int(cfg_get(self.config, "alpha_factory.min_sample_size", 5) or 5)
+        min_pf = float(cfg_get(self.config, "alpha_factory.min_profit_factor", 1.05) or 1.05)
         return {
             "status": "ok",
             "generated_at_utc": _now(),
@@ -301,6 +305,10 @@ class AutonomousAlphaFactoryService:
             "memory_summary": self.memory.summary(),
             "recent_loss_summary": self._recent_loss_summary(),
             "blocked_symbols": self._blocked_symbols(cards),
+            "alpha_failure_breakdown": self._failure_breakdown(cards, min_sample, min_pf),
+            "top_cost_blockers": self._top_cost_blockers(cards),
+            "cost_model_version": COST_MODEL_VERSION,
+            "near_miss_count": sum(1 for sc in cards if self._classify_failure(sc, min_sample, min_pf) == "near_miss"),
             "next_research_action": self._next_action(cards, latest_backtest),
             "plain_english": self._plain_status(can_trade, reason, best),
             "orders_authority": "none",
@@ -318,6 +326,47 @@ class AutonomousAlphaFactoryService:
         )
         ranked = sorted(rows, key=self._rank_score, reverse=True)
         return {"status": "ok", "candidates": [self._scorecard_public(r) for r in ranked[:limit]]}
+
+    def get_near_misses(self, *, limit: int = 10) -> dict[str, Any]:
+        """READ ONLY: scorecards closest to qualifying, with the single missing requirement.
+
+        Diagnostic only — names the next research action per candidate. Never trades or promotes.
+        """
+        rows = list(
+            self.session.exec(select(AlphaScorecard).order_by(AlphaScorecard.updated_at.desc()).limit(200)).all()
+        )
+        min_sample = int(cfg_get(self.config, "alpha_factory.min_sample_size", 5) or 5)
+        min_pf = float(cfg_get(self.config, "alpha_factory.min_profit_factor", 1.05) or 1.05)
+        out: list[dict[str, Any]] = []
+        for sc in rows:
+            if sc.verdict in PAPER_ALLOWED_VERDICTS:
+                continue  # already qualified — not a near-miss
+            missing, required, current, distance, action = self._near_miss_detail(sc, min_sample, min_pf)
+            pub = self._scorecard_public(sc)
+            pub.update({
+                "missing_requirement": missing,
+                "required_metric": required,
+                "current_metric": current,
+                "failure_category": self._classify_failure(sc, min_sample, min_pf),
+                "distance_to_qualify": round(distance, 4),
+                "next_research_action": action,
+            })
+            out.append(pub)
+        out.sort(key=lambda c: c["distance_to_qualify"])
+        return {
+            "status": "ok",
+            "near_misses": out[:limit],
+            "count": min(len(out), limit),
+            "total_unqualified": len(out),
+            "min_sample_size": min_sample,
+            "min_profit_factor": min_pf,
+            "orders_authority": "none",
+            "plain_english": (
+                f"{out[0]['symbol']} {out[0]['strategy_family']} is closest: needs {out[0]['missing_requirement']} "
+                f"({out[0]['required_metric']}, now {out[0]['current_metric']})."
+                if out else "No scorecards yet; run autonomous research."
+            ),
+        }
 
     def explain_candidate(self, symbol: str, strategy_family: str) -> dict[str, Any]:
         row = self._find_scorecard(symbol, strategy_family=strategy_family)
@@ -391,7 +440,7 @@ class AutonomousAlphaFactoryService:
         row = existing or AlphaScorecard(
             symbol=symbol,
             normalized_symbol=_norm(symbol),
-            asset_class="crypto" if "/" in symbol else "stock",
+            asset_class=(classify_asset(symbol) if classify_asset(symbol) != "unknown" else ("crypto" if "/" in symbol else "stock")),
             strategy_family=family,
             strategy_id=run.strategy_id,
         )
@@ -418,10 +467,20 @@ class AutonomousAlphaFactoryService:
         row.average_loss = self._float(metrics.get("avg_loss"))
         if row.average_win is not None and row.average_loss not in (None, 0):
             row.payoff_ratio = abs(row.average_win / row.average_loss)
+        # Surface the deterministic cost breakdown so negative-edge verdicts are explainable.
+        cm = round_trip_cost_pct(symbol, self.config)
         row.cost_bps = self._cost_bps(cost, "round_trip_cost_pct")
+        if row.cost_bps is None:
+            row.cost_bps = cm["round_trip_bps"]
         row.spread_bps = self._cost_bps(cost, "spread_pct")
+        if row.spread_bps is None:
+            row.spread_bps = cm["spread_bps"]
         row.slippage_bps = self._cost_bps(cost, "slippage_pct")
+        if row.slippage_bps is None:
+            row.slippage_bps = cm["slippage_bps"]
         row.fee_bps = self._cost_bps(cost, "fee_pct")
+        if row.fee_bps is None:
+            row.fee_bps = cm["fee_bps"]
         row.edge_after_cost_bps = edge_after_cost_bps
         row.recent_paper_trade_count = recent["count"]
         row.recent_paper_pnl = recent["pnl"]
@@ -434,8 +493,21 @@ class AutonomousAlphaFactoryService:
         row.last_walk_forward_run_id = self._latest_walk_forward_id(run.strategy_id)
         row.evidence_ids_json = [run.run_id] + ([row.last_walk_forward_run_id] if row.last_walk_forward_run_id else [])
         row.autonomous_generated = True
+        gross_exp_bps = round(row.expectancy * 10000 + cm["round_trip_bps"], 2) if row.expectancy is not None else None
         row.scorecard_json = {
             "cost_model": cost,
+            "cost_breakdown": cm,
+            "cost_model_version": COST_MODEL_VERSION,
+            "gross_expectancy_bps": gross_exp_bps,
+            "round_trip_cost_bps": cm["round_trip_bps"],
+            "spread_cost_bps": cm["spread_bps"],
+            "slippage_cost_bps": cm["slippage_bps"],
+            "fee_cost_bps": cm["fee_bps"],
+            "breakeven_move_bps": cm["round_trip_bps"],
+            "edge_after_cost_bps": row.edge_after_cost_bps,
+            "cost_to_edge_ratio": (
+                round(cm["round_trip_bps"] / abs(row.edge_after_cost_bps), 3) if row.edge_after_cost_bps else None
+            ),
             "metrics": metrics,
             "composite_score": self._rank_score(row),
             "source": "autonomous_alpha_factory",
@@ -743,6 +815,89 @@ class AutonomousAlphaFactoryService:
             for sc in cards
             if sc.verdict not in PAPER_ALLOWED_VERDICTS
         ][:30]
+
+    @staticmethod
+    def _classify_failure(sc: AlphaScorecard, min_sample: int, min_pf: float) -> str:
+        """One reason a scorecard is not a paper candidate (closest unmet gate first)."""
+        if sc.verdict in PAPER_ALLOWED_VERDICTS:
+            return "qualified"
+        sample = int(sc.sample_size or 0)
+        exp = sc.expectancy
+        pf = sc.profit_factor
+        edge = sc.edge_after_cost_bps
+        gross = (sc.scorecard_json or {}).get("gross_expectancy_bps")
+        if sc.cost_bps is None:
+            return "missing_cost_model"
+        if sample == 0:
+            return "data_insufficient"
+        if exp is not None and exp <= 0:
+            return "negative_expectancy"
+        if pf is not None and pf < min_pf:
+            return "poor_profit_factor"
+        if edge is not None and edge <= 0 and (gross is None or gross > 0):
+            return "costs_too_high"
+        if sample < min_sample:
+            if (exp or 0) > 0 and (pf or 0) >= min_pf and (edge is None or edge > 0):
+                return "near_miss"
+            return "not_enough_trades"
+        if (sc.data_freshness_status or "") not in ("fresh",):
+            return "stale_data"
+        return "strategy_bad"
+
+    @classmethod
+    def _failure_breakdown(cls, cards: list[AlphaScorecard], min_sample: int, min_pf: float) -> dict[str, int]:
+        counts: Counter = Counter()
+        for sc in cards:
+            cat = cls._classify_failure(sc, min_sample, min_pf)
+            if cat != "qualified":
+                counts[cat] += 1
+        return dict(counts)
+
+    @classmethod
+    def _top_cost_blockers(cls, cards: list[AlphaScorecard], limit: int = 5) -> list[dict[str, Any]]:
+        rows = []
+        for sc in cards:
+            j = sc.scorecard_json or {}
+            edge = sc.edge_after_cost_bps
+            gross = j.get("gross_expectancy_bps")
+            # cost is the blocker when after-cost edge is non-positive but gross edge was positive
+            if edge is not None and edge <= 0 and (gross or 0) > 0:
+                rows.append({
+                    "symbol": sc.symbol,
+                    "strategy_family": sc.strategy_family,
+                    "round_trip_cost_bps": sc.cost_bps,
+                    "gross_expectancy_bps": gross,
+                    "edge_after_cost_bps": edge,
+                    "cost_to_edge_ratio": j.get("cost_to_edge_ratio"),
+                })
+        rows.sort(key=lambda r: (r["round_trip_cost_bps"] or 0), reverse=True)
+        return rows[:limit]
+
+    @staticmethod
+    def _near_miss_detail(sc: AlphaScorecard, min_sample: int, min_pf: float):
+        """(missing_requirement, required_metric, current_metric, distance, next_action). Lower distance = closer."""
+        sample = int(sc.sample_size or 0)
+        exp = float(sc.expectancy) if sc.expectancy is not None else None
+        pf = float(sc.profit_factor) if sc.profit_factor is not None else None
+        edge = float(sc.edge_after_cost_bps) if sc.edge_after_cost_bps is not None else None
+        dd = float(sc.max_drawdown_pct) if sc.max_drawdown_pct is not None else None
+        if exp is not None and exp <= 0:
+            return ("positive_expectancy", "expectancy > 0", exp, 3.0 + min(1.0, abs(exp) * 100.0),
+                    "Strategy loses gross; redesign entry/exit before more sampling.")
+        if edge is not None and edge <= 0:
+            return ("positive_edge_after_cost", "edge_after_cost_bps > 0", edge, 2.0 + min(1.0, abs(edge) / 100.0),
+                    "After-cost edge is negative; cut cost drag (tier/timeframe) or raise gross edge.")
+        if pf is not None and pf < min_pf:
+            return ("min_profit_factor", f"profit_factor >= {min_pf}", pf, 1.0 + (min_pf - pf),
+                    f"Raise profit factor to {min_pf}+ (now {pf}).")
+        if dd is not None and dd > 35.0:
+            return ("max_drawdown", "max_drawdown_pct <= 35", dd, 1.5 + min(1.0, (dd - 35.0) / 35.0),
+                    "Reduce max drawdown below 35%.")
+        if sample < min_sample:
+            return ("min_sample_size", f"sample_size >= {min_sample}", sample,
+                    (min_sample - sample) / max(1, min_sample),
+                    f"Collect {min_sample - sample} more qualified trades (have {sample}).")
+        return ("none", "all gates", None, 5.0, "No single unmet gate; re-evaluate scorecard.")
 
     def _recent_loss_summary(self) -> dict[str, Any]:
         cards = list(

@@ -140,6 +140,17 @@ DEFAULT_CONFIG = {
         "slippage_buffer_major_pct": 0.10,
         "slippage_buffer_alt_pct": 0.20,
         "slippage_buffer_meme_pct": 0.30,
+        # Research cost model v2 (no double-count). Operator-visible; round-trip =
+        # spread + slippage*2 + fee*2, clamped [min_cost_floor_bps, max_cost_cap_bps].
+        # default_fee_bps = 25 preserves the existing conservative taker_fee_pct (0.25%)
+        # per side — do NOT lower it without re-running the old-vs-new shadow analysis.
+        "cost_model_version": "v2_components_no_double_count",
+        "default_spread_bps_by_tier": {"TIER_MAJOR": 8.0, "TIER_ALT": 20.0, "TIER_MEME_SUPPORTED": 40.0, "TIER_MEME": 40.0},
+        "default_slippage_bps_by_tier": {"TIER_MAJOR": 4.0, "TIER_ALT": 10.0, "TIER_MEME_SUPPORTED": 25.0, "TIER_MEME": 25.0},
+        "default_fee_bps": 25.0,
+        "conservative_cost_multiplier": 1.0,
+        "min_cost_floor_bps": 8.0,
+        "max_cost_cap_bps": 150.0,
         "spread_model": "tiered_pct",
         "edge_multiplier": 2.0,
         "edge_multiplier_paper": 1.35,
