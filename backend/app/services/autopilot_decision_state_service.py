@@ -65,9 +65,23 @@ class AutopilotDecisionStateService:
         final_decision = self._final_trade_decision(tick_orders_created, selected)
         plain = self._plain_summary(exposure, positions, selected, rejected, final_decision, reason, tick)
         win_rate_pct = ledger_summary.get("win_rate_pct")
+        try:
+            from app.services.paper_exploration_service import PaperExplorationService
+
+            exploration = PaperExplorationService(self.session, self.config).decision_state()
+        except Exception:
+            exploration = {
+                "standard_entries_allowed": None,
+                "paper_exploration_allowed": None,
+                "selected_exploration_candidate": None,
+                "exploration_order_submitted": False,
+                "exploration_block_reason": "exploration_state_unavailable",
+            }
         return {
             "status": "ok",
             "are_we_trading": final_decision == "submitted",
+            # Paper-exploration lane (real money always locked; standard entries follow the cage).
+            **exploration,
             "why_not_trading": None if final_decision == "submitted" else reason,
             "hard_safety_ok": hard_ok,
             "broker_positions": [

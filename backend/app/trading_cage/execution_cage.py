@@ -43,6 +43,41 @@ def _paper_exploration_cost_override(config: dict, cand: ApprovedCandidate) -> b
     return promotion == "PAPER" and bool(exp.get("enabled", True)) and not live_orders and marked_probe and has_exit_truth
 
 
+def _is_near_miss_exploration_probe(config: dict, cand: ApprovedCandidate) -> bool:
+    """A near-miss paper-exploration probe (Alpha Factory lane). Paper-only, never live."""
+    meta = cand.meta or {}
+    execution = config.get("execution") or {}
+    live_orders = bool(execution.get("live_orders_enabled", False)) or bool(config.get("live_trading_enabled", False))
+    af_exp = (config.get("alpha_factory") or {}).get("paper_exploration") or {}
+    return (
+        bool(meta.get("near_miss_exploration_probe"))
+        and bool(af_exp.get("allow_paper_exploration_near_misses", True))
+        and bool(af_exp.get("exploration_live_forbidden", True))
+        and not live_orders
+    )
+
+
+# Switches that block even a tiny paper-exploration probe (mirrors KillSwitchService).
+_CATASTROPHIC_SWITCHES = frozenset({"manual_master", "max_drawdown", "system_health", "weekly_drawdown"})
+
+
+def _exploration_kill_switch_override(config: dict, cand: ApprovedCandidate, switches: list) -> bool:
+    """Allow a marked near-miss probe past the kill switch ONLY when paper-only and the active
+    switches are non-catastrophic (e.g. daily_drawdown alone). Real money is never affected."""
+    if not _is_near_miss_exploration_probe(config, cand):
+        return False
+    active = {str(s.get("switch_name")) for s in (switches or [])}
+    return not (active & _CATASTROPHIC_SWITCHES)
+
+
+def _exploration_max_notional(config: dict) -> float:
+    af_exp = (config.get("alpha_factory") or {}).get("paper_exploration") or {}
+    try:
+        return float(af_exp.get("exploration_max_notional_usd", 5.0) or 5.0)
+    except (TypeError, ValueError):
+        return 5.0
+
+
 @dataclass
 class ExecutionCageResult:
     passed: bool
@@ -90,13 +125,22 @@ class ExecutionCage:
             drawdown_pct=account.drawdown_pct if account else 0,
         )
         if not entries_ok and cand.signal_type == "entry":
-            return ExecutionCageResult(
-                False,
-                "kill_switch",
-                "KILL_SWITCH_ACTIVE",
-                switches[0].get("message") if switches else "Kill switch active",
-                evidence={**evidence, "switches": switches},
-            )
+            if _exploration_kill_switch_override(self.config, cand, switches):
+                # Paper-only near-miss probe past a NON-catastrophic switch (e.g. daily drawdown).
+                # Real money stays locked; exits unaffected; notional is capped below.
+                evidence["paper_exploration_kill_switch_override"] = {
+                    "active_switches": switches,
+                    "mode": "paper_only_near_miss_probe",
+                    "real_money_entries_allowed": False,
+                }
+            else:
+                return ExecutionCageResult(
+                    False,
+                    "kill_switch",
+                    "KILL_SWITCH_ACTIVE",
+                    switches[0].get("message") if switches else "Kill switch active",
+                    evidence={**evidence, "switches": switches},
+                )
 
         cd = CooldownService(self.session, self.config)
         ok, reason, cd_ev = cd.check_symbol(cand.symbol)
@@ -175,6 +219,22 @@ class ExecutionCage:
                 cand.position_qty = alloc.notional_usd / max(cand.entry_price, quote.get("mid") or quote.get("ask") or 1)
                 meta["allocator_notional"] = alloc.notional_usd
                 cand.meta = meta
+
+        # Hard notional cap for near-miss exploration probes — tiny, capped, paper-only.
+        if cand.signal_type == "entry" and _is_near_miss_exploration_probe(self.config, cand):
+            cap = _exploration_max_notional(self.config)
+            px = cand.entry_price or quote.get("mid") or quote.get("ask") or 0
+            req_notional = (cand.position_qty or 0) * (px or 0)
+            if px and req_notional > cap:
+                cand.position_qty = cap / px  # shrink to the cap; never expand
+            evidence["exploration_notional_cap_usd"] = cap
+            evidence["exploration_notional_usd"] = round((cand.position_qty or 0) * (px or 0), 6)
+            if not px or (cand.position_qty or 0) <= 0:
+                return ExecutionCageResult(
+                    False, "exploration_notional", "EXPLORATION_NOTIONAL_INVALID",
+                    "Exploration probe requires a positive price and tiny capped notional.",
+                    evidence=evidence,
+                )
 
         pf = run_preflight(
             self.session,

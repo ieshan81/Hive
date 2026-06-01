@@ -75,6 +75,53 @@ class KillSwitchService:
         entries_allowed = len(switches) == 0
         return entries_allowed, switches
 
+    # Switches that are CATASTROPHIC — they block even tiny paper-exploration probes.
+    # A daily-drawdown switch alone is NOT catastrophic: the paper-only learning lane may
+    # still place a tiny capped probe. Real money is always locked regardless.
+    CATASTROPHIC_SWITCHES = frozenset({"manual_master", "max_drawdown", "system_health", "weekly_drawdown"})
+
+    def evaluate_paper_exploration(
+        self, *, equity: float, daily_pl_pct: float, drawdown_pct: float
+    ) -> dict[str, Any]:
+        """Separate the four permission lanes. Real money is ALWAYS locked here; exits are
+        ALWAYS allowed; standard paper entries follow the normal kill switch; the paper
+        exploration lane may proceed only in paper mode, when config allows, and when no
+        CATASTROPHIC switch is active. Per-entry caps (notional/position/daily) are enforced
+        downstream by the exploration service and the cage — this is the kill-switch view only."""
+        entries_ok, switches = self.evaluate(equity=equity, daily_pl_pct=daily_pl_pct, drawdown_pct=drawdown_pct)
+        live_orders = bool(cfg_get(self.config, "execution.live_orders_enabled", False)) or bool(
+            self.config.get("live_trading_enabled", False)
+        )
+        paper_orders = bool(cfg_get(self.config, "execution.paper_orders_enabled", False))
+        paper_mode = paper_orders and not live_orders
+        allow_cfg = bool(cfg_get(self.config, "alpha_factory.paper_exploration.allow_paper_exploration_near_misses", True))
+        live_forbidden = bool(cfg_get(self.config, "alpha_factory.paper_exploration.exploration_live_forbidden", True))
+        active_names = {str(s.get("switch_name")) for s in switches}
+        catastrophic = sorted(active_names & self.CATASTROPHIC_SWITCHES)
+
+        block_reason: Optional[str] = None
+        if live_orders or not live_forbidden:
+            block_reason = "live_not_forbidden"
+        elif not paper_mode:
+            block_reason = "not_paper_mode"
+        elif not allow_cfg:
+            block_reason = "exploration_disabled_by_config"
+        elif catastrophic:
+            block_reason = "catastrophic_kill_switch:" + ",".join(catastrophic)
+
+        paper_exploration_allowed = block_reason is None
+        return {
+            # Real money can NEVER enter through this service; live trading stays locked.
+            "real_money_entries_allowed": False,
+            "paper_entries_allowed": bool(entries_ok and paper_mode),
+            "paper_exploration_allowed": paper_exploration_allowed,
+            "exit_management_allowed": True,
+            "paper_exploration_block_reason": block_reason,
+            "catastrophic_switches": catastrophic,
+            "active_switches": switches,
+            "paper_mode": paper_mode,
+        }
+
     def _latest_account(self) -> AccountSnapshot | None:
         return self.session.exec(select(AccountSnapshot).order_by(AccountSnapshot.synced_at.desc())).first()
 
@@ -112,9 +159,20 @@ class KillSwitchService:
         snapshot_age = None
         if snap and snap.synced_at:
             snapshot_age = max(0, int((now - snap.synced_at).total_seconds()))
+        lanes = self.evaluate_paper_exploration(
+            equity=float(snap.equity or 0) if snap else 0,
+            daily_pl_pct=float(snap.daily_pl_pct or 0) if snap else 0,
+            drawdown_pct=float(snap.drawdown_pct or 0) if snap else 0,
+        )
         return {
             "entries_allowed": entries_ok,
             "active_switches": active,
+            # Four explicit permission lanes (real money always locked, exits always allowed).
+            "real_money_entries_allowed": lanes["real_money_entries_allowed"],
+            "paper_entries_allowed": lanes["paper_entries_allowed"],
+            "paper_exploration_allowed": lanes["paper_exploration_allowed"],
+            "exit_management_allowed": lanes["exit_management_allowed"],
+            "paper_exploration_block_reason": lanes["paper_exploration_block_reason"],
             "state": "active" if not entries_ok else "cleared_recently" if recently_blocked else "clear",
             "manual_master": bool(cfg_get(self.config, "kill.manual_master_active", False)),
             "account_equity": snap.equity if snap else None,

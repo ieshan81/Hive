@@ -159,6 +159,28 @@ DEFAULT_CONFIG = {
         "edge_multiplier_live": 2.5,
         "min_expected_move_pct": 0.15,
     },
+    "alpha_factory": {
+        "min_sample_size": 5,
+        "min_profit_factor": 1.05,
+        "session_min_sample_size": 5,
+        # Paper-exploration lane for near-miss alpha candidates. PAPER-ONLY learning lane that
+        # sits BELOW paper_candidate. It can never enable live trading, never bypass the cage,
+        # and never promote a near-miss directly to paper_candidate. Tiny notional, capped.
+        "paper_exploration": {
+            "allow_paper_exploration_near_misses": True,
+            "exploration_max_notional_usd": 5.0,
+            "exploration_max_positions": 1,
+            "exploration_max_entries_per_day": 3,
+            "exploration_min_sample_size": 50,
+            "exploration_min_edge_after_cost_bps": -5.0,
+            "exploration_required_session_metrics": True,
+            "exploration_live_forbidden": True,
+            # Promotion exploration_candidate -> paper_candidate requires real closed evidence.
+            "exploration_promote_min_closed_trades": 20,
+            "exploration_promote_min_profit_factor": 1.10,
+            "exploration_promote_max_drawdown_pct": 35.0,
+        },
+    },
     "risk": {
         "risk_pct_paper": 0.5,
         "risk_pct_pre_live": 0.5,

@@ -66,6 +66,22 @@ type Cockpit = {
     best_candidate?: { symbol?: string; strategy_family?: string; edge_after_cost_bps?: number } | null;
     autonomous_status?: { plain_english?: string; enabled?: boolean } | null;
     plain_english?: string;
+    paper_exploration_enabled?: boolean;
+    paper_exploration_allowed?: boolean;
+    paper_exploration_block_reason?: string | null;
+    real_money_entries_allowed?: boolean;
+    standard_paper_entries_allowed?: boolean;
+    exit_management_allowed?: boolean;
+    exploration_entries_today?: number;
+    exploration_max_notional_usd?: number;
+    current_exploration_candidate?: {
+      symbol?: string;
+      best_session?: string | null;
+      exploration_score?: number;
+      edge_after_cost_bps?: number | null;
+      sample_size?: number;
+      stage?: string;
+    } | null;
   };
   paper_execution?: {
     paper_broker_connected?: boolean;
@@ -289,6 +305,42 @@ export function CockpitDashboard() {
           {checkingReadiness ? "Checking..." : "Check paper-entry readiness"}
         </button>
         {readinessMsg && <p className="mt-2 text-[11px] text-slate-400">{readinessMsg}</p>}
+      </GlassPanel>
+
+      <GlassPanel title="Trade Permission" icon={<Shield className="h-4 w-4" />}>
+        <div className="grid gap-2 text-xs md:grid-cols-2 lg:grid-cols-4">
+          {[
+            ["Real Money", "LOCKED", false],
+            ["Standard Paper Entries", canSubmitEntries ? "ALLOWED" : "BLOCKED", canSubmitEntries],
+            ["Paper Exploration", alpha.paper_exploration_allowed ? "ALLOWED" : "BLOCKED", Boolean(alpha.paper_exploration_allowed)],
+            ["Exit Management", exitsAllowed ? "ACTIVE" : "INACTIVE", exitsAllowed],
+          ].map(([label, value, ok]) => (
+            <div key={String(label)} className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+              <p className="text-[10px] uppercase text-slate-500">{String(label)}</p>
+              <p className={`mt-1 font-bold ${label === "Real Money" ? "text-rose-300" : ok ? "text-emerald-300" : "text-amber-300"}`}>
+                {String(value)}
+              </p>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 rounded-lg border border-white/10 bg-white/[0.02] p-3 text-[11px] text-slate-300">
+          {alpha.current_exploration_candidate?.symbol ? (
+            <p>
+              <span className="text-hive-cyan font-semibold">Exploration candidate:</span>{" "}
+              {alpha.current_exploration_candidate.symbol}
+              {alpha.current_exploration_candidate.best_session ? ` · ${alpha.current_exploration_candidate.best_session}` : ""}
+              {" "}· score {Number(alpha.current_exploration_candidate.exploration_score ?? 0).toFixed(2)}
+              {" "}· tiny paper probe ≤ ${Number(alpha.exploration_max_notional_usd ?? 5).toFixed(0)} (cage-approved, never live).
+            </p>
+          ) : (
+            <p>
+              No exploration candidate right now
+              {alpha.paper_exploration_block_reason ? ` — ${alpha.paper_exploration_block_reason}.` : "."}
+              {" "}Paper exploration is a tiny, capped, paper-only learning lane; it never enables real money.
+            </p>
+          )}
+          <p className="mt-1 text-slate-500">Exploration entries today: {alpha.exploration_entries_today ?? 0} · Real money stays locked.</p>
+        </div>
       </GlassPanel>
 
       {data?.research_os && (
