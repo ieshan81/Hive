@@ -51,6 +51,12 @@ NVDA↔AI/semis · VIX/rates/DXY regime context. **Affects confidence/risk only 
 - Clean memory categories exist; hypotheses separate from approved strategies (`verify_memory_hypothesis_requires_backtest`).
 - Memory ready to repopulate after reset (`verify_old_memory_archived_before_reset`).
 
+## PR C executed
+- `MemoryGovernanceService`: 7-class `classify()`, `is_evidence_linked()`, `has_backtest_link()`, **`can_influence_trading()`** gate (hypothesis never trades; only evidence-linked closed-trade/validated/backtest classes may influence ranking), and `archive_noisy_active_memory()` (archive unlinked active lessons, **preserve every evidence-linked lesson, never hard-delete**, idempotent, dry-run preview).
+- Endpoints: `GET /api/memory/governance-summary` (read-only dry-run preview), `POST /api/memory/archive-noisy` (operator-gated, AI-forbidden, no order) — used during the reset.
+- Verifiers (passing): `verify_memory_cannot_directly_trade` (no memory→order path + gate), `verify_memory_hypothesis_requires_backtest`, `verify_old_memory_archived_before_reset`.
+- The full typed state-machine + market-context fingerprint + relationship graph remain incremental follow-ups; the **safety gate + archive/reset are live now**.
+
 ## Verdict
 Memory is **safe today** (no direct trading/live influence) but **not yet the disciplined,
 typed, evidence-linked brain** the mission wants. The reset run can proceed (memory is advisory

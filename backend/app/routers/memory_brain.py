@@ -5,11 +5,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Body, Depends
 from sqlmodel import Session
 
+from fastapi import HTTPException
+
 from app.database import get_session
 from app.services.ai_learning_memory_service import AILearningMemoryService
 from app.services.config_manager import ConfigManager
 from app.services.hive_brain_graph_service import HiveBrainGraphService
 from app.services.memory_consolidation_service import MemoryConsolidationService
+from app.services.operator_auth import require_operator_token
 
 router = APIRouter(prefix="/api/memory", tags=["memory-brain"])
 
@@ -18,6 +21,32 @@ router = APIRouter(prefix="/api/memory", tags=["memory-brain"])
 def consolidation_status(session: Session = Depends(get_session)):
     cfg = ConfigManager(session).get_current()
     return MemoryConsolidationService(session, cfg).status()
+
+
+@router.get("/governance-summary")
+def memory_governance_summary(session: Session = Depends(get_session)):
+    """READ ONLY: how many active lessons are evidence-linked vs noisy (dry-run archive preview)."""
+    from app.services.memory_governance_service import MemoryGovernanceService
+
+    return MemoryGovernanceService(session).archive_noisy_active_memory(dry_run=True)
+
+
+@router.post("/archive-noisy")
+def memory_archive_noisy(
+    body: dict = Body(default_factory=dict),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
+    """OPERATOR ACTION (reset prep): archive noisy (unlinked) active lessons; preserve every
+    evidence-linked lesson; never hard-delete; submit no order. Operator-gated, AI-forbidden."""
+    actor = str((body or {}).get("actor") or (body or {}).get("operator") or "operator")
+    if actor.lower() in {"ai", "agent", "gemini", "ai_advisor"}:
+        raise HTTPException(403, "AI actor cannot archive memory")
+    from app.services.memory_governance_service import MemoryGovernanceService
+
+    out = MemoryGovernanceService(session).archive_noisy_active_memory(operator=actor)
+    session.commit()
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────
