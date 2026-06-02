@@ -25,3 +25,22 @@ memory tied to closed trades.
 4. Record removed files in FINAL_AUDIT_REPORT.
 
 **Nothing deleted in this PR A.** All removals require the usage trace + green tests first.
+
+---
+
+## PR B executed (evidence-based removal + guard verifiers)
+**Verifiers added & passing:**
+- `verify_every_ui_endpoint_has_backend_route.py` — **90 UI endpoints, all route to a real backend route** (zero dead frontend calls).
+- `verify_no_dead_debug_routes_exposed.py` — **no public mutating debug/raw/eval routes** (segment-boundary match).
+
+**Removed (proven dead — 0 references backend-wide incl. `worker.py`, verified by static + string + dynamic scan):**
+- `backend/app/services/position_sizing.py` (108 lines; `SizeResult` unused — sizing now via MicroCapAllocator/cage).
+- `backend/app/services/session_scheduler.py` (281 lines; `RateLimitBucket` unused — sessions via MarketSessionService, scheduling via autonomous schedulers).
+
+**Kept (NOT dead):**
+- `backend/app/services/cycle_engine.py` — imported by `backend/worker.py` (`CycleEngine`); the orphan scan initially missed the worker entrypoint. **Live; not removed.**
+
+**Deferred (still medium-risk, operator-triggered via curl — not frontend-dead):**
+- Duplicate cycle endpoints (`/run-cycle` etc.) — operator endpoints; "no frontend caller" ≠ dead. Defer.
+
+**Outcome:** route + module hygiene is otherwise clean; no further low-risk proven-dead code found. Post-removal: app + `worker.py` compile, 8/8 verifier battery, `test:api`, `build` all green.
