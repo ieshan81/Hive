@@ -474,7 +474,10 @@ def run_preflight(
                 setup=getattr(cand, "strategy", None) or (meta.get("strategy") if isinstance(meta, dict) else None),
             )
             evidence["adaptive_opportunity_budget"] = budget.as_dict()
-            if not budget.allowed:
+            # The adaptive autopilot budget does not gate operator-triggered exploration probes:
+            # the exploration lane has its own caps (tiny notional, 1 position, max entries/day).
+            # It is still computed above for telemetry; it just never blocks a probe.
+            if not budget.allowed and not is_probe:
                 return PreflightResult(
                     False,
                     "ADAPTIVE_BUDGET_BLOCKED",
