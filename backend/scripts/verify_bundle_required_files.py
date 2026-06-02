@@ -10,7 +10,9 @@ import zipfile
 
 def main() -> None:
     backend = "https://hive-production-7343.up.railway.app"
-    req = urllib.request.Request(f"{backend}/api/diagnostic-bundle/download", method="GET")
+    # The DEFAULT download is now the small current-run latest bundle; the full forensic file set
+    # (scanner_status.json, backtest_*, etc.) lives behind the explicit ?mode=forensic export.
+    req = urllib.request.Request(f"{backend}/api/diagnostic-bundle/download?mode=forensic", method="GET")
     with urllib.request.urlopen(req, timeout=240) as r:
         disp = r.headers.get("Content-Disposition", "")
         data = r.read()
