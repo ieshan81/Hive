@@ -50,6 +50,43 @@ def _iso(dt: Optional[datetime]) -> Optional[str]:
     return dt.isoformat() + "Z"
 
 
+def _validation_run_export(session: Session) -> dict[str, Any]:
+    """Clearly separate pre-epoch history from the active paper validation run.
+
+    New-run stats start at the funded $200 baseline; pre-epoch rows are preserved in
+    history but excluded from the new run's numbers."""
+    from app.database import PaperExperimentOutcome
+    from app.services.nuke_epoch_service import PAPER_VALIDATION_RUN_ID, get_latest_reset_epoch
+    from app.services.performance_service import equity_curve, performance_summary
+
+    epoch = get_latest_reset_epoch(session)
+    run_id = (epoch or {}).get("validation_run_id") or (PAPER_VALIDATION_RUN_ID if epoch else None)
+    perf = performance_summary(session)
+    curve = equity_curve(session, limit=120)
+    all_trades = len(list(session.exec(select(TradeRecord)).all()))
+    all_outcomes = len(list(session.exec(select(PaperExperimentOutcome)).all()))
+    return {
+        "status": "ok",
+        "validation_run_id": run_id,
+        "baseline_equity": perf.get("baseline_equity"),
+        "epoch": epoch,
+        "new_run": {
+            "trades_count": perf.get("trades_count"),
+            "closed_trades": perf.get("closed_trades"),
+            "starting_equity": perf.get("starting_equity"),
+            "current_equity": perf.get("current_equity"),
+            "return_pct": perf.get("return_pct"),
+            "equity_curve_start": (curve.get("points") or [{}])[0],
+            "equity_curve_points": curve.get("count"),
+        },
+        "all_history_preserved": {
+            "all_trade_records": all_trades,
+            "all_paper_experiment_outcomes": all_outcomes,
+            "note": "Pre-epoch rows remain in history/archive but are excluded from new-run stats.",
+        },
+    }
+
+
 def _latest_stale_quote_log(session: Session) -> dict[str, Any]:
     row = session.exec(
         select(ExecutionLog)
@@ -1768,6 +1805,25 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             lambda: __import__(
                 "app.services.nuke_reset_service", fromlist=["reset_epoch_export"]
             ).reset_epoch_export(session),
+            export_errors,
+        ),
+        "validation_run.json": safe_export_section(
+            "validation_run.json",
+            lambda: _validation_run_export(session),
+            export_errors,
+        ),
+        "hive_engine_map.json": safe_export_section(
+            "hive_engine_map.json",
+            lambda: __import__(
+                "app.services.hive_engine_map_service", fromlist=["HiveEngineMapService"]
+            ).HiveEngineMapService(session, cfg_brain).map(),
+            export_errors,
+        ),
+        "memory_governance_summary.json": safe_export_section(
+            "memory_governance_summary.json",
+            lambda: __import__(
+                "app.services.memory_governance_service", fromlist=["MemoryGovernanceService"]
+            ).MemoryGovernanceService(session).archive_noisy_active_memory(dry_run=True),
             export_errors,
         ),
         "post_nuke_table_counts.json": safe_export_section(

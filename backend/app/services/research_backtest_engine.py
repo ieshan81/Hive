@@ -396,13 +396,41 @@ class ResearchBacktestEngine:
         ).first()
         return self._serialize_run(row) if row else None
 
-    def list_runs(self, limit: int = 50) -> list[dict]:
+    def list_runs(self, limit: int = 50, *, dedupe: bool = False) -> list[dict]:
         from sqlmodel import select
 
+        # When deduping, pull a wider window first so collapsing repeated
+        # (symbol+strategy+timeframe) runs still yields up to `limit` distinct rows.
+        fetch = max(limit, limit * 6) if dedupe else limit
         rows = self.session.exec(
-            select(ResearchBacktestRun).order_by(ResearchBacktestRun.created_at.desc()).limit(limit)
+            select(ResearchBacktestRun).order_by(ResearchBacktestRun.created_at.desc()).limit(fetch)
         ).all()
-        return [self._serialize_run(r) for r in rows]
+        serialized = [self._serialize_run(r) for r in rows]
+        if not dedupe:
+            return serialized
+        return self._dedupe_runs(serialized, limit)
+
+    @staticmethod
+    def _dedupe_runs(runs: list[dict], limit: int) -> list[dict]:
+        """Collapse repeated research rows for the same (symbol+strategy+timeframe) to the most
+        recent (rows arrive newest-first), recording how many were merged. Read-model only — the
+        full forensic backtest history is still exported raw in the diagnostic bundle."""
+        def _norm_syms(symbols) -> tuple:
+            seq = symbols if isinstance(symbols, (list, tuple)) else [symbols]
+            return tuple(sorted(str(s or "").upper().replace("/", "").replace("-", "").strip() for s in seq))
+
+        kept: list[dict] = []
+        index: dict[tuple, dict] = {}
+        for r in runs:
+            key = (str(r.get("strategy_id") or ""), _norm_syms(r.get("symbols")), str(r.get("timeframe") or ""))
+            existing = index.get(key)
+            if existing is None:
+                row = {**r, "duplicate_count": 1}
+                index[key] = row
+                kept.append(row)
+            else:
+                existing["duplicate_count"] = int(existing.get("duplicate_count", 1)) + 1
+        return kept[:limit]
 
     def _serialize_run(self, row: ResearchBacktestRun) -> dict:
         return {

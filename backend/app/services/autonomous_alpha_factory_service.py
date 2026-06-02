@@ -53,6 +53,16 @@ def _iso(value: Any) -> str | None:
     return value.isoformat() + "Z" if hasattr(value, "isoformat") else None
 
 
+def _display_asset_class(symbol: Any, stored: Any) -> str:
+    """Canonical asset_class for read models. Re-derives from the symbol so slashless crypto
+    tickers (e.g. ETHUSD, LINKUSD, DOGEUSD) are not mislabeled as 'stock' by a stale stored value.
+    Falls back to the stored label only when the symbol cannot be classified."""
+    derived = classify_asset(str(symbol or ""))
+    if derived != "unknown":
+        return derived
+    return stored or "unknown"
+
+
 class AutonomousAlphaFactoryService:
     def __init__(self, session: Session, config: Optional[dict] = None):
         self.session = session
@@ -917,7 +927,7 @@ class AutonomousAlphaFactoryService:
         return {
             "id": sc.id,
             "symbol": sc.symbol,
-            "asset_class": sc.asset_class,
+            "asset_class": _display_asset_class(sc.symbol, sc.asset_class),
             "strategy_family": sc.strategy_family,
             "strategy_id": sc.strategy_id,
             "timeframe": sc.timeframe,

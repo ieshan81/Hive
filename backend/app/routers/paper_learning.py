@@ -24,6 +24,53 @@ def paper_learning_status(session: Session = Depends(get_session)):
     return AggressivePaperLearningService(session).status()
 
 
+@router.post("/start-validation-run")
+def start_validation_run(
+    body: dict = Body(default={}),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
+    """Stamp a fresh REPORTING epoch for the paper validation run (default
+    `paper_validation_run_001`, baseline $200). This only resets reporting baselines —
+    it deletes nothing (old trades remain in history, hidden from the new run's stats),
+    submits no order, and never touches live flags or engine config."""
+    _block_ai(body)
+    from app.services.nuke_epoch_service import (
+        PAPER_BASELINE_EQUITY,
+        PAPER_VALIDATION_RUN_ID,
+        record_reset_epoch,
+    )
+    from app.services.live_lock_tripwire import live_lock_tripwire_status
+    from app.services.config_manager import ConfigManager
+    from app.services.performance_service import equity_curve, performance_summary
+
+    lock = live_lock_tripwire_status(ConfigManager(session).get_current())
+    if lock.get("live_lock_status") != "locked":
+        raise HTTPException(409, "Refused: live lock is not locked; will not stamp a validation run.")
+
+    run_id = str(body.get("validation_run_id") or PAPER_VALIDATION_RUN_ID)
+    baseline = float(body.get("baseline_equity") or PAPER_BASELINE_EQUITY)
+    epoch = record_reset_epoch(
+        session,
+        body.get("operator", "operator"),
+        deleted={},  # reporting-only epoch — nothing deleted
+        validation_run_id=run_id,
+        baseline_equity=baseline,
+    )
+    session.commit()
+    return {
+        "status": "ok",
+        "message": f"Reporting epoch stamped for {run_id} (baseline ${baseline:.0f}). Old history preserved & hidden from new-run stats.",
+        "validation_run_id": run_id,
+        "baseline_equity": baseline,
+        "epoch": epoch,
+        "live_trading_locked": True,
+        "deleted_anything": False,
+        "performance_summary": performance_summary(session),
+        "equity_curve_head": (equity_curve(session, limit=3) or {}).get("points", [])[:2],
+    }
+
+
 @router.post("/enable")
 def paper_learning_enable(
     body: dict = Body(default={}),
