@@ -125,21 +125,46 @@ class ExecutionCage:
             drawdown_pct=account.drawdown_pct if account else 0,
         )
         if not entries_ok and cand.signal_type == "entry":
-            if _exploration_kill_switch_override(self.config, cand, switches):
-                # Paper-only near-miss probe past a NON-catastrophic switch (e.g. daily drawdown).
-                # Real money stays locked; exits unaffected; notional is capped below.
-                evidence["paper_exploration_kill_switch_override"] = {
-                    "active_switches": switches,
-                    "mode": "paper_only_near_miss_probe",
-                    "real_money_entries_allowed": False,
-                }
-            else:
+            from app.trading_cage.paper_exploration_guard import (
+                can_override_kill_switch_for_paper_exploration,
+                is_marked_probe,
+            )
+
+            if not is_marked_probe(cand):
+                # Standard paper entries block exactly as before — no exploration override.
                 return ExecutionCageResult(
                     False,
                     "kill_switch",
                     "KILL_SWITCH_ACTIVE",
                     switches[0].get("message") if switches else "Kill switch active",
                     evidence={**evidence, "switches": switches},
+                )
+            decision = can_override_kill_switch_for_paper_exploration(switches, cand, self.config, account)
+            if decision["allowed"]:
+                # Paper-only near-miss probe past a NON-catastrophic switch (e.g. daily drawdown).
+                # Real money stays locked; standard entries stay blocked; exits unaffected.
+                evidence["paper_exploration_kill_switch_override"] = {
+                    "overridden_switch": decision.get("overridden_switch"),
+                    "active_switches": decision.get("active_switches"),
+                    "standard_entries_still_blocked": True,
+                    "real_money_still_locked": True,
+                    "exits_allowed": True,
+                    "exploration_probe_validated": True,
+                }
+            else:
+                # SPECIFIC reason — never an opaque KILL_SWITCH_ACTIVE for a marked probe.
+                return ExecutionCageResult(
+                    False,
+                    "kill_switch",
+                    decision["denied_reason"],
+                    f"Paper exploration override denied: {decision['denied_reason']} "
+                    f"({decision.get('catastrophic_switches') or decision.get('probe_blockers')})",
+                    evidence={
+                        **evidence,
+                        "switches": switches,
+                        "exploration_override_denied_reason": decision["denied_reason"],
+                        "exploration_override_decision": decision,
+                    },
                 )
 
         cd = CooldownService(self.session, self.config)

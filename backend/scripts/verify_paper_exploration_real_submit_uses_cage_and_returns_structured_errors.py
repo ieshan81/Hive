@@ -28,6 +28,9 @@ class _FakeLog:
 
 def _patch_select(svc):
     svc.select_candidate = lambda: nm()  # type: ignore[assignment]
+    svc.select_candidate_detailed = lambda: {  # type: ignore[assignment]
+        "selected": nm(), "skipped_broker_invalid": [], "no_broker_valid_candidate": False,
+    }
 
 
 def _forbid_direct_alpaca():

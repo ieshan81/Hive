@@ -179,6 +179,14 @@ DEFAULT_CONFIG = {
             "exploration_promote_min_closed_trades": 20,
             "exploration_promote_min_profit_factor": 1.10,
             "exploration_promote_max_drawdown_pct": 35.0,
+            # Broker-compatible sizing. A probe is only attempted when its notional clears the
+            # broker minimum; otherwise it is skipped (never an invalid broker submit). The cap
+            # is NOT raised silently to reach the broker minimum.
+            "allow_notional_orders": True,
+            "allow_qty_orders": True,
+            "broker_min_buffer_pct": 2.0,
+            "skip_candidate_if_min_notional_exceeds_cap": True,
+            "allow_cap_raise_to_broker_min": False,
         },
     },
     "risk": {

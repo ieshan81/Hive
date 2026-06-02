@@ -27,6 +27,9 @@ def main() -> None:
     session_with_config()
     # Always return a fixed eligible candidate + tame the broker/account/quote deps.
     PaperExplorationService.select_candidate = lambda self: nm()  # type: ignore[assignment]
+    PaperExplorationService.select_candidate_detailed = lambda self: {  # type: ignore[assignment]
+        "selected": nm(), "skipped_broker_invalid": [], "no_broker_valid_candidate": False,
+    }
     alpaca_mod.AlpacaAdapter.sync_account_cached = lambda self, *a, **k: None  # type: ignore[assignment]
 
     from fastapi.testclient import TestClient

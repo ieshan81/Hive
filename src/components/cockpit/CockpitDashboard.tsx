@@ -74,6 +74,9 @@ type Cockpit = {
     exit_management_allowed?: boolean;
     exploration_entries_today?: number;
     exploration_max_notional_usd?: number;
+    broker_min_notional_usd?: number;
+    no_broker_valid_candidate?: boolean;
+    broker_valid_candidate?: { symbol?: string; min_required_notional_usd?: number } | null;
     current_exploration_candidate?: {
       symbol?: string;
       best_session?: string | null;
@@ -81,6 +84,8 @@ type Cockpit = {
       edge_after_cost_bps?: number | null;
       sample_size?: number;
       stage?: string;
+      broker_valid_for_exploration?: boolean;
+      min_required_notional_usd?: number;
     } | null;
   };
   paper_execution?: {
@@ -340,6 +345,19 @@ export function CockpitDashboard() {
             </p>
           )}
           <p className="mt-1 text-slate-500">Exploration entries today: {alpha.exploration_entries_today ?? 0} · Real money stays locked.</p>
+          <p className="mt-1 text-slate-500">
+            Broker validity:{" "}
+            {alpha.no_broker_valid_candidate ? (
+              <span className="text-amber-300">
+                no broker-valid candidate under ${Number(alpha.exploration_max_notional_usd ?? 5).toFixed(0)} cap
+                (min ≈ ${Number(alpha.broker_min_notional_usd ?? 10).toFixed(0)})
+              </span>
+            ) : alpha.broker_valid_candidate?.symbol ? (
+              <span className="text-emerald-300">{alpha.broker_valid_candidate.symbol} valid for a tiny paper probe</span>
+            ) : (
+              <span>checking…</span>
+            )}
+          </p>
         </div>
       </GlassPanel>
 
