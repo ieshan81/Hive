@@ -117,6 +117,15 @@ def autopilot_decision_state_alias(session: Session = Depends(get_session)):
     return AutopilotDecisionStateService(session, ConfigManager(session).get_current()).state()
 
 
+@router.get("/hive-engine-map")
+def hive_engine_map(session: Session = Depends(get_session)):
+    """READ ONLY: whole-engine lifecycle map (Universe → … → Promotion), paper/live separation,
+    and latest completed trade lifecycle. Aggregates existing truth; no mutation, no orders."""
+    from app.services.hive_engine_map_service import HiveEngineMapService
+
+    return HiveEngineMapService(session, ConfigManager(session).get_current()).map()
+
+
 @router.get("/live-lock/status")
 def live_lock_status_endpoint(session: Session = Depends(get_session)):
     from app.services.broker_safety import broker_base_url, is_paper_broker_url, live_lock_status
