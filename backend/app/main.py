@@ -209,6 +209,28 @@ def on_startup():
                     )
     except Exception as exc:
         logger.warning("Alpha Factory startup session backfill skipped: %s", exc)
+    # One-time migration: set the paper-exploration notional cap to $12 (operator-requested).
+    # Paper-only; never touches live flags. Guarded by a flag so later operator changes stick.
+    try:
+        from app.database import engine as db_engine
+        from app.services.config_manager import ConfigManager
+
+        with Session(db_engine) as session:
+            cfg_mgr = ConfigManager(session)
+            cur = cfg_mgr.get_current()
+            af = dict(cur.get("alpha_factory") or {})
+            pe = dict(af.get("paper_exploration") or {})
+            if not pe.get("_cap_migrated_to_12"):
+                pe["exploration_max_notional_usd"] = 12.0
+                pe["_cap_migrated_to_12"] = True
+                af["paper_exploration"] = pe
+                merged = {**cur, "alpha_factory": af}
+                merged["live_trading_enabled"] = bool(cur.get("live_trading_enabled", False))
+                cfg_mgr._activate(merged, changed_by="startup", reason="migrate_exploration_cap_to_12")
+                session.commit()
+                logger.info("Paper exploration cap migrated to $12 (paper-only; live untouched).")
+    except Exception as exc:
+        logger.warning("Paper exploration cap migration skipped: %s", exc)
     if not settings.alpaca_configured:
         logger.warning("ALPACA_API_KEY / ALPACA_SECRET_KEY not set — broker sync unavailable")
     if not settings.gemini_configured:
