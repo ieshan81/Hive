@@ -1280,10 +1280,19 @@ def sync_alpaca(session: Session = Depends(get_session)):
 
 
 @router.get("/diagnostic-bundle")
-def get_diagnostic_bundle(session: Session = Depends(get_session)):
-    from app.services.diagnostic_export import export_diagnostic_bundle_safe
+def get_diagnostic_bundle(mode: str | None = None, session: Session = Depends(get_session)):
+    """Default = fast 'latest' bundle (current run only, capped, labeled).
+    Use ?mode=forensic for the full historical bundle (slow). Read-only."""
+    from app.config import settings
 
-    return export_diagnostic_bundle_safe(session)
+    resolved = (mode or getattr(settings, "diagnostic_export_mode", "latest") or "latest").lower()
+    if resolved == "forensic":
+        from app.services.diagnostic_export import export_diagnostic_bundle_safe
+
+        return export_diagnostic_bundle_safe(session)
+    from app.services.diagnostic_bundle_latest import build_latest_bundle
+
+    return build_latest_bundle(session)
 
 
 @router.get("/diagnostic-bundle/download")

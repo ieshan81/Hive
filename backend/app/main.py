@@ -159,6 +159,16 @@ def on_startup():
             repair_database_bootstrap(session)
     except Exception as exc:
         logger.warning("Startup bootstrap repair skipped: %s", exc)
+    # Diagnostic bundle maintenance (archive/compress old exports, write cleanup_summary).
+    # Fail-safe, idempotent, runs at most every few hours; never touches DB audit rows.
+    try:
+        from app.database import engine as db_engine
+        from app.services.diagnostic_bundle_maintenance import run_if_due
+
+        with Session(db_engine) as session:
+            run_if_due(session)
+    except Exception as exc:
+        logger.warning("Diagnostic bundle maintenance skipped: %s", exc)
     # Self-heal: if Alpha Factory has no scorecards but research evidence exists, convert it
     # once (idempotent, read/score only — never places orders). Fail-safe: never blocks boot.
     try:
