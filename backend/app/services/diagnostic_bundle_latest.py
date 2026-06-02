@@ -61,6 +61,59 @@ def _safe(label: str, errs: list, fn):
         return {"status": "degraded", "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
 
 
+def _parallel_enabled() -> bool:
+    """Concurrent fetch is safe only on real (pooled) engines. In-memory sqlite hands each thread its
+    own empty database, so we fall back to sequential there (and in tests)."""
+    try:
+        from app.database import engine
+
+        return engine.url.get_backend_name() != "sqlite"
+    except Exception:
+        return False
+
+
+def _run_fetches(jobs: dict, session: Session, errs: list, *, parallel: Optional[bool] = None,
+                 max_workers: int = 6, per_job_timeout: float = 8.0) -> dict[str, Any]:
+    """Run independent, read-only fetch jobs and return {name: result}.
+
+    A SQLAlchemy Session is NOT thread-safe, so on a real DB each job runs in its own thread with its
+    OWN short-lived Session (the heavy jobs are Alpaca-I/O-bound, so threads overlap and the wall time
+    collapses from sum() to ~max()). On sqlite/tests we run sequentially on the shared session. Each
+    job is wrapped so one failure/timeout degrades only that section, never the whole bundle. Read-only:
+    jobs never commit.
+    """
+    use_parallel = _parallel_enabled() if parallel is None else parallel
+    if not use_parallel:
+        return {name: _safe(name, errs, (lambda f=fn: f(session))) for name, fn in jobs.items()}
+
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as _FTimeout
+
+    from app.database import engine
+
+    def _run(name, fn):
+        try:
+            with Session(engine) as s:  # own session per job (Session is not thread-safe)
+                return fn(s)
+        except Exception as exc:
+            errs.append({"section": name, "error": f"{type(exc).__name__}: {str(exc)[:160]}"})
+            return {"status": "degraded", "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+
+    out: dict[str, Any] = {}
+    ex = ThreadPoolExecutor(max_workers=max_workers)
+    try:
+        futs = {name: ex.submit(_run, name, fn) for name, fn in jobs.items()}
+        for name, fut in futs.items():  # collected in the main thread only
+            try:
+                out[name] = fut.result(timeout=per_job_timeout)
+            except _FTimeout:
+                errs.append({"section": name, "error": "timeout"})
+                out[name] = {"status": "degraded", "error": "timeout"}
+    finally:
+        ex.shutdown(wait=False)  # don't block on a straggler; its thread closes its own session
+    return out
+
+
 def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict[str, Any]:
     t0 = time.time()
     errs: list[dict[str, Any]] = []
@@ -81,45 +134,48 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
     cutoff_iso = (epoch or {}).get("nuke_completed_at")
 
     # --- fast read-models (current truth) ---
-    tiles = _safe("tiles", errs, lambda: __import__(
-        "app.services.mission_control_read_model", fromlist=["build_mission_control_tiles"]
-    ).build_mission_control_tiles(session))
-    engine_map = _safe("engine_map", errs, lambda: __import__(
-        "app.services.hive_engine_map_service", fromlist=["HiveEngineMapService"]
-    ).HiveEngineMapService(session, cfg).map())
-    mem_gov = _safe("memory_governance", errs, lambda: __import__(
-        "app.services.memory_governance_service", fromlist=["MemoryGovernanceService"]
-    ).MemoryGovernanceService(session).archive_noisy_active_memory(dry_run=True))
-    stock = _safe("stock_data_readiness", errs, lambda: __import__(
-        "app.services.stock_data_readiness_service", fromlist=["stock_data_readiness"]
-    ).stock_data_readiness(session, cfg))
-    validation = _safe("validation_run", errs, lambda: __import__(
-        "app.services.diagnostic_export", fromlist=["_validation_run_export"]
-    )._validation_run_export(session))
-    perf = _safe("performance", errs, lambda: __import__(
-        "app.services.performance_service", fromlist=["performance_summary"]
-    ).performance_summary(session))
-    scheduler = _safe("scheduler", errs, lambda: __import__(
-        "app.services.autonomous_paper_scheduler", fromlist=["AutonomousPaperScheduler"]
-    ).AutonomousPaperScheduler(session, cfg).status())
-    promotion_criteria = _safe("promotion_criteria", errs, lambda: __import__(
-        "app.services.promotion_criteria", fromlist=["authoritative_promotion_criteria"]
-    ).authoritative_promotion_criteria(cfg, session=session))
-    universe = _safe("universe_summary", errs, lambda: __import__(
-        "app.services.universe_summary_service", fromlist=["build_universe_summary"]
-    ).build_universe_summary(session, cfg))
-    productivity = _safe("productivity", errs, lambda: __import__(
-        "app.services.paper_validation_productivity_service", fromlist=["build_productivity"]
-    ).build_productivity(session, cfg))
+    # These reads are independent; the heavy ones (tiles/universe/stock/productivity) are Alpaca-I/O
+    # bound. Run them concurrently (own Session per job) on a real DB; sequential on sqlite/tests.
     _A = lambda fn: __import__("app.services.paper_validation_analysis_service", fromlist=[fn])  # noqa: E731
-    trade_truth = _safe("current_run_trade_truth", errs, lambda: _A("current_run_trade_truth").current_run_trade_truth(session, cfg))
-    pnl_trace = _safe("pnl_guard_trace", errs, lambda: _A("pnl_guard_trace").pnl_guard_trace(session, cfg))
-    freshness_matrix = _safe("data_freshness_matrix", errs, lambda: _A("data_freshness_matrix").data_freshness_matrix(session, cfg))
-    alpha_matrix = _safe("alpha_coverage_matrix", errs, lambda: _A("alpha_coverage_matrix").alpha_coverage_matrix(session, cfg))
-    timeline = _safe("blocker_timeline", errs, lambda: _A("blocker_timeline").blocker_timeline(session, cfg))
-    order_proof = _safe("paper_order_proof", errs, lambda: __import__(
-        "app.services.paper_order_proof_service", fromlist=["PaperOrderProofService"]
-    ).PaperOrderProofService(session, cfg).summary())
+
+    def _imp(mod, name):
+        return getattr(__import__(f"app.services.{mod}", fromlist=[name]), name)
+
+    jobs = {
+        "tiles": lambda s: _imp("mission_control_read_model", "build_mission_control_tiles")(s),
+        "engine_map": lambda s: _imp("hive_engine_map_service", "HiveEngineMapService")(s, cfg).map(),
+        "memory_governance": lambda s: _imp("memory_governance_service", "MemoryGovernanceService")(s).archive_noisy_active_memory(dry_run=True),
+        "stock_data_readiness": lambda s: _imp("stock_data_readiness_service", "stock_data_readiness")(s, cfg),
+        "validation_run": lambda s: _imp("diagnostic_export", "_validation_run_export")(s),
+        "performance": lambda s: _imp("performance_service", "performance_summary")(s),
+        "scheduler": lambda s: _imp("autonomous_paper_scheduler", "AutonomousPaperScheduler")(s, cfg).status(),
+        "promotion_criteria": lambda s: _imp("promotion_criteria", "authoritative_promotion_criteria")(cfg, session=s),
+        "universe_summary": lambda s: _imp("universe_summary_service", "build_universe_summary")(s, cfg),
+        "productivity": lambda s: _imp("paper_validation_productivity_service", "build_productivity")(s, cfg),
+        "current_run_trade_truth": lambda s: _A("current_run_trade_truth").current_run_trade_truth(s, cfg),
+        "pnl_guard_trace": lambda s: _A("pnl_guard_trace").pnl_guard_trace(s, cfg),
+        "data_freshness_matrix": lambda s: _A("data_freshness_matrix").data_freshness_matrix(s, cfg),
+        "alpha_coverage_matrix": lambda s: _A("alpha_coverage_matrix").alpha_coverage_matrix(s, cfg),
+        "blocker_timeline": lambda s: _A("blocker_timeline").blocker_timeline(s, cfg),
+        "paper_order_proof": lambda s: _imp("paper_order_proof_service", "PaperOrderProofService")(s, cfg).summary(),
+    }
+    res = _run_fetches(jobs, session, errs)
+    tiles = res["tiles"]
+    engine_map = res["engine_map"]
+    mem_gov = res["memory_governance"]
+    stock = res["stock_data_readiness"]
+    validation = res["validation_run"]
+    perf = res["performance"]
+    scheduler = res["scheduler"]
+    promotion_criteria = res["promotion_criteria"]
+    universe = res["universe_summary"]
+    productivity = res["productivity"]
+    trade_truth = res["current_run_trade_truth"]
+    pnl_trace = res["pnl_guard_trace"]
+    freshness_matrix = res["data_freshness_matrix"]
+    alpha_matrix = res["alpha_coverage_matrix"]
+    timeline = res["blocker_timeline"]
+    order_proof = res["paper_order_proof"]
     import os as _os
     git_commit = _os.environ.get("RAILWAY_GIT_COMMIT_SHA", "dev")[:12]
 
@@ -151,6 +207,14 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
     strategy_signals = _section(StrategySignal, StrategySignal.created_at, "strategy_signals", True)
     blocked_trades = _section(BlockedTrade, BlockedTrade.created_at, "blocked_trades", True)
     broker_errors = _section(BrokerError, BrokerError.created_at, "broker_errors", False)
+
+    # Headline + bundle-to-bundle delta — reuse the already-computed reads instead of recomputing
+    # productivity / freshness / alpha / trade-truth / pnl a second time.
+    headline = _safe("headline", errs, lambda: _A("_current_headline")._current_headline(
+        session, cfg, trade_truth=trade_truth, freshness=freshness_matrix, alpha=alpha_matrix,
+        pnl=pnl_trace, productivity=productivity))
+    changed = _safe("changed_since_previous_bundle", errs, lambda: _A(
+        "changed_since_previous_bundle").changed_since_previous_bundle(session, cfg, headline=headline))
 
     # README_FIRST — the single first thing to read.
     acct = (tiles or {}).get("account") or {}
@@ -243,7 +307,7 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
         "data_freshness_matrix.json": freshness_matrix,
         "alpha_coverage_matrix.json": alpha_matrix,
         "blocker_timeline.json": timeline,
-        "changed_since_previous_bundle.json": _safe("changed_since_previous_bundle", errs, lambda: _A("changed_since_previous_bundle").changed_since_previous_bundle(session, cfg)),
+        "changed_since_previous_bundle.json": changed,
         "paper_order_proof.json": order_proof,
         "endpoint_latency_summary.json": {
             "note": "Self-reported: /api/universe/summary is the fast path; /api/universe/status + "
@@ -298,7 +362,9 @@ def latest_bundle_as_zip(session: Session, config: Optional[dict] = None) -> byt
     try:  # record the "previous bundle" baseline for next time (best-effort, never blocks the download)
         from app.services.paper_validation_analysis_service import record_headline_snapshot
 
-        record_headline_snapshot(session, config)
+        # Reuse the headline the bundle already built instead of recomputing the heavy reads.
+        prebuilt = (bundle.get("changed_since_previous_bundle.json") or {}).get("current_headline")
+        record_headline_snapshot(session, config, headline=prebuilt)
         session.commit()
     except Exception:
         try:
