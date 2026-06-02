@@ -31,13 +31,20 @@ class PromotionService:
         closed = self.session.exec(
             select(TradeRecord).where(TradeRecord.status == "closed")
         ).all()
-        criteria = cfg_get(self.config, "promotion.criteria.paper_to_pre_live", {}) or {}
+        # Single authoritative criteria source (shared with PromotionReadinessService + diagnostics).
+        from app.services.promotion_criteria import authoritative_promotion_criteria
+
+        authoritative = authoritative_promotion_criteria(self.config, session=self.session)
+        criteria = authoritative["promotion_to_pre_live_criteria"]  # the gate that controls live/pre-live
         return {
             "current_stage": stage,
             "db_stage": row.current_stage,
             "paper_started_at": row.paper_started_at.isoformat() + "Z" if row.paper_started_at else None,
             "closed_trade_count": len(closed),
             "criteria": criteria,
+            "criteria_source": authoritative["criteria_source"],
+            "controls_live_pre_live_promotion": authoritative["controls_live_pre_live_promotion"],
+            "authoritative_criteria": authoritative,
             "human_approval_required": bool(cfg_get(self.config, "promotion.human_approval_required", True)),
             "live_orders_enabled": bool(cfg_get(self.config, "execution.live_orders_enabled", False)),
             "paper_orders_enabled": bool(cfg_get(self.config, "execution.paper_orders_enabled", False)),

@@ -35,7 +35,7 @@ def _audit(session: Session, action: str, details: dict) -> dict:
 
 
 @router.post("/clear-ui-cache")
-def clear_ui_cache(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def clear_ui_cache(body: dict = Body(default={}), session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     """UI cache only — never deletes lesson nodes, orders, or audit."""
     out = _audit(
         session,
@@ -47,7 +47,7 @@ def clear_ui_cache(body: dict = Body(default={}), session: Session = Depends(get
 
 
 @router.post("/resync-broker-truth")
-def resync_broker_truth(session: Session = Depends(get_session)):
+def resync_broker_truth(session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     from app.services.alpaca_adapter import AlpacaAdapter
 
     alpaca = AlpacaAdapter(session)
@@ -102,7 +102,7 @@ def clear_ghost_rows(
 
 
 @router.post("/export-brain-bundle")
-def export_brain_bundle(session: Session = Depends(get_session)):
+def export_brain_bundle(session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     cfg = ConfigManager(session).get_current()
     graph = HiveBrainGraphService(session, cfg).build()
     consolidated = MemoryConsolidationService(session, cfg).list_consolidated(30)

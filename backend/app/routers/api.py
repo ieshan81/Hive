@@ -171,7 +171,7 @@ def get_session_state(session: Session = Depends(get_session)):
 
 
 @router.post("/radar/refresh")
-def refresh_radar(session: Session = Depends(get_session)):
+def refresh_radar(session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     config = ConfigManager(session).get_current()
     from app.services.market_radar_service import MarketRadarService
     from app.services.session_engine import SessionEngine
@@ -294,21 +294,21 @@ def paper_execution_status(session: Session = Depends(get_session)):
 
 
 @router.post("/execution/paper/enable")
-def enable_paper_execution(session: Session = Depends(get_session)):
+def enable_paper_execution(session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     from app.services.paper_execution_service import PaperExecutionService
 
     return PaperExecutionService(session).enable()
 
 
 @router.post("/execution/paper/disable")
-def disable_paper_execution(session: Session = Depends(get_session)):
+def disable_paper_execution(session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     from app.services.paper_execution_service import PaperExecutionService
 
     return PaperExecutionService(session).disable()
 
 
 @router.post("/execution/paper/run-selected")
-def run_selected_paper_orders(cycle_run_id: str = "latest", session: Session = Depends(get_session)):
+def run_selected_paper_orders(cycle_run_id: str = "latest", session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     from app.services.paper_execution_service import PaperExecutionService
 
     cid = resolve_cycle_run_id(session, cycle_run_id)
@@ -408,7 +408,7 @@ def get_broker_truth_reconciliation(session: Session = Depends(get_session)):
 
 
 @router.post("/reconciliation/run")
-def run_reconciliation(session: Session = Depends(get_session)):
+def run_reconciliation(session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     from app.services.order_reconciliation import reconciliation_status
 
     alpaca = AlpacaAdapter(session)
@@ -434,7 +434,7 @@ def kill_switch_status(session: Session = Depends(get_session)):
 
 
 @router.post("/kill-switch/manual/activate")
-def kill_switch_activate(session: Session = Depends(get_session)):
+def kill_switch_activate(session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     from app.services.kill_switch_service import KillSwitchService
 
     config = ConfigManager(session).get_current()
@@ -446,7 +446,7 @@ def kill_switch_activate(session: Session = Depends(get_session)):
 
 
 @router.post("/kill-switch/manual/deactivate")
-def kill_switch_deactivate(session: Session = Depends(get_session)):
+def kill_switch_deactivate(session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     from app.services.kill_switch_service import KillSwitchService
 
     config = ConfigManager(session).get_current()
@@ -466,7 +466,7 @@ def promotion_status(session: Session = Depends(get_session)):
 
 
 @router.post("/promotion/request")
-def promotion_request(target_stage: str = "PRE_LIVE", session: Session = Depends(get_session)):
+def promotion_request(target_stage: str = "PRE_LIVE", session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     from app.services.promotion_service import PromotionService
 
     config = ConfigManager(session).get_current()
@@ -608,6 +608,7 @@ def memory_operator_note(
     symbol: str | None = None,
     severity: str = "MEDIUM",
     session: Session = Depends(get_session),
+    _op_guard: str = Depends(require_operator_token),
 ):
     from app.services.config_manager import ConfigManager
     from app.services.lesson_memory_service import LessonMemoryService
@@ -628,7 +629,7 @@ def memory_operator_note(
 
 
 @router.post("/memory/lesson/{lesson_id}/approve")
-def memory_lesson_approve(lesson_id: int, session: Session = Depends(get_session)):
+def memory_lesson_approve(lesson_id: int, session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     from app.services.config_manager import ConfigManager
     from app.services.lesson_memory_service import LessonMemoryService
 
@@ -639,7 +640,7 @@ def memory_lesson_approve(lesson_id: int, session: Session = Depends(get_session
 
 
 @router.post("/memory/lesson/{lesson_id}/reject")
-def memory_lesson_reject(lesson_id: int, session: Session = Depends(get_session)):
+def memory_lesson_reject(lesson_id: int, session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     from app.services.config_manager import ConfigManager
     from app.services.lesson_memory_service import LessonMemoryService
 
@@ -654,6 +655,7 @@ def memory_lesson_archive(
     lesson_id: int,
     body: dict = Body(default={}),
     session: Session = Depends(get_session),
+    _op_guard: str = Depends(require_operator_token),
 ):
     from app.services.config_manager import ConfigManager
     from app.services.lesson_memory_service import LessonMemoryService
@@ -670,7 +672,7 @@ def memory_lesson_archive(
 
 
 @router.post("/memory/lesson/{lesson_id}/restore")
-def memory_lesson_restore(lesson_id: int, session: Session = Depends(get_session)):
+def memory_lesson_restore(lesson_id: int, session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     from app.services.config_manager import ConfigManager
     from app.services.lesson_memory_service import LessonMemoryService
 
@@ -685,6 +687,7 @@ def memory_lesson_delete(
     lesson_id: int,
     body: dict = Body(default={}),
     session: Session = Depends(get_session),
+    _op_guard: str = Depends(require_operator_token),
 ):
     from app.services.config_manager import ConfigManager
     from app.services.lesson_memory_service import LessonMemoryService
@@ -698,7 +701,7 @@ def memory_lesson_delete(
 
 
 @router.post("/memory/lesson/{lesson_id}/resolve")
-def memory_lesson_resolve(lesson_id: int, session: Session = Depends(get_session)):
+def memory_lesson_resolve(lesson_id: int, session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     from app.services.config_manager import ConfigManager
     from app.services.lesson_memory_service import LessonMemoryService
 
@@ -713,6 +716,7 @@ def memory_lesson_visibility(
     lesson_id: int,
     body: dict,
     session: Session = Depends(get_session),
+    _op_guard: str = Depends(require_operator_token),
 ):
     from app.services.config_manager import ConfigManager
     from app.services.lesson_memory_service import LessonMemoryService
@@ -729,7 +733,7 @@ def memory_lesson_visibility(
 
 
 @router.post("/memory/bulk/archive")
-def memory_bulk_archive(body: dict, session: Session = Depends(get_session)):
+def memory_bulk_archive(body: dict, session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     from app.services.config_manager import ConfigManager
     from app.services.lesson_memory_service import LessonMemoryService
 
@@ -746,7 +750,7 @@ def memory_bulk_archive(body: dict, session: Session = Depends(get_session)):
 
 
 @router.post("/memory/bulk/restore")
-def memory_bulk_restore(body: dict, session: Session = Depends(get_session)):
+def memory_bulk_restore(body: dict, session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     from app.services.config_manager import ConfigManager
     from app.services.lesson_memory_service import LessonMemoryService
 
@@ -757,7 +761,7 @@ def memory_bulk_restore(body: dict, session: Session = Depends(get_session)):
 
 
 @router.post("/memory/bulk/delete")
-def memory_bulk_delete(body: dict, session: Session = Depends(get_session)):
+def memory_bulk_delete(body: dict, session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     from app.services.config_manager import ConfigManager
     from app.services.lesson_memory_service import LessonMemoryService
 
@@ -770,7 +774,7 @@ def memory_bulk_delete(body: dict, session: Session = Depends(get_session)):
 
 
 @router.post("/memory/bulk/hide-from-ai")
-def memory_bulk_hide_ai(body: dict, session: Session = Depends(get_session)):
+def memory_bulk_hide_ai(body: dict, session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     from app.services.config_manager import ConfigManager
     from app.services.lesson_memory_service import LessonMemoryService
 
@@ -781,7 +785,7 @@ def memory_bulk_hide_ai(body: dict, session: Session = Depends(get_session)):
 
 
 @router.post("/memory/bulk/set-category")
-def memory_bulk_category(body: dict, session: Session = Depends(get_session)):
+def memory_bulk_category(body: dict, session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     from app.services.config_manager import ConfigManager
     from app.services.lesson_memory_service import LessonMemoryService
 
@@ -795,7 +799,8 @@ def memory_bulk_category(body: dict, session: Session = Depends(get_session)):
 
 @router.post("/memory/lesson/{lesson_id}/category")
 def memory_lesson_category(
-    lesson_id: int, body: dict, session: Session = Depends(get_session)
+    lesson_id: int, body: dict, session: Session = Depends(get_session),
+    _op_guard: str = Depends(require_operator_token),
 ):
     from app.services.config_manager import ConfigManager
     from app.services.lesson_memory_service import LessonMemoryService
@@ -892,7 +897,7 @@ def positions_state(session: Session = Depends(get_session)):
 
 
 @router.post("/positions/state/backfill")
-def positions_state_backfill(session: Session = Depends(get_session)):
+def positions_state_backfill(session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     from app.services.position_state_service import backfill_position_states
 
     out = backfill_position_states(session)
@@ -909,14 +914,14 @@ def trades_history(limit: int = 50, session: Session = Depends(get_session)):
 
 
 @router.post("/positions/refresh")
-def positions_refresh(session: Session = Depends(get_session)):
+def positions_refresh(session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     from app.services.positions_tab_service import refresh_positions
 
     return refresh_positions(session)
 
 
 @router.post("/positions/monitor/run")
-def positions_monitor_run(session: Session = Depends(get_session)):
+def positions_monitor_run(session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     from app.services.config_manager import ConfigManager
     from app.services.memory_cycle_processor import process_cycle_memories
     from app.services.query_service import resolve_cycle_run_id
@@ -944,7 +949,7 @@ def positions_manual_exit(
 
 
 @router.post("/memory/backfill")
-def memory_backfill(cycle_run_id: str = "8796825e-5f25-4cfa-b0f9-b0141f61859c", session: Session = Depends(get_session)):
+def memory_backfill(cycle_run_id: str = "8796825e-5f25-4cfa-b0f9-b0141f61859c", session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     from app.services.memory_cycle_processor import backfill_doge_cycle_if_present
 
     count = backfill_doge_cycle_if_present(session, cycle_run_id)
@@ -983,7 +988,7 @@ def get_ai_reviews(cycle_run_id: str = "latest", session: Session = Depends(get_
 
 
 @router.post("/ai/review")
-def trigger_ai_review_legacy(session: Session = Depends(get_session)):
+def trigger_ai_review_legacy(session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     return _run_ai_review(session, cycle_run_id=None, mode="quick", force=False)
 
 
@@ -993,6 +998,7 @@ def run_ai_review(
     mode: str = "quick",
     force: bool = False,
     session: Session = Depends(get_session),
+    _op_guard: str = Depends(require_operator_token),
 ):
     return _run_ai_review(session, cycle_run_id=cycle_run_id, mode=mode, force=force)
 
@@ -1238,14 +1244,14 @@ def lab_memory_proposals(limit: int = 5, session: Session = Depends(get_session)
 
 
 @router.post("/memory/import/legacy-ai-bundle")
-def memory_import_legacy(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def memory_import_legacy(body: dict = Body(default={}), session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     out = ResearchLabService(session).import_legacy_bundle(body)
     session.commit()
     return out
 
 
 @router.post("/memory/reclassify/system-bugs")
-def memory_reclassify_system_bugs(session: Session = Depends(get_session)):
+def memory_reclassify_system_bugs(session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     from app.services.config_manager import ConfigManager
     from app.services.lesson_memory_service import LessonMemoryService
     from app.services.memory_categories import CATEGORY_SYSTEM, SYSTEM_TYPES
@@ -1266,7 +1272,7 @@ def memory_reclassify_system_bugs(session: Session = Depends(get_session)):
 
 
 @router.post("/sync/alpaca")
-def sync_alpaca(session: Session = Depends(get_session)):
+def sync_alpaca(session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     adapter = AlpacaAdapter(session)
     if not adapter.configured:
         return {"status": "error", "message": "Alpaca not configured"}

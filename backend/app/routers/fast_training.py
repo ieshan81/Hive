@@ -103,6 +103,6 @@ def fast_training_exit_only_run(
 
 
 @router.post("/start-loop")
-def fast_training_start_loop(session: Session = Depends(get_session)):
+def fast_training_start_loop(session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     """Best-effort stub — production must use run-once + external scheduler."""
     return FastCryptoTrainingLoop(session).start_loop()

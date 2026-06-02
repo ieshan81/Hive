@@ -43,7 +43,7 @@ def run_push_pull_backtest(
 
 
 @router.post("/promotion-verdict")
-def promotion_verdict(body: dict = Body(default={})):
+def promotion_verdict(body: dict = Body(default={}), _op_guard: str = Depends(require_operator_token)):
     """Pure DSR + walk-forward gate on a list of returns. No DB writes."""
     from app.services.dsr_engine import build_promotion_verdict
 

@@ -87,10 +87,19 @@ def post_rebuild(
     session: Session = Depends(get_session),
     _op: str = Depends(require_operator_token),
 ):
-    """Hard nuke + aggressive profile + paper ON + bar refresh + agent cycles."""
+    """Hard nuke + aggressive profile + paper ON + bar refresh + agent cycles.
+
+    GUARDED: refuses during an active validation run and without the confirmation phrase; the
+    destructive rebuild is never reached on refusal (see rebuild_guard)."""
     from app.v2.rebuild import full_rebuild
 
-    return full_rebuild(session, operator=str(body.get("operator") or "operator"))
+    return full_rebuild(
+        session,
+        operator=str(body.get("operator") or "operator"),
+        confirmation_phrase=str(body.get("confirmation") or body.get("confirmation_phrase") or ""),
+        validation_run_override_reason=str(body.get("validation_run_override_reason") or ""),
+        engines_stopped_ack=bool(body.get("engines_stopped_ack") or body.get("engines_stopped") or False),
+    )
 
 
 @router.post("/agent/cycle")
