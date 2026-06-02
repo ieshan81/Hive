@@ -231,6 +231,10 @@ def run_preflight(
 ) -> PreflightResult:
     evidence: dict[str, Any] = {"cycle_run_id": cycle_run_id, "signal_id": cand.signal_id}
     meta = cand.meta or {}
+    # An operator-triggered paper-exploration probe is not part of the portfolio-gate flow and
+    # carries its own EXPLORATION client_order_id. It still passes every SAFETY gate below.
+    is_probe = bool(meta.get("near_miss_exploration_probe") or meta.get("paper_exploration_probe"))
+    probe_coid = str(meta.get("client_order_id") or "")
 
     if not bool(cfg_get(config, "execution.paper_orders_enabled", False)):
         return PreflightResult(False, "PAPER_EXECUTION_DISABLED", "Paper orders disabled", evidence)
@@ -302,23 +306,25 @@ def run_preflight(
     if cand.signal_type == "observation":
         return PreflightResult(False, "OBSERVATION_NOT_EXECUTABLE", "Observations cannot execute", evidence)
 
-    if portfolio_decision is None or not portfolio_decision.selected_for_execution:
-        return PreflightResult(False, "SIGNAL_NOT_SELECTED", "Not selected by portfolio gate", evidence)
+    # Portfolio-gate selection does not apply to an operator-triggered exploration probe.
+    if not is_probe:
+        if portfolio_decision is None or not portfolio_decision.selected_for_execution:
+            return PreflightResult(False, "SIGNAL_NOT_SELECTED", "Not selected by portfolio gate", evidence)
 
-    if portfolio_decision.portfolio_rank != 1 and cand.signal_type == "entry":
-        trade_all = bool(cfg_get(config, "universe.trade_all_eligible", False)) or zero_means_unlimited(
-            cfg_get(config, "universe.max_execution_shortlist", 0)
-        )
-        if not trade_all:
-            return PreflightResult(
-                False,
-                "SIGNAL_NOT_SELECTED",
-                f"Portfolio rank {portfolio_decision.portfolio_rank} is not Top-1",
-                evidence,
+        if portfolio_decision.portfolio_rank != 1 and cand.signal_type == "entry":
+            trade_all = bool(cfg_get(config, "universe.trade_all_eligible", False)) or zero_means_unlimited(
+                cfg_get(config, "universe.max_execution_shortlist", 0)
             )
+            if not trade_all:
+                return PreflightResult(
+                    False,
+                    "SIGNAL_NOT_SELECTED",
+                    f"Portfolio rank {portfolio_decision.portfolio_rank} is not Top-1",
+                    evidence,
+                )
 
-    if portfolio_decision.portfolio_status == "portfolio_deferred":
-        return PreflightResult(False, "PORTFOLIO_DEFERRED", portfolio_decision.human_reason, evidence)
+        if portfolio_decision.portfolio_status == "portfolio_deferred":
+            return PreflightResult(False, "PORTFOLIO_DEFERRED", portfolio_decision.human_reason, evidence)
 
     sig = signal_row
     if sig and sig.status in ("blocked", "risk_blocked", "portfolio_blocked"):
@@ -327,7 +333,11 @@ def run_preflight(
     if cand.symbol in open_order_symbols:
         return PreflightResult(False, "DUPLICATE_OPEN_ORDER", f"Open order exists for {cand.symbol}", evidence)
 
-    client_id = build_client_order_id(cycle_run_id, cand.signal_id, cand.side, cand.symbol)
+    # Preserve the EXPLORATION client_order_id for probes; never rebuild it into a normal id.
+    if is_probe and probe_coid.startswith("EXPLORATION"):
+        client_id = probe_coid[:48]
+    else:
+        client_id = build_client_order_id(cycle_run_id, cand.signal_id, cand.side, cand.symbol)
     evidence["client_order_id"] = client_id
 
     existing = session.exec(
@@ -336,7 +346,8 @@ def run_preflight(
     if existing:
         return PreflightResult(False, "DUPLICATE_CLIENT_ORDER_ID", "Order already in local DB", evidence)
 
-    if _signal_already_submitted(session, cand.signal_id):
+    # Probes have no StrategySignal row (signal_id 0/None) — skip the signal-dedup for them.
+    if not is_probe and cand.signal_id and _signal_already_submitted(session, cand.signal_id):
         return PreflightResult(False, "DUPLICATE_CLIENT_ORDER_ID", "Signal already submitted", evidence)
 
     # ---- Duplicate-buy / averaging-down prevention (entries only; sells/exits allowed) ----
