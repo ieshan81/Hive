@@ -95,6 +95,23 @@ class AlpacaAdapter:
     def configured(self) -> bool:
         return settings.alpaca_configured
 
+    def _guard_submission(self) -> Optional[dict]:
+        """Config-aware submission guard (defense-in-depth at the adapter boundary).
+
+        Loads the current config so the guard checks the runtime live flags (not just the paper
+        URL + env). FAILS CLOSED if the config/safety context cannot be read — a direct adapter
+        submit without proper paper/config context must not proceed."""
+        try:
+            from app.services.config_manager import ConfigManager
+
+            cfg = ConfigManager(self.session).get_current()
+        except Exception:
+            return blocked_submission_result("PAPER_PROTECTION_CONTEXT_UNAVAILABLE",
+                                             detail="config context unavailable — submission failed closed")
+        if cfg is None:
+            return blocked_submission_result("NO_CONFIG_CONTEXT", detail="no config context — failed closed")
+        return guard_before_submit(cfg)
+
     def _last_account_snapshot(self) -> Optional[AccountSnapshot]:
         return self.session.exec(select(AccountSnapshot).order_by(AccountSnapshot.synced_at.desc())).first()
 
@@ -601,7 +618,7 @@ class AlpacaAdapter:
         client_order_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """Marketable limit IOC — default crypto execution policy."""
-        blocked = guard_before_submit()
+        blocked = self._guard_submission()
         if blocked:
             return blocked
         client = self._get_trading_client()
@@ -654,7 +671,7 @@ class AlpacaAdapter:
         time_in_force: str = "gtc",
     ) -> dict[str, Any]:
         """Crypto market order by notional (USD quote pairs)."""
-        blocked = guard_before_submit()
+        blocked = self._guard_submission()
         if blocked:
             return blocked
         client = self._get_trading_client()
@@ -705,7 +722,7 @@ class AlpacaAdapter:
         stop_loss: Optional[float] = None,
         take_profit: Optional[float] = None,
     ) -> dict[str, Any]:
-        blocked = guard_before_submit()
+        blocked = self._guard_submission()
         if blocked:
             return blocked
         client = self._get_trading_client()
@@ -745,7 +762,7 @@ class AlpacaAdapter:
             return {"success": False, "error": str(exc)}
 
     def cancel_order(self, order_id: str) -> dict[str, Any]:
-        blocked = guard_before_submit()
+        blocked = self._guard_submission()
         if blocked:
             return blocked
         client = self._get_trading_client()
