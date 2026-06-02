@@ -48,7 +48,8 @@ def build_universe_summary(session: Session, config: Optional[dict] = None) -> d
         try:
             from app.services.config_manager import ConfigManager
 
-            cfg = ConfigManager(session).get_current()
+            # Read-only: the fast path must never migrate/write config.
+            cfg = ConfigManager(session).get_current_readonly()
         except Exception:
             cfg = {}  # fast path must never crash on config read
 

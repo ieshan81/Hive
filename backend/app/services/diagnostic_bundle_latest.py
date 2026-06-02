@@ -68,7 +68,8 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
 
     from app.services.config_manager import ConfigManager
     if cfg is None:
-        cfg = _safe("config", errs, lambda: ConfigManager(session).get_current()) or {}
+        # Read-only: a diagnostic bundle must never migrate/write config.
+        cfg = _safe("config", errs, lambda: ConfigManager(session).get_current_readonly()) or {}
 
     from app.services.nuke_epoch_service import (
         PAPER_VALIDATION_RUN_ID,
