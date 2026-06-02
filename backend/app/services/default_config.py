@@ -572,6 +572,12 @@ DEFAULT_CONFIG = {
         "tiny_live_candidate_threshold": 76,
         "promotion_confidence_threshold": 61,
     },
+    "stock_lane": {
+        # disabled / readiness_only / paper_allowed_with_fresh_data / sip_required.
+        # Default readiness_only: equities are scanned/readiness-checked but cannot place paper
+        # entries during paper_validation_run_001 until the data-feed policy is approved.
+        "mode": "readiness_only",
+    },
     "promotion_readiness": {
         "min_paper_days": 7,
         "min_closed_paper_trades": 5,

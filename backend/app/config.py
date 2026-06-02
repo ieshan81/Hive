@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     # When the market is closed the latest bar is the last session close; allow up to this age
     # (covers weekends/holidays) before calling it stale. ~4 days by default.
     alpaca_stock_max_closed_bar_age_minutes: int = 5760
+    # Stock-lane policy (env override). One of: disabled / readiness_only /
+    # paper_allowed_with_fresh_data / sip_required. Empty -> use config (default readiness_only,
+    # so equities are review-only during paper_validation_run_001 and cannot place paper entries).
+    stock_lane_mode: str = ""
     gemini_api_key: str = ""
     # Model IDs from Google AI — set in Railway/local .env when Google deprecates a version
     gemini_model: str = "gemini-2.0-flash"

@@ -205,6 +205,17 @@ def stock_data_readiness(
     else:
         subscription = "unknown"
 
+    # Explicit stock-lane policy gate (separate from data freshness). Default readiness_only blocks
+    # all stock paper entries during the validation run; crypto is unaffected.
+    overall_freshness = "fresh" if any_fresh else ("stale" if any_bars else "unknown")
+    from app.services.stock_lane_policy import stock_lane_entry_decision, stock_lane_mode
+
+    lane_mode = stock_lane_mode(config)
+    lane = stock_lane_entry_decision(
+        mode=lane_mode, freshness_status=overall_freshness,
+        market_open=market_open, feed=feed, subscription=subscription,
+    )
+
     return {
         "status": "ok",
         "generated_at_utc": now_iso,
@@ -215,6 +226,11 @@ def stock_data_readiness(
         "max_allowed_age_minutes_open": max_open,
         "max_allowed_age_minutes_closed": max_closed,
         "stock_subscription_level_detected": subscription,
+        # --- explicit stock-lane policy ---
+        "stock_lane_mode": lane_mode,
+        "stock_entries_allowed": lane["stock_entries_allowed"],
+        "stock_lane_blocker": lane["blocker"],
+        "stock_lane_reason": lane["reason"],
         "market_session": market_session,
         "market_open": market_open,
         "symbols_total": len(syms),
