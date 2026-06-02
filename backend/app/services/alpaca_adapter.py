@@ -44,6 +44,29 @@ def normalize_crypto_symbol(symbol: str) -> str:
     return symbol
 
 
+def configured_stock_feed_name() -> str:
+    """Configured stock data feed name (lower-case): 'iex' (default) or 'sip'."""
+    return str(getattr(settings, "alpaca_stock_feed", "iex") or "iex").lower()
+
+
+def stock_data_delay_minutes() -> int:
+    """Minutes to hold back the request end-time for stock bars (Basic plan can't query
+    the most-recent ~15 min). 0 disables the delay window."""
+    try:
+        return max(0, int(getattr(settings, "alpaca_stock_data_delay_minutes", 16) or 0))
+    except (TypeError, ValueError):
+        return 16
+
+
+def resolve_stock_feed():
+    """Map the configured feed name to an alpaca-py DataFeed enum (IEX unless SIP is set)."""
+    try:
+        from alpaca.data.enums import DataFeed
+    except Exception:
+        return None
+    return {"iex": DataFeed.IEX, "sip": DataFeed.SIP}.get(configured_stock_feed_name(), DataFeed.IEX)
+
+
 class AlpacaAdapter:
     def __init__(self, session: Session):
         self.session = session
@@ -427,9 +450,15 @@ class AlpacaAdapter:
                 "1Day": TimeFrame(1, TimeFrameUnit.Day),
             }
             tf = tf_map.get(timeframe, TimeFrame(1, TimeFrameUnit.Day))
-            end = datetime.utcnow()
+            # Basic/free Alpaca plans cannot query recent SIP data: request IEX and hold the
+            # end-time back by the delay window, otherwise stock bars come back empty.
+            end = datetime.utcnow() - timedelta(minutes=stock_data_delay_minutes())
             start = end - timedelta(days=limit * 2)
-            req = StockBarsRequest(symbol_or_symbols=symbol, timeframe=tf, start=start, end=end, limit=limit)
+            feed = resolve_stock_feed()
+            req_kwargs = {"symbol_or_symbols": symbol, "timeframe": tf, "start": start, "end": end, "limit": limit}
+            if feed is not None:
+                req_kwargs["feed"] = feed
+            req = StockBarsRequest(**req_kwargs)
             bars = data_client.get_stock_bars(req)
             if symbol not in bars.data:
                 return []
