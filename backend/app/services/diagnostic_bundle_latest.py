@@ -101,6 +101,9 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
     scheduler = _safe("scheduler", errs, lambda: __import__(
         "app.services.autonomous_paper_scheduler", fromlist=["AutonomousPaperScheduler"]
     ).AutonomousPaperScheduler(session, cfg).status())
+    promotion_criteria = _safe("promotion_criteria", errs, lambda: __import__(
+        "app.services.promotion_criteria", fromlist=["authoritative_promotion_criteria"]
+    ).authoritative_promotion_criteria(cfg, session=session))
 
     # --- capped recent rows (current-run filtered where it makes sense) ---
     def _recent(model, order_col, cap, *, run_filter=False):
@@ -184,6 +187,7 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
         "memory_governance_summary.json": mem_gov,
         "stock_data_readiness.json": stock,
         "performance_summary.json": perf,
+        "promotion_criteria.json": promotion_criteria,
         "scheduler_status.json": scheduler,
         "risk_events.json": risk_events,
         "strategy_signals.json": strategy_signals,

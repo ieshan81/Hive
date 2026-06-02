@@ -92,15 +92,33 @@ class PromotionReadinessService:
         checks["can_unlock_live_via_confidence"] = can_unlock_live()
         checks["operator_confirm_required"] = True
 
-        ready = len(gaps) == 0
+        # operational_readiness_check (7d/5t) is an early signal only — it does NOT control
+        # live/pre-live promotion. The pre-live REQUEST is gated by the STRICTER authoritative
+        # promotion_to_pre_live_criteria (90d/100t), so a 7/5 system can never be "live-ready".
+        from app.services.promotion_criteria import (
+            authoritative_promotion_criteria,
+            promotion_to_pre_live_criteria,
+        )
+
+        operational_ready = len(gaps) == 0
+        pre = promotion_to_pre_live_criteria(self.config)
+        pre_live_ready = days >= pre["min_calendar_days"] and len(closed) >= pre["min_closed_trades"]
+        ready_for_tiny_live_request = operational_ready and pre_live_ready
+
         stage_idx = 0
         if current_promotion_stage(self.config) == "PAPER":
-            stage_idx = 1 if ready else 0
+            stage_idx = 1 if operational_ready else 0
 
         return {
             "status": "ok",
             "live_promotion_locked": checks["live_lock_locked"],
-            "ready_for_tiny_live_request": ready,
+            "criteria_source": "operational_readiness_check",
+            "controls_live_pre_live_promotion": "promotion_to_pre_live_criteria",
+            "operational_ready": operational_ready,
+            "pre_live_ready": pre_live_ready,
+            # ready_for_tiny_live_request now requires the STRICTER pre-live criteria, not just 7/5.
+            "ready_for_tiny_live_request": ready_for_tiny_live_request,
+            "authoritative_criteria": authoritative_promotion_criteria(self.config, session=self.session),
             "gaps": gaps,
             "checks": checks,
             "current_stage": promo.get("current_stage"),
@@ -109,7 +127,10 @@ class PromotionReadinessService:
             "confidence_overall": overall,
             "confidence_label": conf.get("overall_label"),
             "shift_to_live_allowed": False,
-            "message": "Checklist is evidence only — Shift to Live does not enable trading.",
+            "message": (
+                "operational_readiness_check is an early signal; live/pre-live promotion is governed "
+                "by the stricter promotion_to_pre_live_criteria. Shift to Live does not enable trading."
+            ),
             "live_credentials_validation_places_orders": False,
         }
 
