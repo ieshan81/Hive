@@ -541,6 +541,18 @@ DEFAULT_CONFIG = {
         "run_scanners_each_tick": True,
         "run_backtest_lab_every_n_ticks": 12,
         "backtest_lab_limit": 2,
+        # Two-loop heartbeat model. The FAST heartbeat runs every tick: it manages exits,
+        # refreshes quotes/positions, and updates risk state — but NEVER forces a new entry.
+        # New entries are only considered on the SLOWER decision loop (every N ticks) and only
+        # when backtest evidence exists. These gates are ADDITIVE (they can only block more
+        # entries, never loosen safety).
+        "heartbeat": {
+            "enabled": True,
+            "manage_exits_every_tick": True,
+            "force_entries_every_candle": False,
+            "decision_loop_interval_ticks": 4,
+            "require_backtest_evidence_for_entry": True,
+        },
         # --- Optional daily export (off by default). When enabled the scheduler
         # persists one compact diagnostics snapshot per day and prunes to the
         # newest N; the full bundle is always available on demand. ---

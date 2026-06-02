@@ -62,3 +62,10 @@ audit_confidence_level: 1 (early 2)
 **Hive must become a disciplined testing machine, not a random AI prophet.** This audit keeps it on
 that path: reset to $200, gather 20→50 clean trades, and let evidence — not AI confidence — decide
 what gets promoted.
+
+---
+
+## Update — PR E + PR F shipped
+- **PR E (two-loop heartbeat):** `HeartbeatService` formalizes the model — the **fast heartbeat manages exits/quotes/risk every tick and NEVER forces an entry**; new entries are only considered on the **slower decision loop** (`decision_loop_interval_ticks`, default 4) and only with **backtest evidence**. Injected as ADDITIVE entry blockers into the training loop (exits already run first; gates can only block more entries, never loosen). Surfaced in the engine map (`heartbeat` block). Verifiers: `verify_heartbeat_does_not_force_entries`, `verify_exit_monitor_uses_broker_truth`, `verify_backtest_result_required_before_paper_candidate`.
+- **PR F (reset readiness):** `verify_reset_readiness` aggregates **19 gates** (live-lock, cage, kill-switch, exploration safety, outcome truth, memory governance, route hygiene, engine-map truth, two-loop heartbeat + evidence gate) → **PASS**. The heartbeat gap noted above is now closed.
+- Updated verdict: `ready_for_200_paper_reset = YES` (now also with a clean two-loop heartbeat + an automated reset-readiness gate). `ready_for_live_money` unchanged: **NO** until ≥50 clean closed trades prove positive after-cost expectancy + PF>1.10.
