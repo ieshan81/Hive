@@ -131,6 +131,8 @@ function dedupeEligible<T extends { symbol: string; trade_quality_score?: number
 
 export function CockpitDashboard() {
   const [data, setData] = useState<Cockpit | null>(null);
+  const [tiles, setTiles] = useState<Cockpit | null>(null);
+  const [tilesStale, setTilesStale] = useState(false);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [readinessMsg, setReadinessMsg] = useState<string | null>(null);
@@ -138,15 +140,29 @@ export function CockpitDashboard() {
 
   const load = useCallback(async () => {
     setErr(null);
-    const r = await apiGet<Cockpit>("/api/mission-control/status", { timeoutMs: 5000 });
-    if (r.ok && r.data) {
-      setData(r.data);
-      dispatchCockpitRefresh(r.data as Record<string, unknown>);
-      setLoading(false);
+    // Fast-path tiles (always-visible status) + full payload (heavy panels) in parallel,
+    // so the status tiles stay responsive even if the heavy /status build is slow.
+    const [tilesRes, statusRes] = await Promise.all([
+      apiGet<Cockpit>("/api/mission-control/tiles", { timeoutMs: 5000 }),
+      apiGet<Cockpit>("/api/mission-control/status", { timeoutMs: 12000 }),
+    ]);
+    if (statusRes.ok && statusRes.data) {
+      setData(statusRes.data);
+      dispatchCockpitRefresh(statusRes.data as Record<string, unknown>);
+      setErr(null);
     } else {
-      setErr(r.error || "Cockpit unavailable - check API_URL on Railway frontend");
-      setLoading(false);
+      setErr(statusRes.error || "Cockpit unavailable - check API_URL on Railway frontend");
     }
+    // Prefer the fast tiles payload; fall back to the full status payload for tile values.
+    const tileData = tilesRes.ok && tilesRes.data ? tilesRes.data : statusRes.ok && statusRes.data ? statusRes.data : null;
+    if (tileData) {
+      setTiles(tileData);
+      setTilesStale(false);
+    } else {
+      // Could not confirm tile state this cycle → render neutral "refreshing", never alarming RED.
+      setTilesStale(true);
+    }
+    setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -157,13 +173,18 @@ export function CockpitDashboard() {
 
   const f = data?.funnel ?? {};
   const ctrl = data?.control ?? {};
-  const paper = data?.paper_execution ?? {};
+  // Status tiles read the fast-path tiles payload (falling back to the full status payload).
+  const tileSrc = tiles ?? data;
+  const paper = tileSrc?.paper_execution ?? {};
   const eligible = dedupeEligible(
     data?.eligible_trades ??
     data?.shortlist ??
     (data?.scores ?? []).filter((s) => s.entry_allowed)
   );
   const alpha = data?.alpha_factory ?? {};
+  // "Unknown/refreshing": tile source not confirmed this cycle → render neutral grey, never alarming RED.
+  const tilesUnknown = tilesStale || (loading && !tiles);
+  const paperExplorationAllowed = Boolean(tileSrc?.alpha_factory?.paper_exploration_allowed ?? alpha.paper_exploration_allowed);
   const canSubmitEntries = Boolean(paper.new_entries_allowed ?? paper.bot_can_submit_paper_entries_now ?? paper.can_place_paper_orders_now ?? ctrl.bot_can_place);
   // Exits are never blocked by the kill switch — the bot can always manage/close open positions while the paper broker is connected.
   const exitsAllowed = Boolean(paper.exits_allowed ?? (paper.broker_connected ?? paper.paper_broker_connected ?? paper.paper_broker));
@@ -241,15 +262,15 @@ export function CockpitDashboard() {
 
       <div className="grid gap-3 grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
         {[
-          ["Paper Learning", ctrl.paper_learning_on ? "ON" : "OFF", ctrl.paper_learning_on ? "#00FF66" : "#F59E0B"],
-          ["Standard Paper Entries", canSubmitEntries ? "ON" : "PAUSED", canSubmitEntries ? "#00FF66" : "#F59E0B"],
-          ["Paper Exploration", alpha.paper_exploration_allowed ? "READY" : "BLOCKED", alpha.paper_exploration_allowed ? "#00FF66" : "#F59E0B"],
-          ["Exits", exitsAllowed ? "ACTIVE" : "BLOCKED", exitsAllowed ? "#00FF66" : "#EF4444"],
+          ["Paper Learning", tilesUnknown ? "—" : (paper.paper_learning_on ? "ON" : "OFF"), tilesUnknown ? "#64748B" : (paper.paper_learning_on ? "#00FF66" : "#F59E0B")],
+          ["Standard Paper Entries", tilesUnknown ? "—" : (canSubmitEntries ? "ON" : "PAUSED"), tilesUnknown ? "#64748B" : (canSubmitEntries ? "#00FF66" : "#F59E0B")],
+          ["Paper Exploration", tilesUnknown ? "—" : (paperExplorationAllowed ? "READY" : "BLOCKED"), tilesUnknown ? "#64748B" : (paperExplorationAllowed ? "#00FF66" : "#F59E0B")],
+          ["Exits", tilesUnknown ? "—" : (exitsAllowed ? "ACTIVE" : "BLOCKED"), tilesUnknown ? "#64748B" : (exitsAllowed ? "#00FF66" : "#EF4444")],
           ["Real Money", "LOCKED", "#FB7185"],
           [
             "Alpaca",
-            data?.account?.connected || data?.alpaca_connected ? "CONNECTED" : "OFFLINE",
-            data?.account?.connected || data?.alpaca_connected ? "#00FF66" : "#EF4444",
+            tilesUnknown ? "—" : (tileSrc?.account?.connected || tileSrc?.alpaca_connected ? "CONNECTED" : "OFFLINE"),
+            tilesUnknown ? "#64748B" : (tileSrc?.account?.connected || tileSrc?.alpaca_connected ? "#00FF66" : "#EF4444"),
           ],
         ].map(([label, val, color]) => (
           <div key={label} className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
@@ -280,7 +301,7 @@ export function CockpitDashboard() {
           ].map(([label, value, ok]) => (
             <div key={String(label)} className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
               <p className="text-[10px] uppercase text-slate-500">{label}</p>
-              <p className={`mt-1 font-semibold ${ok ? "text-emerald-300" : "text-amber-300"}`}>{String(value)}</p>
+              <p className={`mt-1 font-semibold ${tilesUnknown ? "text-slate-400" : ok ? "text-emerald-300" : "text-amber-300"}`}>{tilesUnknown ? "—" : String(value)}</p>
             </div>
           ))}
         </div>
@@ -310,16 +331,19 @@ export function CockpitDashboard() {
           {[
             ["Real Money", "LOCKED", false],
             ["Standard Paper Entries", canSubmitEntries ? "ALLOWED" : "BLOCKED", canSubmitEntries],
-            ["Paper Exploration", alpha.paper_exploration_allowed ? "ALLOWED" : "BLOCKED", Boolean(alpha.paper_exploration_allowed)],
+            ["Paper Exploration", paperExplorationAllowed ? "ALLOWED" : "BLOCKED", paperExplorationAllowed],
             ["Exit Management", exitsAllowed ? "ACTIVE" : "INACTIVE", exitsAllowed],
-          ].map(([label, value, ok]) => (
+          ].map(([label, value, ok]) => {
+            const isRealMoney = label === "Real Money"; // always-locked safe invariant
+            const neutral = tilesUnknown && !isRealMoney;
+            return (
             <div key={String(label)} className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
               <p className="text-[10px] uppercase text-slate-500">{String(label)}</p>
-              <p className={`mt-1 font-bold ${label === "Real Money" ? "text-rose-300" : ok ? "text-emerald-300" : "text-amber-300"}`}>
-                {String(value)}
+              <p className={`mt-1 font-bold ${isRealMoney ? "text-rose-300" : neutral ? "text-slate-400" : ok ? "text-emerald-300" : "text-amber-300"}`}>
+                {neutral ? "—" : String(value)}
               </p>
             </div>
-          ))}
+          );})}
         </div>
         <div className="mt-3 rounded-lg border border-white/10 bg-white/[0.02] p-3 text-[11px] text-slate-300">
           {alpha.current_exploration_candidate?.symbol ? (

@@ -566,6 +566,37 @@ def _recent_trades_payload(session: Session) -> list[dict[str, Any]]:
     ]
 
 
+def build_mission_control_tiles(session: Session) -> dict[str, Any]:
+    """Lightweight fast-path for the always-visible cockpit status tiles.
+
+    Computes ONLY account + execution-safety (persisted state, a couple of count queries —
+    no broker network call, no heavy alpha/research/universe/memory aggregation), so the
+    tiles stay fast and the cockpit does not fall back to a stale snapshot under contention.
+    Read-only; no trading or live change. Same field shape the cockpit tiles read."""
+    warnings: list[str] = []
+    cfg = _safe("config", warnings, lambda: {"config": ConfigManager(session).get_current()}).get("config") or {}
+    account = _safe("account", warnings, lambda: _account_summary(session))
+    execution = _safe("execution_safety", warnings, lambda: _execution_safety(session, cfg))
+    ks = execution.get("kill_switch") if isinstance(execution.get("kill_switch"), dict) else {}
+    return {
+        "status": "degraded" if warnings else "ok",
+        "schema_version": SCHEMA_VERSION,
+        "generated_at_utc": _now(),
+        "tiles_fast_path": True,
+        "alpaca_connected": account.get("alpaca_connected"),
+        "account": account,
+        "paper_execution": execution,
+        # Only the tile-relevant flag from the (cheap) kill switch — avoids the heavy alpha read model.
+        "alpha_factory": {"paper_exploration_allowed": bool(ks.get("paper_exploration_allowed"))},
+        "live_lock": {
+            "status": execution.get("live_lock_status"),
+            "locked": execution.get("live_trading_locked"),
+        },
+        "broker_mode": execution.get("broker_mode"),
+        "freshness": {"warnings": warnings},
+    }
+
+
 def build_mission_control_status(session: Session) -> dict[str, Any]:
     """Build the canonical fast dashboard payload from persisted state only."""
 
