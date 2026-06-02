@@ -16,6 +16,13 @@ class Settings(BaseSettings):
     alpaca_api_key: str = ""
     alpaca_secret_key: str = ""
     alpaca_base_url: str = "https://paper-api.alpaca.markets"
+    # Stock market-data feed. Basic/free Alpaca plans can query IEX in real time but NOT recent
+    # SIP data — requesting SIP (or omitting the feed) returns 0 bars. Default to IEX; only set
+    # "sip" if the account's market-data subscription supports it.
+    alpaca_stock_feed: str = "iex"
+    # Basic plans cannot query the most-recent ~15 min of stock data; request bars up to
+    # (now - this many minutes) to avoid empty/blocked responses. 0 disables the delay window.
+    alpaca_stock_data_delay_minutes: int = 16
     gemini_api_key: str = ""
     # Model IDs from Google AI — set in Railway/local .env when Google deprecates a version
     gemini_model: str = "gemini-2.0-flash"

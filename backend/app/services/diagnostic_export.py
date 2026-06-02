@@ -1877,6 +1877,13 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             ).MarketDataRefreshService(session, cfg_brain).freshness_report(asset_type="crypto"),
             export_errors,
         ),
+        "stock_data_readiness.json": safe_export_section(
+            "stock_data_readiness.json",
+            lambda: __import__(
+                "app.services.stock_data_readiness_service", fromlist=["stock_data_readiness"]
+            ).stock_data_readiness(session, cfg_brain),
+            export_errors,
+        ),
         "market_data_refresh.json": safe_export_section(
             "market_data_refresh.json",
             lambda: {

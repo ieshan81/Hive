@@ -70,6 +70,18 @@ def stocks_readiness(session: Session = Depends(get_session)):
     }
 
 
+@router.get("/api/stock-data/readiness")
+def stock_data_readiness_endpoint(symbols: str | None = None, session: Session = Depends(get_session)):
+    """READ ONLY: per-symbol stock bar availability + feed/delay truth (no orders, no store).
+
+    Optional ?symbols=SPY,QQQ,AAPL to override the default probe set."""
+    from app.services.stock_data_readiness_service import stock_data_readiness
+
+    cfg = ConfigManager(session).get_current()
+    syms = [s.strip() for s in symbols.split(",")] if symbols else None
+    return stock_data_readiness(session, cfg, symbols=syms)
+
+
 @router.get("/api/stocks/watchlist")
 def stocks_watchlist(session: Session = Depends(get_session)):
     from app.services.universe_sources_service import CURATED_STOCKS
