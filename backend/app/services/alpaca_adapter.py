@@ -67,6 +67,22 @@ def resolve_stock_feed():
     return {"iex": DataFeed.IEX, "sip": DataFeed.SIP}.get(configured_stock_feed_name(), DataFeed.IEX)
 
 
+def stock_max_bar_age_minutes() -> int:
+    """Max age (minutes) for a stock bar to count as fresh during market hours."""
+    try:
+        return max(1, int(getattr(settings, "alpaca_stock_max_bar_age_minutes", 30) or 30))
+    except (TypeError, ValueError):
+        return 30
+
+
+def stock_max_closed_bar_age_minutes() -> int:
+    """Max age (minutes) for a last-session stock bar to count as fresh while the market is closed."""
+    try:
+        return max(1, int(getattr(settings, "alpaca_stock_max_closed_bar_age_minutes", 5760) or 5760))
+    except (TypeError, ValueError):
+        return 5760
+
+
 class AlpacaAdapter:
     def __init__(self, session: Session):
         self.session = session
