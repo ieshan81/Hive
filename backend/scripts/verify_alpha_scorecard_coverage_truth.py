@@ -26,32 +26,62 @@ def main() -> None:
     assert '"blocker": "NO_ALPHA_SCORECARD"' in analysis, "missing scorecard must be an explicit blocker"
     # Normalization prevents a format mismatch from hiding a scorecard.
     assert 'replace("/", "")' in analysis, "symbol normalization required (ETHUSD == ETH/USD)"
+    # Symbol universe must come from real data/research sources, not the (often empty) SymbolCandidate.
+    assert "HistoricalBar" in analysis and "AlphaScorecard" in analysis, "alpha universe must source from HistoricalBar UNION AlphaScorecard"
     # Productivity names the missing-alpha blocker.
     assert "NO_ALPHA_SCORECARD" in prod, "productivity must classify the missing-alpha blocker"
 
-    # Runtime: every row carries an explicit state; no unqualified promotion.
+    from datetime import datetime
+
     from sqlmodel import Session, SQLModel
 
     import app.database  # noqa: F401
-    from app.database import engine
+    from app.database import AlphaScorecard, HistoricalBar, engine
     from app.services.paper_validation_analysis_service import alpha_coverage_matrix
 
     try:
         SQLModel.metadata.create_all(engine)
     except Exception:
         pass
-    m = alpha_coverage_matrix(Session(engine), config={})
-    for field in ("scanned_symbols", "with_scorecard", "no_scorecard", "paper_candidates", "symbols"):
-        assert field in m, f"alpha matrix missing {field}"
-    for r in m.get("symbols", []):
-        assert r.get("scorecard_stage") or r.get("blocker"), f"{r.get('symbol')} has no explicit alpha state"
-        if r.get("verdict") not in ("paper_candidate", "proven"):
-            assert r.get("blocker"), f"{r.get('symbol')} unproven but no blocker"
-    # paper_candidates count never exceeds rows with a qualifying verdict.
-    qualified = sum(1 for r in m.get("symbols", []) if r.get("verdict") in ("paper_candidate", "proven"))
-    assert m["paper_candidates"] == qualified, "paper_candidates must equal qualified rows"
 
-    print(f"verify_alpha_scorecard_coverage_truth: PASS (explicit state per symbol; no unqualified promotion; normalization enforced)")
+    # Empty DB: structurally valid, no false promotion.
+    m0 = alpha_coverage_matrix(Session(engine), config={})
+    for field in ("symbol_source", "scanned_symbols", "with_scorecard", "no_scorecard", "paper_candidates", "symbols"):
+        assert field in m0, f"alpha matrix missing {field}"
+
+    # Seed crypto BARS for two symbols (the real data source) + a scorecard for ONE of them stored in a
+    # DIFFERENT format (BTCUSD vs BTC/USD) to prove sourcing + normalization both work.
+    def _bar(sym):
+        return HistoricalBar(symbol=sym, asset_class="crypto", timeframe="1Hour", timestamp=datetime.utcnow(),
+                             open=1, high=1, low=1, close=1, volume=1, source="test", adjusted=False, synthetic=False)
+
+    def _card(sym, verdict):
+        return AlphaScorecard(symbol=sym, normalized_symbol=sym.replace("/", ""), asset_class="crypto",
+                              strategy_family="momentum", strategy_id="s1", timeframe="1Hour", current_stage=verdict,
+                              sample_size=3, backtest_count=1, walk_forward_count=0, recent_paper_trade_count=0,
+                              recent_paper_pnl=0.0, recent_churn_count=0, data_freshness_status="fresh", bar_count=10,
+                              quote_freshness="fresh", verdict=verdict, autonomous_generated=False, session_sample_size=0)
+
+    with Session(engine) as s:
+        s.add(_bar("BTC/USD")); s.add(_bar("ETH/USD")); s.add(_card("BTCUSD", "unproven")); s.commit()
+
+    m = alpha_coverage_matrix(Session(engine), config={})
+    assert m["scanned_symbols"] >= 2, f"matrix must source from HistoricalBar (got {m['scanned_symbols']}, source={m.get('symbol_source')})"
+    assert "HistoricalBar" in (m.get("symbol_source") or []), "symbol_source must report HistoricalBar"
+    by_sym = {r["symbol"]: r for r in m["symbols"]}
+    btc = by_sym.get("BTC/USD") or {}
+    eth = by_sym.get("ETH/USD") or {}
+    # Normalization: BTC/USD bar matched the BTCUSD scorecard.
+    assert btc.get("has_scorecard") is True, "ETHUSD==ETH/USD normalization must match the scorecard"
+    assert btc.get("blocker") == "UNPROVEN_INSUFFICIENT_EVIDENCE", "unproven verdict must map to an explicit blocker"
+    # ETH/USD has data but no scorecard -> explicit NO_ALPHA_SCORECARD.
+    assert eth.get("has_scorecard") is False and eth.get("blocker") == "NO_ALPHA_SCORECARD"
+    # No unqualified promotion.
+    qualified = sum(1 for r in m["symbols"] if r.get("verdict") in ("paper_candidate", "proven"))
+    assert m["paper_candidates"] == qualified == 0, "no symbol may be promoted without a qualifying verdict"
+
+    print(f"verify_alpha_scorecard_coverage_truth: PASS (sources HistoricalBar+AlphaScorecard={m.get('symbol_source')}; "
+          f"normalization matched BTCUSD->BTC/USD; explicit state per symbol; no unqualified promotion)")
 
 
 if __name__ == "__main__":
