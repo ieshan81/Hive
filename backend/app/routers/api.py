@@ -1302,13 +1302,50 @@ def get_diagnostic_bundle(mode: str | None = None, session: Session = Depends(ge
 
 
 @router.get("/diagnostic-bundle/download")
-def download_diagnostic_bundle(session: Session = Depends(get_session)):
-    from app.services.diagnostic_export import bundle_as_zip_bytes_safe, diagnostic_bundle_filename
+def download_diagnostic_bundle(mode: str | None = None, session: Session = Depends(get_session)):
+    """Default = small current-run 'latest' ZIP. ?mode=forensic for the full historical ZIP."""
+    from app.config import settings
 
-    data = bundle_as_zip_bytes_safe(session)
-    filename = diagnostic_bundle_filename(session)
+    resolved = (mode or getattr(settings, "diagnostic_export_mode", "latest") or "latest").lower()
+    if resolved == "forensic":
+        from app.services.diagnostic_export import bundle_as_zip_bytes_safe, diagnostic_bundle_filename
+
+        data = bundle_as_zip_bytes_safe(session)
+        filename = diagnostic_bundle_filename(session)
+    else:
+        from app.services.diagnostic_bundle_latest import latest_bundle_as_zip, latest_bundle_filename
+
+        data = latest_bundle_as_zip(session)
+        filename = latest_bundle_filename()
     return Response(
         content=data,
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# Alias path some tooling uses (e.g. /api/diagnostics/bundle?mode=latest -o bundle.zip).
+# Returns a ZIP. Default = small current-run latest; ?mode=forensic = full historical; ?format=json
+# returns the latest bundle JSON instead of a ZIP.
+@router.get("/diagnostics/bundle")
+def diagnostics_bundle_alias(mode: str | None = None, format: str | None = None, session: Session = Depends(get_session)):
+    from app.config import settings
+
+    resolved = (mode or getattr(settings, "diagnostic_export_mode", "latest") or "latest").lower()
+    if (format or "").lower() == "json":
+        if resolved == "forensic":
+            from app.services.diagnostic_export import export_diagnostic_bundle_safe
+
+            return export_diagnostic_bundle_safe(session)
+        from app.services.diagnostic_bundle_latest import build_latest_bundle
+
+        return build_latest_bundle(session)
+    if resolved == "forensic":
+        from app.services.diagnostic_export import bundle_as_zip_bytes_safe, diagnostic_bundle_filename
+
+        return Response(content=bundle_as_zip_bytes_safe(session), media_type="application/zip",
+                        headers={"Content-Disposition": f'attachment; filename="{diagnostic_bundle_filename(session)}"'})
+    from app.services.diagnostic_bundle_latest import latest_bundle_as_zip, latest_bundle_filename
+
+    return Response(content=latest_bundle_as_zip(session), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{latest_bundle_filename()}"'})
