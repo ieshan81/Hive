@@ -47,14 +47,17 @@ def main() -> None:
 
     # --- endpoint: AI actor forbidden ---
     from fastapi.testclient import TestClient
+    from app.config import settings
     from app.main import app
 
     client = TestClient(app)
-    r_ai = client.post("/api/alpha-factory/paper-exploration/set-cap", json={"cap_usd": 12, "actor": "ai"})
+    H = {"X-Operator-Token": settings.operator_secret or ""}  # in-process; never printed
+    # AI actor forbidden even with a valid operator token.
+    r_ai = client.post("/api/alpha-factory/paper-exploration/set-cap", json={"cap_usd": 12, "actor": "ai"}, headers=H)
     assert r_ai.status_code == 403, ("AI actor must be forbidden", r_ai.status_code)
-    r_over = client.post("/api/alpha-factory/paper-exploration/set-cap", json={"cap_usd": 50, "operator": "op"})
+    r_over = client.post("/api/alpha-factory/paper-exploration/set-cap", json={"cap_usd": 50, "operator": "op"}, headers=H)
     assert r_over.status_code == 200 and r_over.json()["status"] == "rejected", r_over.text[:200]
-    r_ok = client.post("/api/alpha-factory/paper-exploration/set-cap", json={"cap_usd": 12, "operator": "op"})
+    r_ok = client.post("/api/alpha-factory/paper-exploration/set-cap", json={"cap_usd": 12, "operator": "op"}, headers=H)
     assert r_ok.status_code == 200 and r_ok.json()["status"] == "ok", r_ok.text[:200]
     assert r_ok.json()["exploration_max_notional_usd"] == 12.0, r_ok.json()
     assert r_ok.json()["orders_created"] == 0, r_ok.json()

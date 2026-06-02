@@ -251,12 +251,45 @@ def run_preflight(
         drawdown_pct=account.drawdown_pct if account else 0,
     )
     if not entries_ok and cand.signal_type == "entry":
-        return PreflightResult(
-            False,
-            "KILL_SWITCH_ACTIVE",
-            switches[0].get("message") if switches else "Kill switch active",
-            {**evidence, "switches": switches},
+        # Apply the SAME canonical paper-exploration override the ExecutionCage uses, so a valid
+        # paper-only probe is not re-blocked here after the cage already allowed it. Standard
+        # paper entries still block exactly as before; catastrophic switches still block.
+        from app.trading_cage.paper_exploration_guard import (
+            can_override_kill_switch_for_paper_exploration,
+            is_marked_probe,
         )
+
+        if not is_marked_probe(cand):
+            return PreflightResult(
+                False,
+                "KILL_SWITCH_ACTIVE",
+                switches[0].get("message") if switches else "Kill switch active",
+                {**evidence, "switches": switches},
+            )
+        decision = can_override_kill_switch_for_paper_exploration(switches, cand, config, account)
+        if decision["allowed"]:
+            evidence["paper_exploration_preflight_kill_switch_override"] = {
+                "overridden_switch": decision.get("overridden_switch"),
+                "active_switches": decision.get("active_switches"),
+                "standard_entries_still_blocked": True,
+                "real_money_still_locked": True,
+                "exits_allowed": True,
+            }
+        else:
+            # SPECIFIC reason (CATASTROPHIC_KILL_SWITCH / EXPLORATION_PROBE_INVALID) — never an
+            # opaque KILL_SWITCH_ACTIVE for a marked probe.
+            return PreflightResult(
+                False,
+                decision["denied_reason"],
+                f"Paper exploration preflight override denied: {decision['denied_reason']} "
+                f"({decision.get('catastrophic_switches') or decision.get('probe_blockers')})",
+                {
+                    **evidence,
+                    "switches": switches,
+                    "exploration_override_denied_reason": decision["denied_reason"],
+                    "exploration_override_decision": decision,
+                },
+            )
 
     cd = CooldownService(session, config)
     ok, reason, cd_ev = cd.check_account()
