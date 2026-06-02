@@ -163,18 +163,19 @@ export function CockpitDashboard() {
     data?.shortlist ??
     (data?.scores ?? []).filter((s) => s.entry_allowed)
   );
+  const alpha = data?.alpha_factory ?? {};
   const canSubmitEntries = Boolean(paper.new_entries_allowed ?? paper.bot_can_submit_paper_entries_now ?? paper.can_place_paper_orders_now ?? ctrl.bot_can_place);
   // Exits are never blocked by the kill switch — the bot can always manage/close open positions while the paper broker is connected.
   const exitsAllowed = Boolean(paper.exits_allowed ?? (paper.broker_connected ?? paper.paper_broker_connected ?? paper.paper_broker));
-  const entriesExitsSummary = paper.entries_exits_summary ?? (
-    canSubmitEntries
-      ? "Paper entries and exits are both available (paper-only; live trading locked)."
+  const explorationReady = Boolean(alpha.paper_exploration_allowed);
+  const entriesExitsSummary = canSubmitEntries
+    ? "Standard paper entries available. Real money locked."
+    : explorationReady
+      ? "Standard entries paused by daily drawdown. Paper exploration remains available under the cage."
       : exitsAllowed
-        ? "New paper entries are paused; the bot can still manage and exit open positions."
-        : "Paper broker not connected: neither entries nor exits can submit."
-  );
+        ? "Standard paper entries paused; the bot can still manage and exit open positions. Real money locked."
+        : "Paper broker not connected: neither entries nor exits can submit.";
   const drawdownReason = paper.drawdown_blocker?.message;
-  const alpha = data?.alpha_factory ?? {};
 
   async function checkPaperReadiness() {
     setCheckingReadiness(true);
@@ -200,7 +201,7 @@ export function CockpitDashboard() {
   }
 
   return (
-    <div className="space-y-4 max-w-6xl">
+    <div className="space-y-4 w-full max-w-[1500px] mx-auto px-1 sm:px-2">
       <header>
         <h1 className="text-2xl font-bold text-white flex items-center gap-2">
           <Brain className="h-7 w-7 text-hive-cyan" />
@@ -238,21 +239,13 @@ export function CockpitDashboard() {
         <CockpitAutopilotChip />
       </div>
 
-      <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
+      <div className="grid gap-3 grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
         {[
-          ["Paper learning", ctrl.paper_learning_on ? "ON" : "OFF", ctrl.paper_learning_on ? "#00FF66" : "#F59E0B"],
-          ["New paper entries", canSubmitEntries ? "ON" : "PAUSED", canSubmitEntries ? "#00FF66" : "#F59E0B"],
-          ["Equity", data?.account?.equity != null ? `$${data.account.equity.toFixed(2)}` : "-", "#fff"],
-          [
-            "Crypto pairs",
-            String(data?.watchlist?.crypto?.usd_pairs ?? data?.watchlist?.crypto?.symbols?.length ?? 0),
-            "#00dbe9",
-          ],
-          [
-            "Stocks",
-            String(data?.watchlist?.stocks?.count ?? data?.watchlist?.stocks?.symbols?.length ?? 0),
-            "#00dbe9",
-          ],
+          ["Paper Learning", ctrl.paper_learning_on ? "ON" : "OFF", ctrl.paper_learning_on ? "#00FF66" : "#F59E0B"],
+          ["Standard Paper Entries", canSubmitEntries ? "ON" : "PAUSED", canSubmitEntries ? "#00FF66" : "#F59E0B"],
+          ["Paper Exploration", alpha.paper_exploration_allowed ? "READY" : "BLOCKED", alpha.paper_exploration_allowed ? "#00FF66" : "#F59E0B"],
+          ["Exits", exitsAllowed ? "ACTIVE" : "BLOCKED", exitsAllowed ? "#00FF66" : "#EF4444"],
+          ["Real Money", "LOCKED", "#FB7185"],
           [
             "Alpaca",
             data?.account?.connected || data?.alpaca_connected ? "CONNECTED" : "OFFLINE",

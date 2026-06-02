@@ -35,11 +35,14 @@ def main() -> None:
     from fastapi.testclient import TestClient
     from app.main import app
 
+    from app.config import settings
+
     client = TestClient(app)
     body = {"operator": "verifier", "dry_run": False}
+    headers = {"X-Operator-Token": settings.operator_secret or ""}  # in-process; never printed
 
     def post():
-        return client.post("/api/alpha-factory/run-exploration", json=body)
+        return client.post("/api/alpha-factory/run-exploration", json=body, headers=headers)
 
     # A) quote fetch raises -> structured blocked, HTTP 200.
     alpaca_mod.AlpacaAdapter.get_quote = lambda self, *a, **k: (_ for _ in ()).throw(RuntimeError("quote boom"))  # type: ignore[assignment]
