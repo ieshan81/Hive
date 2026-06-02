@@ -231,6 +231,23 @@ def on_startup():
                 logger.info("Paper exploration cap migrated to $12 (paper-only; live untouched).")
     except Exception as exc:
         logger.warning("Paper exploration cap migration skipped: %s", exc)
+    # Canonical closed-trade outcome backfill: reconcile any incomplete paper_experiment_outcomes
+    # from the trade ledger + OrderRecord so trades_history/outcomes/dashboard agree. Read/write
+    # DB cleanup only — never submits an order. Idempotent (no duplicate outcome rows).
+    try:
+        from app.database import engine as db_engine
+        from app.services.closed_trade_outcome_service import ClosedTradeOutcomeService
+
+        with Session(db_engine) as session:
+            cout = ClosedTradeOutcomeService(session).backfill(operator="startup")
+            session.commit()
+            if cout.get("closed_trades_seen"):
+                logger.info(
+                    "Closed-trade outcome backfill: seen=%s created=%s updated=%s",
+                    cout.get("closed_trades_seen"), cout.get("outcomes_created"), cout.get("outcomes_updated"),
+                )
+    except Exception as exc:
+        logger.warning("Closed-trade outcome backfill skipped: %s", exc)
     if not settings.alpaca_configured:
         logger.warning("ALPACA_API_KEY / ALPACA_SECRET_KEY not set — broker sync unavailable")
     if not settings.gemini_configured:

@@ -1560,6 +1560,13 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
                 scheduler_last_tick_at=scheduler_last_tick_at,
             ),
             "paper_experiment_outcomes.json": [_serialize_row(r) for r in session.exec(select(PaperExperimentOutcome)).all()],
+            "closed_trade_outcomes.json": safe_export_section(
+                "closed_trade_outcomes.json",
+                lambda: __import__(
+                    "app.services.closed_trade_outcome_service", fromlist=["ClosedTradeOutcomeService"]
+                ).ClosedTradeOutcomeService(session).canonical_export(),
+                export_errors,
+            ),
             "paper_experiment_memories.json": pl.list_memories(40),
             "memory_graph_clusters.json": graph.get("meta", {}),
             "memory_validation_mismatches.json": mph,
