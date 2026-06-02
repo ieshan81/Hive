@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     api_port: int = 8000
     cors_origins: str = "http://localhost:3000"
 
+    # Diagnostic bundle efficiency / archival. Default export is the fast "latest" bundle
+    # (current run only, capped, labeled); "forensic" returns the full historical bundle.
+    diagnostic_export_mode: str = "latest"
+    diagnostic_keep_latest_bundles: int = 5
+    diagnostic_archive_after_hours: int = 12
+    diagnostic_max_default_bundle_mb: int = 10
+
     def resolve_database_url(self) -> str:
         """Resolve relative sqlite paths against backend root (cwd-independent)."""
         url = self.database_url
