@@ -37,6 +37,15 @@ def get_mission_control_status(session: Session = Depends(get_session)):
     return build_mission_control_status(session)
 
 
+@router.get("/mission-control/tiles")
+def get_mission_control_tiles(session: Session = Depends(get_session)):
+    from app.services.mission_control_read_model import build_mission_control_tiles
+
+    # READ ONLY fast-path: only the cockpit status tiles (account + execution safety),
+    # skipping the heavy aggregations so the tiles stay fast under contention.
+    return build_mission_control_tiles(session)
+
+
 @router.get("/watchlist")
 def get_watchlist(session: Session = Depends(get_session)):
     from app.services.mission_control_read_model import build_mission_control_status
