@@ -73,6 +73,10 @@ class HiveEngineMapService:
             mem = __import__("app.services.memory_governance_service", fromlist=["MemoryGovernanceService"]).MemoryGovernanceService(s).archive_noisy_active_memory(dry_run=True)
         except Exception:
             mem = {}
+        try:
+            heartbeat = __import__("app.services.heartbeat_service", fromlist=["HeartbeatService"]).HeartbeatService(s, self.config).status()
+        except Exception:
+            heartbeat = {}
 
         scorecards = _count(s, AlphaScorecard)
         candidates = _count(s, SymbolCandidate)
@@ -136,6 +140,16 @@ class HiveEngineMapService:
             "generated_at": _now(),
             "orders_authority": "cage_only",
             "paper_live_separation": separation,
+            "heartbeat": {
+                "model": "two_loop",
+                "fast_loop": "manages exits + quotes + risk every tick; never forces entries",
+                "decision_loop_interval_ticks": heartbeat.get("decision_loop_interval_ticks"),
+                "is_decision_tick": heartbeat.get("is_decision_tick"),
+                "force_entries_every_candle": heartbeat.get("force_entries_every_candle", False),
+                "require_backtest_evidence_for_entry": heartbeat.get("require_backtest_evidence_for_entry"),
+                "has_backtest_evidence": heartbeat.get("has_backtest_evidence"),
+                "entry_gate_blockers": heartbeat.get("entry_gate_blockers", []),
+            },
             "nodes": nodes,
             "latest_trade_lifecycle": None if not latest_outcome else {
                 "symbol": latest_outcome.symbol,

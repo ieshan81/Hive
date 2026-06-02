@@ -334,6 +334,15 @@ class FastCryptoTrainingLoop:
             blockers.append("exit_monitor_unavailable")
         if stale_reviews:
             blockers.append("stale_open_position_blocks_entry")
+        # Two-loop heartbeat: exits were already managed above (every tick). The fast heartbeat
+        # NEVER forces a new entry — new entries are only considered on the slower decision-loop
+        # cadence and only with backtest evidence. These blockers are ADDITIVE (safety-only).
+        try:
+            from app.services.heartbeat_service import HeartbeatService
+
+            blockers.extend(HeartbeatService(self.session, self.config).entry_gate_blockers())
+        except Exception:
+            pass
         open_positions = reviews.get("reviews") or []
         open_position_warnings = [
             {
