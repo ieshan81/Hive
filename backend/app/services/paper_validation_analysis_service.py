@@ -230,10 +230,13 @@ def data_freshness_matrix(session: Session, config: Optional[dict] = None, *, ma
 
 def alpha_coverage_matrix(session: Session, config: Optional[dict] = None, *, max_symbols: int = 60) -> dict[str, Any]:
     """Per scanned crypto symbol: alpha scorecard state (no_scorecard / unproven / rejected / paper_candidate)."""
-    from app.database import AlphaScorecard, SymbolCandidate
+    from app.database import AlphaScorecard, HistoricalBar, SymbolCandidate
 
     def _norm(s: str) -> str:
         return str(s or "").upper().replace("/", "")
+
+    def _is_crypto(sym: str, asset_class: str = "") -> bool:
+        return "/" in str(sym) or str(asset_class or "").lower() == "crypto"
 
     cards: dict[str, Any] = {}
     try:
@@ -241,11 +244,41 @@ def alpha_coverage_matrix(session: Session, config: Optional[dict] = None, *, ma
             cards.setdefault(_norm(sc.symbol), sc)
     except Exception:
         cards = {}
+
+    # Symbol universe = crypto symbols we actually have DATA for (HistoricalBar) UNION symbols we have
+    # RESEARCH for (AlphaScorecard). SymbolCandidate is a last-resort fallback (frequently empty in prod,
+    # which previously made this matrix falsely report zero coverage).
+    sources_used: list[str] = []
+    ordered: dict[str, str] = {}  # _norm -> display symbol (first-seen wins)
     try:
-        scanned = [c.symbol for c in session.exec(select(SymbolCandidate).limit(max_symbols)).all()]
+        for row in session.exec(
+            select(HistoricalBar.symbol, HistoricalBar.asset_class).group_by(HistoricalBar.symbol, HistoricalBar.asset_class)
+        ).all():
+            sym, ac = row[0], (row[1] if len(row) > 1 else None)
+            if _is_crypto(sym, ac) and _norm(sym) not in ordered:
+                ordered[_norm(sym)] = sym
+        if ordered:
+            sources_used.append("HistoricalBar")
     except Exception:
-        scanned = []
-    scanned = [s for s in dict.fromkeys(scanned) if "/" in str(s)][:max_symbols]
+        pass
+    try:
+        for sc in session.exec(select(AlphaScorecard)).all():
+            if _is_crypto(sc.symbol) and _norm(sc.symbol) not in ordered:
+                ordered[_norm(sc.symbol)] = sc.symbol
+        if cards:
+            sources_used.append("AlphaScorecard")
+    except Exception:
+        pass
+    if not ordered:  # fallback
+        try:
+            for c in session.exec(select(SymbolCandidate).limit(max_symbols)).all():
+                if _is_crypto(c.symbol) and _norm(c.symbol) not in ordered:
+                    ordered[_norm(c.symbol)] = c.symbol
+            if ordered:
+                sources_used.append("SymbolCandidate")
+        except Exception:
+            pass
+    scanned = list(ordered.values())[:max_symbols]
 
     rows = []
     PAPER_OK = ("paper_candidate", "proven")
@@ -270,13 +303,17 @@ def alpha_coverage_matrix(session: Session, config: Optional[dict] = None, *, ma
         })
     return {
         "generated_at": _iso(_now()),
+        "symbol_source": sources_used or ["none"],
         "scanned_symbols": len(scanned),
         "with_scorecard": sum(1 for r in rows if r["has_scorecard"]),
         "no_scorecard": sum(1 for r in rows if not r["has_scorecard"]),
+        "unproven": sum(1 for r in rows if r.get("blocker") == "UNPROVEN_INSUFFICIENT_EVIDENCE"),
+        "rejected": sum(1 for r in rows if r.get("blocker") == "REJECTED"),
         "paper_candidates": sum(1 for r in rows if r.get("verdict") in PAPER_OK),
         "symbols": rows,
-        "note": "Symbol normalization (ETHUSD == ETH/USD) prevents a format mismatch from hiding a scorecard. "
-                "No symbol is promoted without deterministic criteria.",
+        "note": "Symbol universe = crypto symbols with DATA (HistoricalBar) UNION symbols with RESEARCH "
+                "(AlphaScorecard); normalization (ETHUSD == ETH/USD) prevents a format mismatch from hiding "
+                "a scorecard. No symbol is promoted without deterministic criteria.",
     }
 
 
