@@ -38,17 +38,20 @@ def main() -> None:
     r_plain = _preflight(session, cfg, plain)
     assert r_plain.block_reason_code == "KILL_SWITCH_ACTIVE", r_plain.block_reason_code
 
-    # Valid marked probe under daily drawdown -> passes the kill-switch stage (blocks later at
-    # SIGNAL_NOT_SELECTED), and carries the override evidence.
+    # Valid marked probe under daily drawdown -> passes BOTH the kill-switch stage AND the
+    # portfolio gate (operator-triggered, not portfolio-selected), preserves its EXPLORATION
+    # client_order_id, and carries the override evidence. It only blocks later (STALE_QUOTE here,
+    # because the test passes an empty quote; a real quote in prod passes this gate).
     probe = svc.build_probe_candidate(nm(), price=70000.0)
     r_probe = _preflight(session, cfg, probe)
-    assert r_probe.block_reason_code != "KILL_SWITCH_ACTIVE", r_probe.block_reason_code
-    assert r_probe.block_reason_code == "SIGNAL_NOT_SELECTED", r_probe.block_reason_code  # next gate, not kill switch
+    assert r_probe.block_reason_code not in ("KILL_SWITCH_ACTIVE", "SIGNAL_NOT_SELECTED"), r_probe.block_reason_code
     ev = (r_probe.evidence or {}).get("paper_exploration_preflight_kill_switch_override")
     assert ev, ("override evidence missing", r_probe.evidence)
     assert ev["standard_entries_still_blocked"] is True, ev
     assert ev["real_money_still_locked"] is True, ev
     assert ev["exits_allowed"] is True, ev
+    # EXPLORATION client_order_id preserved (never rebuilt into a normal id).
+    assert str((r_probe.evidence or {}).get("client_order_id") or "").startswith("EXPLORATION"), r_probe.evidence
     print("verify_paper_exploration_preflight_allows_daily_drawdown: PASS")
 
 
