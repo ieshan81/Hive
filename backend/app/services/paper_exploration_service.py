@@ -29,6 +29,10 @@ from app.services.kill_switch_service import KillSwitchService
 EXPLORATION_STAGE = "paper_exploration_candidate"
 EXPLORATION_COID_TAG = "EXPLORATION"
 
+# A probe counts as submitted ONLY when PaperExecutionService reports a real broker submit/fill.
+# PaperExecutionService emits paper_order_* statuses (never the literal "submitted").
+SUBMITTED_STATUSES = ("paper_order_submitted", "paper_order_filled", "paper_order_partially_filled")
+
 
 def _norm(symbol: str) -> str:
     return str(symbol or "").upper().replace("/", "").replace("-", "").strip()
@@ -330,22 +334,40 @@ class PaperExplorationService:
             return {"status": "no_candidate", "submitted": False, "orders_created": 0,
                     "block_reason": "no_eligible_near_miss", "permission": perm}
 
+        # --- stage: quote_fetch (live price) ---
         px = price
         if px is None and not dry_run:
-            from app.services.alpaca_adapter import AlpacaAdapter
-            from app.services.crypto_symbols import normalize_crypto_symbol
+            try:
+                from app.services.alpaca_adapter import AlpacaAdapter, normalize_crypto_symbol
 
-            q = AlpacaAdapter(self.session).get_quote(normalize_crypto_symbol(str(nm["symbol"])), "crypto") or {}
-            px = q.get("mid") or q.get("ask")
+                q = AlpacaAdapter(self.session).get_quote(normalize_crypto_symbol(str(nm["symbol"])), "crypto") or {}
+                px = q.get("mid") or q.get("ask")
+            except Exception as exc:  # never 500 — structured blocked response
+                return self._submit_error(
+                    stage="quote_fetch", exc=exc, perm=perm, nm=nm, status="blocked",
+                    block_reason="quote_fetch_failed",
+                    human="Paper exploration order was not submitted. Live quote fetch failed.",
+                )
         if not px:
             if dry_run:
                 px = 1.0  # planning only — no order is placed in dry_run
             else:
                 return {"status": "blocked", "submitted": False, "orders_created": 0,
-                        "block_reason": "no_quote", "permission": perm}
+                        "block_reason": "no_quote", "error_stage": "quote_fetch",
+                        "safe_human_message": "Paper exploration order was not submitted. No usable quote price.",
+                        "permission": perm}
 
-        approved = self.build_probe_candidate(nm, price=float(px))
-        evidence = self._evidence(nm, approved)
+        # --- stage: build_probe_candidate ---
+        try:
+            approved = self.build_probe_candidate(nm, price=float(px))
+            evidence = self._evidence(nm, approved)
+        except Exception as exc:
+            return self._submit_error(
+                stage="build_probe_candidate", exc=exc, perm=perm, nm=nm, status="error",
+                block_reason="build_probe_failed",
+                human="Paper exploration order was not submitted. Candidate build failed.",
+            )
+
         if dry_run:
             return {"status": "planned", "submitted": False, "orders_created": 0,
                     "planned_candidate": {"symbol": approved.symbol, "side": approved.side,
@@ -354,26 +376,112 @@ class PaperExplorationService:
                                           "client_order_id": (approved.meta or {}).get("client_order_id")},
                     "evidence": evidence, "permission": perm}
 
-        # Real submission ONLY through the official paper execution path (cage-gated, paper-only).
-        from app.services.alpaca_adapter import AlpacaAdapter
-        from app.services.paper_execution_service import PaperExecutionService
+        # --- stage: account/positions (soft — a missing account is not fatal; the cage gates) ---
+        account = None
+        try:
+            from app.services.alpaca_adapter import AlpacaAdapter
 
-        alpaca = AlpacaAdapter(self.session)
-        account = alpaca.get_account() if hasattr(alpaca, "get_account") else None
-        positions = list(self.session.exec(select(PositionSnapshot).where(PositionSnapshot.qty > 0)).all())
+            account = AlpacaAdapter(self.session).sync_account_cached()
+        except Exception:
+            account = None
+        try:
+            positions = list(self.session.exec(select(PositionSnapshot).where(PositionSnapshot.qty > 0)).all())
+        except Exception:
+            positions = []
         open_syms = {p.symbol for p in positions}
-        log = PaperExecutionService(self.session, self.config).submit_candidate(
-            approved, cycle_run_id=f"exploration_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
-            portfolio_decision=None, account=account, positions=positions, open_order_symbols=open_syms,
-        )
-        submitted = getattr(log, "status", None) == "submitted"
-        self.factory._audit("paper_exploration_order", operator, {**evidence, "submitted": submitted,
-                                                                   "reject_reason": getattr(log, "reject_reason", None)})
-        return {"status": "submitted" if submitted else "blocked", "submitted": submitted,
-                "orders_created": 1 if submitted else 0,
-                "execution_log_id": getattr(log, "id", None),
-                "block_reason": None if submitted else getattr(log, "reject_reason", None),
-                "evidence": evidence, "permission": perm}
+
+        # --- stage: paper_execution_submit (official cage-gated path ONLY) ---
+        try:
+            from app.services.paper_execution_service import PaperExecutionService
+
+            log = PaperExecutionService(self.session, self.config).submit_candidate(
+                approved, cycle_run_id=f"exploration_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
+                portfolio_decision=None, account=account, positions=positions, open_order_symbols=open_syms,
+            )
+        except Exception as exc:
+            return self._submit_error(
+                stage="paper_execution_submit", exc=exc, perm=perm, nm=nm, approved=approved, evidence=evidence,
+                status="error", block_reason="paper_execution_exception",
+                human="Paper exploration order was not submitted. Server caught execution exception.",
+            )
+
+        log_status = getattr(log, "status", None)
+        # Submitted ONLY when the broker actually accepted/filled — never faked.
+        submitted = log_status in SUBMITTED_STATUSES
+
+        # --- stage: audit_write + commit (best-effort, never fatal) ---
+        try:
+            self.factory._audit("paper_exploration_order", operator, {
+                **evidence, "submitted": submitted, "execution_status": log_status,
+                "reject_reason": getattr(log, "reject_reason", None),
+            })
+            self.session.commit()
+        except Exception:
+            try:
+                self.session.rollback()
+            except Exception:
+                pass
+
+        return {
+            "status": "submitted" if submitted else "blocked",
+            "submitted": submitted,
+            "orders_created": 1 if submitted else 0,
+            "execution_status": log_status,
+            "execution_log_id": getattr(log, "id", None),
+            "block_reason": None if submitted else (getattr(log, "reject_reason", None) or log_status),
+            "error_stage": None,
+            "safe_human_message": (
+                "Tiny paper exploration probe submitted through the cage."
+                if submitted
+                else "Paper exploration order was not submitted; the cage/broker did not accept it."
+            ),
+            "evidence": evidence,
+            "permission": perm,
+        }
+
+    def _submit_error(self, *, stage: str, exc: Exception, perm: dict[str, Any], status: str,
+                      block_reason: str, human: str, nm: Optional[dict[str, Any]] = None,
+                      approved: Any = None, evidence: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """Build a structured (never-500) error response and write a debug-safe audit row.
+        Rolls back first so no partial/half-submitted order state is persisted (no fake submit)."""
+        try:
+            self.session.rollback()  # clear any partial flush from the failed stage
+        except Exception:
+            pass
+        exception_type = type(exc).__name__
+        coid = (approved.meta or {}).get("client_order_id") if approved is not None else None
+        try:
+            self.factory._audit("paper_exploration_submit_error", "paper_exploration", {
+                "error_stage": stage,
+                "exception_type": exception_type,
+                "message": str(exc)[:300],  # no secrets — message text only, truncated
+                "symbol": (nm or {}).get("symbol"),
+                "strategy_id": (nm or {}).get("strategy_id"),
+                "client_order_id": coid,
+                "dry_run": False,
+            })
+            self.session.commit()
+        except Exception:
+            try:
+                self.session.rollback()
+            except Exception:
+                pass
+        out: dict[str, Any] = {
+            "status": status,
+            "submitted": False,
+            "orders_created": 0,
+            "block_reason": block_reason,
+            "error_stage": stage,
+            "exception_type": exception_type,
+            "safe_human_message": human,
+            "permission": perm,
+        }
+        if nm is not None:
+            out["candidate"] = {"symbol": nm.get("symbol"), "strategy_id": nm.get("strategy_id"),
+                                "best_session": nm.get("best_session")}
+        if evidence is not None:
+            out["evidence"] = evidence
+        return out
 
     def run_exploration_cycle(self, *, operator: str = "operator", dry_run: bool = False) -> dict[str, Any]:
         """Operator-triggered exploration tick. Submits at most one tiny probe; never live."""
