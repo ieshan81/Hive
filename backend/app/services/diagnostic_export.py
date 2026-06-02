@@ -674,6 +674,10 @@ def _research_bundle_meta(
 
 
 def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
+    # WARNING: forensic export is NOT read-pure — it commits + expires the session before building
+    # (to flush pending writes and re-read fresh ORM state). It is therefore explicit-only
+    # (?mode=forensic) and must NOT be used as the default during active cycles. The default
+    # diagnostic bundle is the read-pure latest bundle (diagnostic_bundle_latest.build_latest_bundle).
     session.commit()
     session.expire_all()
 
