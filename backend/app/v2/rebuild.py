@@ -70,11 +70,33 @@ def apply_v2_profile(session: Session, operator: str = "v2_rebuild") -> dict[str
     return {"status": "ok", "config_version": active.version, "proposal_id": proposal.id}
 
 
-def full_rebuild(session: Session, operator: str = "v2_rebuild") -> dict[str, Any]:
+def full_rebuild(
+    session: Session,
+    operator: str = "v2_rebuild",
+    *,
+    confirmation_phrase: str = "",
+    validation_run_override_reason: str = "",
+    engines_stopped_ack: bool = False,
+) -> dict[str, Any]:
     """
     Hard nuke → aggressive profile → seed strategies → refresh major bars only →
     enable paper → run agent cycles (2x for first momentum).
+
+    Guarded: refuses (and never reaches the destructive hard_nuke) unless the confirmation phrase
+    is given, and — during an active validation run — a valid override reason + engines-stopped ack.
     """
+    from app.services.rebuild_guard import evaluate_rebuild_request, rebuild_refusal_response
+
+    guard = evaluate_rebuild_request(
+        session,
+        operator=operator,
+        confirmation_phrase=confirmation_phrase,
+        validation_run_override_reason=validation_run_override_reason,
+        engines_stopped_ack=engines_stopped_ack,
+    )
+    if not guard.get("allowed"):
+        return rebuild_refusal_response(guard)  # NOTE: hard_nuke / nuke_everything is NOT reached.
+
     started = datetime.utcnow().isoformat() + "Z"
     steps: list[dict[str, Any]] = []
 
