@@ -7,6 +7,7 @@ from sqlmodel import Session
 
 from app.database import get_session
 from app.services.technical_candle_analysis_service import TechnicalCandleAnalysisService
+from app.services.operator_auth import require_operator_token
 
 router = APIRouter(prefix="/api/candle-lab", tags=["candle-lab"])
 
@@ -17,7 +18,7 @@ def candle_lab_status(session: Session = Depends(get_session)):
 
 
 @router.post("/analyze")
-def candle_lab_analyze(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def candle_lab_analyze(body: dict = Body(default={}), session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     symbol = str(body.get("symbol") or "DOGE/USD")
     tf = str(body.get("timeframe") or "5Min")
     return TechnicalCandleAnalysisService(session).analyze(symbol, timeframe=tf)

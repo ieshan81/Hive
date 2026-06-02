@@ -7,6 +7,7 @@ from sqlmodel import Session
 
 from app.database import get_session
 from app.services import symbol_identity_service
+from app.services.operator_auth import require_operator_token
 
 router = APIRouter(prefix="/api/symbols", tags=["symbol-identity"])
 
@@ -31,7 +32,7 @@ def identity_for(symbol: str, allow_network: bool = Query(default=True)):
 
 
 @router.post("/identity/batch")
-def identity_batch(symbols: list[str] = Body(default=[]), allow_network: bool = Query(default=True)):
+def identity_batch(symbols: list[str] = Body(default=[]), allow_network: bool = Query(default=True), _op_guard: str = Depends(require_operator_token)):
     return {
         "status": "ok",
         "count": len(symbols),
@@ -40,7 +41,7 @@ def identity_batch(symbols: list[str] = Body(default=[]), allow_network: bool = 
 
 
 @router.post("/identity/refresh")
-def identity_refresh(symbols: list[str] | None = Body(default=None)):
+def identity_refresh(symbols: list[str] | None = Body(default=None), _op_guard: str = Depends(require_operator_token)):
     return symbol_identity_service.refresh_cache(symbols)
 
 

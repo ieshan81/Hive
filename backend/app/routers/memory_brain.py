@@ -87,7 +87,7 @@ def memory_quality(session: Session = Depends(get_session)):
 
 
 @router.post("/promote-pass")
-def memory_promote_pass(session: Session = Depends(get_session)):
+def memory_promote_pass(session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     """Single promotion sweep across all active memories."""
     from datetime import datetime
     from app.services.memory_quality_service import MemoryQualityService
@@ -137,7 +137,7 @@ def memory_latest(limit: int = 25, session: Session = Depends(get_session)):
 
 
 @router.post("/consolidation/run")
-def consolidation_run(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def consolidation_run(body: dict = Body(default={}), session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     cfg = ConfigManager(session).get_current()
     out = MemoryConsolidationService(session, cfg).run(force=bool(body.get("force")))
     session.commit()
@@ -145,7 +145,7 @@ def consolidation_run(body: dict = Body(default={}), session: Session = Depends(
 
 
 @router.post("/consolidation/archive-raw")
-def consolidation_archive_raw(session: Session = Depends(get_session)):
+def consolidation_archive_raw(session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     cfg = ConfigManager(session).get_current()
     out = MemoryConsolidationService(session, cfg).archive_raw_duplicates()
     session.commit()
@@ -165,7 +165,7 @@ def list_ai_learning(session: Session = Depends(get_session)):
 
 
 @router.post("/ai-learning/generate")
-def generate_ai_learning(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def generate_ai_learning(body: dict = Body(default={}), session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     cfg = ConfigManager(session).get_current()
     out = AILearningMemoryService(session, cfg).generate(force=bool(body.get("force")))
     session.commit()
@@ -173,7 +173,7 @@ def generate_ai_learning(body: dict = Body(default={}), session: Session = Depen
 
 
 @router.post("/graph/rebuild")
-def graph_rebuild(body: dict = Body(default={}), session: Session = Depends(get_session)):
+def graph_rebuild(body: dict = Body(default={}), session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     cfg = ConfigManager(session).get_current()
     show_raw = bool(body.get("show_raw"))
     graph = HiveBrainGraphService(session, cfg).build(show_raw=show_raw)

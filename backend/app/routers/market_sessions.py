@@ -116,7 +116,7 @@ def prepare_market_open(
 
 
 @router.post("/api/scanners/run-market-open-check")
-def run_market_open_check(session: Session = Depends(get_session)):
+def run_market_open_check(session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     from app.services import scanner_stack
 
     return scanner_stack.run_all(session, symbols=["SPY", "QQQ", "AAPL", "MSFT", "NVDA"])
