@@ -574,7 +574,7 @@ def build_mission_control_tiles(session: Session) -> dict[str, Any]:
     tiles stay fast and the cockpit does not fall back to a stale snapshot under contention.
     Read-only; no trading or live change. Same field shape the cockpit tiles read."""
     warnings: list[str] = []
-    cfg = _safe("config", warnings, lambda: {"config": ConfigManager(session).get_current()}).get("config") or {}
+    cfg = _safe("config", warnings, lambda: {"config": ConfigManager(session).get_current_readonly()}).get("config") or {}
     account = _safe("account", warnings, lambda: _account_summary(session))
     execution = _safe("execution_safety", warnings, lambda: _execution_safety(session, cfg))
     ks = execution.get("kill_switch") if isinstance(execution.get("kill_switch"), dict) else {}
@@ -601,7 +601,7 @@ def build_mission_control_status(session: Session) -> dict[str, Any]:
     """Build the canonical fast dashboard payload from persisted state only."""
 
     warnings: list[str] = []
-    cfg = _safe("config", warnings, lambda: {"config": ConfigManager(session).get_current()}).get("config") or {}
+    cfg = _safe("config", warnings, lambda: {"config": ConfigManager(session).get_current_readonly()}).get("config") or {}
     generated = _now()
     account = _safe("account", warnings, lambda: _account_summary(session))
     execution = _safe("execution_safety", warnings, lambda: _execution_safety(session, cfg))

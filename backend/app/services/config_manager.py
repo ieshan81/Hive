@@ -169,6 +169,32 @@ class ConfigManager:
             return _apply_locked_caps(row.config_json)
         return _apply_locked_caps(merged)
 
+    def get_current_readonly(self) -> dict:
+        """PURE READ of the effective config — same result as get_current() but NEVER migrates or
+        writes/commits. Use on read-only/status/diagnostic paths so a read cannot mutate config.
+        Locked caps are still applied (live stays false / paper true); explicit migration happens
+        only via get_current()/_activate()."""
+        row = self.session.get(ConfigCurrent, 1)
+        if row is None:
+            return _apply_locked_caps(_deep_merge(DEFAULT_CONFIG, {}))
+        row_config = row.config_json or {}
+        merged = _deep_merge(DEFAULT_CONFIG, row_config)
+        # Apply migration patches IN MEMORY only (never persisted here).
+        row_version = int(row_config.get("config_version", 0) or 0)
+        if row_version < DEFAULT_CONFIG.get("config_version", 1):
+            if row_version < 4:
+                merged = _deep_merge(merged, _dynamic_formula_paper_patch())
+            if row_version < 7:
+                merged = _deep_merge(merged, _quick_scalp_structure_patch())
+            merged["config_version"] = DEFAULT_CONFIG["config_version"]
+        uni = merged.get("universe") or {}
+        if str(uni.get("mode", "")).lower() in ("curated_watchlist", "curated", ""):
+            merged = _deep_merge(
+                merged,
+                {"universe": DEFAULT_CONFIG.get("universe"), "exploration": DEFAULT_CONFIG.get("exploration")},
+            )
+        return _apply_locked_caps(merged)
+
     def _activate(self, config: dict, changed_by: str, reason: str) -> ConfigCurrent:
         safe = _apply_locked_caps(config)
         current = self.session.get(ConfigCurrent, 1)

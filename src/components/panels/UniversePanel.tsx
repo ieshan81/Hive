@@ -92,10 +92,12 @@ function dedupeBySymbol<T extends { symbol: string; trade_quality_score?: number
 export function UniversePanel() {
   const [symbols, setSymbols] = useState<SymbolRow[]>([]);
   const [eligibleTrades, setEligibleTrades] = useState<EligibleRow[]>([]);
-  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [counts, setCounts] = useState<Record<string, number | null>>({});
   const [blockBreakdown, setBlockBreakdown] = useState<Record<string, number>>({});
   const [sources, setSources] = useState<Record<string, unknown> | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
+  // True when the fast summary could not be confirmed -> render unknown/grey, never a false zero.
+  const [unknownTruth, setUnknownTruth] = useState(false);
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("all");
   const [loading, setLoading] = useState(true);
 
@@ -106,74 +108,72 @@ export function UniversePanel() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const timeoutMs = 5000;
-    const [statusRes, eligibleRes, radarRes] = await Promise.all([
-      apiGet<UniverseStatusPayload>("/api/universe/status", { timeoutMs }),
-      apiGet<Record<string, unknown>>("/api/universe/eligible-trades", { timeoutMs }),
-      apiGet<Record<string, unknown>>("/api/universe/radar", { timeoutMs }),
-    ]);
-
-    const statusData = statusRes.ok ? statusRes.data : null;
-    const eligibleData = eligibleRes.ok ? eligibleRes.data : null;
-    const radarData = radarRes.ok ? radarRes.data : null;
-
-    const statusSymbols = dedupeBySymbol([
-      ...(statusData?.groups?.crypto_universe ?? []),
-      ...(statusData?.groups?.stock_universe ?? []),
-    ].filter((s) => s.symbol));
-
-    const eligibleRows = dedupeBySymbol(
-      ((eligibleData?.eligible_trades ?? eligibleData?.shortlist ?? []) as EligibleRow[])
-    );
-    setEligibleTrades(eligibleRows);
-
-    const statusSourceCounts = statusData?.sources_summary?.source_counts ?? {};
-    const radarFunnel = (radarData?.funnel ?? (radarData?.pipeline as Record<string, unknown>)?.funnel ?? {}) as Record<
-      string,
-      number
-    >;
-    const radarCounts = (radarData?.counts ?? {}) as Record<string, number>;
-    const usdPairs = Math.max(
-      Number(statusSourceCounts.alpaca_crypto_usd_pairs ?? 0),
-      Number(radarFunnel.available ?? radarCounts.available_usd_pairs ?? 0),
-      statusSymbols.length
-    );
-    const toTrade = eligibleRows.length;
-
-    setSymbols(statusSymbols.length > 0 ? statusSymbols : eligibleRows);
-    setBlockBreakdown(
-      (eligibleData?.no_trade_reason_breakdown as Record<string, number>) ??
-        (eligibleData?.block_breakdown as Record<string, number>) ??
-        (radarData?.block_breakdown as Record<string, number>) ??
-        {}
-    );
-    setCounts({
-      available: usdPairs || statusSymbols.length,
-      cached: Number(radarFunnel.cached ?? radarCounts.cached_usd_pairs ?? usdPairs),
-      fresh: Number(radarFunnel.fresh ?? radarCounts.fresh ?? 0),
-      eligible: Math.max(Number(radarFunnel.eligible ?? radarCounts.eligible ?? 0), toTrade),
-      to_trade: toTrade,
-      displayed: statusSymbols.length || eligibleRows.length,
-    });
-    setSources({
-      source_counts: {
-        alpaca_crypto_assets_api: Number(statusSourceCounts.alpaca_crypto_assets_api ?? usdPairs),
-        alpaca_crypto_usd_pairs: usdPairs,
-        displayed_pairs: Number(statusSourceCounts.display_universe_total ?? statusSymbols.length),
-      },
-      alpaca_crypto_api_called: Boolean(statusData?.sources_summary?.alpaca_crypto_api_called),
-      last_refresh_at: (radarData?.generated_at_utc as string) ?? statusData?.sources_summary?.last_refresh_at,
-    });
-    setSummary(
-      String(
-        eligibleData?.answer ??
-          (toTrade > 0
-            ? `Full radar scan — ${toTrade} symbol${toTrade === 1 ? "" : "s"} eligible; agent trades all with pattern TP/SL bands each cycle.`
-            : eligibleData?.why_zero_eligible ??
-              "Radar scanned universe — no symbols passed gates yet. Blockers listed below.")
-      )
-    );
+    // FAST top cards from the summary fast path — never blocked by the slow /status build, and
+    // unknown source -> null (rendered grey), never a false zero.
+    const sumRes = await apiGet<Record<string, unknown>>("/api/universe/summary", { timeoutMs: 6000 });
+    if (sumRes.ok && sumRes.data) {
+      const s = sumRes.data as Record<string, unknown>;
+      const f = (s.funnel_counts ?? {}) as Record<string, number | null>;
+      const fr = (s.freshness_counts ?? {}) as Record<string, number | null>;
+      const src = (s.source_counts ?? {}) as Record<string, number | null>;
+      const disp = (s.display_counts ?? {}) as Record<string, number | null>;
+      setCounts({
+        available: f.available ?? null,
+        cached: fr.cached ?? null,
+        fresh: fr.fresh ?? null,
+        eligible: f.eligible ?? null,
+        to_trade: f.to_trade ?? null,
+        displayed: disp.total ?? null,
+      });
+      setSources({
+        source_counts: {
+          alpaca_crypto_assets_api: src.alpaca_crypto_assets,
+          alpaca_crypto_usd_pairs: src.alpaca_crypto_usd_pairs,
+          displayed_pairs: disp.total,
+        },
+        curated_crypto: src.curated_crypto,
+        curated_stock: src.curated_stock,
+        last_refresh_at: s.last_successful_scan_at,
+        fast_path: true,
+        status_latency_risk: s.status_latency_risk,
+      });
+      setSummary(
+        (s.zero_eligible_explanation as string) ??
+          (s.source_nonzero_but_eligible_zero ? "Symbols scanned; none eligible yet — see blockers below." : null)
+      );
+      setBlockBreakdown(
+        Object.fromEntries(((s.blocker_summary ?? []) as Array<Record<string, unknown>>).map((b) => [String(b.code), Number(b.count)]))
+      );
+      setUnknownTruth(false);
+    } else {
+      // Could not confirm fast truth — render unknown/grey, never a false zero.
+      setUnknownTruth(true);
+    }
     setLoading(false);
+
+    // Detail table + eligible rows from the slow endpoints (longer budget; does NOT block top cards).
+    void Promise.all([
+      apiGet<UniverseStatusPayload>("/api/universe/status", { timeoutMs: 16000 }),
+      apiGet<Record<string, unknown>>("/api/universe/eligible-trades", { timeoutMs: 8000 }),
+    ]).then(([statusRes, eligibleRes]) => {
+      const statusData = statusRes.ok ? statusRes.data : null;
+      const eligibleData = eligibleRes.ok ? eligibleRes.data : null;
+      const statusSymbols = dedupeBySymbol([
+        ...(statusData?.groups?.crypto_universe ?? []),
+        ...(statusData?.groups?.stock_universe ?? []),
+      ].filter((s) => s.symbol));
+      const eligibleRows = dedupeBySymbol(
+        ((eligibleData?.eligible_trades ?? eligibleData?.shortlist ?? []) as EligibleRow[])
+      );
+      if (eligibleRows.length > 0 || statusSymbols.length > 0) {
+        setEligibleTrades(eligibleRows);
+        setSymbols(statusSymbols.length > 0 ? statusSymbols : eligibleRows);
+      }
+      const bb =
+        (eligibleData?.no_trade_reason_breakdown as Record<string, number>) ??
+        (eligibleData?.block_breakdown as Record<string, number>);
+      if (bb && Object.keys(bb).length > 0) setBlockBreakdown(bb);
+    });
   }, []);
 
   useEffect(() => {
@@ -220,12 +220,18 @@ export function UniversePanel() {
 
       <GlassPanel title="Radar funnel">
         <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
-          {FUNNEL_STAGES.map(([key, label]) => (
-            <div key={key} className="rounded-md border border-white/10 bg-white/[0.03] p-3">
-              <p className="text-[10px] uppercase tracking-wide text-slate-500">{label}</p>
-              <p className="text-lg font-semibold text-white">{String(counts[key] ?? 0)}</p>
-            </div>
-          ))}
+          {FUNNEL_STAGES.map(([key, label]) => {
+            const v = counts[key];
+            const isUnknown = unknownTruth || v === null || v === undefined;
+            return (
+              <div key={key} className="rounded-md border border-white/10 bg-white/[0.03] p-3">
+                <p className="text-[10px] uppercase tracking-wide text-slate-500">{label}</p>
+                <p className={`text-lg font-semibold ${isUnknown ? "text-slate-500" : "text-white"}`}>
+                  {isUnknown ? "—" : String(v)}
+                </p>
+              </div>
+            );
+          })}
         </div>
         {topBlockers.length > 0 && (
           <div className="mt-3">

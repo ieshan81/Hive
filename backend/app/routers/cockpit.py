@@ -46,6 +46,16 @@ def get_mission_control_tiles(session: Session = Depends(get_session)):
     return build_mission_control_tiles(session)
 
 
+@router.get("/paper-validation/productivity")
+def get_paper_validation_productivity(session: Session = Depends(get_session)):
+    """READ ONLY: why the bot is/isn't producing candidates — scanned vs scored vs blocked
+    (data/alpha/edge/portfolio/preflight), best candidate, exact next blocker, missing evidence,
+    and engine state (watching/waiting/degraded). Never trades, never mutates."""
+    from app.services.paper_validation_productivity_service import build_productivity
+
+    return build_productivity(session)
+
+
 @router.get("/watchlist")
 def get_watchlist(session: Session = Depends(get_session)):
     from app.services.mission_control_read_model import build_mission_control_status
