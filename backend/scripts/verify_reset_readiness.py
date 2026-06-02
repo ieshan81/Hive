@@ -39,6 +39,9 @@ REQUIRED = [
     "verify_heartbeat_does_not_force_entries",
     "verify_exit_monitor_uses_broker_truth",
     "verify_backtest_result_required_before_paper_candidate",
+    # broker connectivity (paper) + secret hygiene
+    "verify_alpaca_paper_env_and_connection",
+    "verify_no_secret_leak_in_logs_or_git",
 ]
 
 

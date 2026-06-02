@@ -22,7 +22,7 @@ def backtesting_runs(limit: int = 50, session: Session = Depends(get_session)):
     from app.services.config_manager import ConfigManager
 
     cfg = ConfigManager(session).get_current()
-    runs = ResearchBacktestEngine(session, cfg).list_runs(limit)
+    runs = ResearchBacktestEngine(session, cfg).list_runs(limit, dedupe=True)
     return {"status": "ok", "runs": runs, "count": len(runs)}
 
 

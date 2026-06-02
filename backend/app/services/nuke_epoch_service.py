@@ -13,10 +13,33 @@ from app.database import LessonNode, SettingsActionAudit
 RESET_EPOCH_ACTION = "reset_epoch"
 NUKE_EPOCH_ACTION = RESET_EPOCH_ACTION
 
+# Canonical paper validation run defaults. The reporting baseline is the funded paper
+# starting capital, so equity curves / summaries begin at $200 for the new run.
+PAPER_VALIDATION_RUN_ID = "paper_validation_run_001"
+PAPER_BASELINE_EQUITY = 200.0
 
-def record_reset_epoch(session: Session, operator: str, *, deleted: dict[str, Any]) -> dict[str, Any]:
+
+def record_reset_epoch(
+    session: Session,
+    operator: str,
+    *,
+    deleted: dict[str, Any],
+    validation_run_id: Optional[str] = None,
+    baseline_equity: Optional[float] = None,
+) -> dict[str, Any]:
     at = datetime.utcnow()
-    epoch_id = f"reset-{at.strftime('%Y%m%dT%H%M%S')}"
+    epoch_id = validation_run_id or f"reset-{at.strftime('%Y%m%dT%H%M%S')}"
+    details = {
+        "reset_epoch_id": epoch_id,
+        "nuke_epoch_id": epoch_id,
+        "nuke_completed_at": at.isoformat() + "Z",
+        "reset_completed_at": at.isoformat() + "Z",
+        "deleted": deleted,
+    }
+    if validation_run_id:
+        details["validation_run_id"] = validation_run_id
+    if baseline_equity is not None:
+        details["baseline_equity"] = float(baseline_equity)
     row = SettingsActionAudit(
         action=RESET_EPOCH_ACTION,
         actor=operator,
@@ -24,13 +47,7 @@ def record_reset_epoch(session: Session, operator: str, *, deleted: dict[str, An
         paper_broker=True,
         live_trading_locked=True,
         live_orders_enabled=False,
-        details_json={
-            "reset_epoch_id": epoch_id,
-            "nuke_epoch_id": epoch_id,
-            "nuke_completed_at": at.isoformat() + "Z",
-            "reset_completed_at": at.isoformat() + "Z",
-            "deleted": deleted,
-        },
+        details_json=details,
     )
     session.add(row)
     session.flush()
@@ -39,6 +56,8 @@ def record_reset_epoch(session: Session, operator: str, *, deleted: dict[str, An
         "nuke_epoch_id": epoch_id,
         "nuke_completed_at": at.isoformat() + "Z",
         "reset_completed_at": at.isoformat() + "Z",
+        "validation_run_id": details.get("validation_run_id"),
+        "baseline_equity": details.get("baseline_equity"),
     }
 
 
@@ -63,6 +82,8 @@ def get_latest_reset_epoch(session: Session) -> Optional[dict[str, Any]]:
         "nuke_epoch_id": eid,
         "nuke_completed_at": completed,
         "reset_completed_at": completed,
+        "validation_run_id": d.get("validation_run_id"),
+        "baseline_equity": d.get("baseline_equity"),
         "recorded_at": rows[0].created_at.isoformat() + "Z" if rows[0].created_at else None,
     }
 
