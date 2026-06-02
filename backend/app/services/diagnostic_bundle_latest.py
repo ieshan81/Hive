@@ -108,6 +108,20 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
     universe = _safe("universe_summary", errs, lambda: __import__(
         "app.services.universe_summary_service", fromlist=["build_universe_summary"]
     ).build_universe_summary(session, cfg))
+    productivity = _safe("productivity", errs, lambda: __import__(
+        "app.services.paper_validation_productivity_service", fromlist=["build_productivity"]
+    ).build_productivity(session, cfg))
+    _A = lambda fn: __import__("app.services.paper_validation_analysis_service", fromlist=[fn])  # noqa: E731
+    trade_truth = _safe("current_run_trade_truth", errs, lambda: _A("current_run_trade_truth").current_run_trade_truth(session, cfg))
+    pnl_trace = _safe("pnl_guard_trace", errs, lambda: _A("pnl_guard_trace").pnl_guard_trace(session, cfg))
+    freshness_matrix = _safe("data_freshness_matrix", errs, lambda: _A("data_freshness_matrix").data_freshness_matrix(session, cfg))
+    alpha_matrix = _safe("alpha_coverage_matrix", errs, lambda: _A("alpha_coverage_matrix").alpha_coverage_matrix(session, cfg))
+    timeline = _safe("blocker_timeline", errs, lambda: _A("blocker_timeline").blocker_timeline(session, cfg))
+    order_proof = _safe("paper_order_proof", errs, lambda: __import__(
+        "app.services.paper_order_proof_service", fromlist=["PaperOrderProofService"]
+    ).PaperOrderProofService(session, cfg).summary())
+    import os as _os
+    git_commit = _os.environ.get("RAILWAY_GIT_COMMIT_SHA", "dev")[:12]
 
     # --- capped recent rows (current-run filtered where it makes sense) ---
     def _recent(model, order_col, cap, *, run_filter=False):
@@ -143,15 +157,32 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
     pe = (tiles or {}).get("paper_execution") or {}
     readme = {
         "READ_THIS_FIRST": "Current paper-validation truth. Old history is NOT mixed in here; "
-                           "use ?mode=forensic for full history.",
+                           "use ?mode=forensic for full history. Read p_and_l_guard_trace.json "
+                           "for the 'daily drawdown exceeds 3%' explanation.",
         "bundle_mode": "latest",
         "generated_at": _now(),
+        "git_commit": git_commit,
         "current_validation_run_id": run_id,
         "reset_epoch": epoch or None,
         "baseline_equity": (validation or {}).get("baseline_equity") or (perf or {}).get("baseline_equity"),
         "current_equity": acct.get("equity"),
-        "current_positions": pe.get("open_positions_count"),
-        "current_orders": pe.get("active_orders_count"),
+        "current_cash": acct.get("cash"),
+        "current_positions_count": pe.get("open_positions_count"),
+        "current_active_orders_count": pe.get("active_orders_count"),
+        "current_run_order_attempts": (trade_truth or {}).get("current_run_order_attempts"),
+        "current_run_closed_trades": (trade_truth or {}).get("current_run_closed_trades"),
+        "scheduler_enabled": pe.get("scheduler_enabled"),
+        "paper_learning_enabled": pe.get("paper_learning_on"),
+        "stock_lane_mode": (universe.get("policy") or {}).get("stock_lane_mode") if isinstance(universe, dict) else None,
+        "stock_entries_allowed": (universe.get("policy") or {}).get("stock_entries_allowed") if isinstance(universe, dict) else None,
+        "crypto_active": (universe.get("policy") or {}).get("crypto_active") if isinstance(universe, dict) else None,
+        "paper_candidates_count": (productivity or {}).get("paper_candidates"),
+        "current_top_candidate": ((productivity or {}).get("current_best_candidate") or {}).get("symbol"),
+        "current_top_blocker": ((productivity or {}).get("exact_next_blocker") or {}).get("code") if isinstance((productivity or {}).get("exact_next_blocker"), dict) else None,
+        "p_and_l_threshold_status": "ACTIVE_BLOCKING" if (pnl_trace or {}).get("p_and_l_guard_active") else "clear_or_historical",
+        "daily_pnl_status": ((pnl_trace or {}).get("occurrences") or [{}])[0].get("measured_pnl_percent"),
+        "kill_switch_status": (pnl_trace or {}).get("kill_switch_state"),
+        "latest_errors_count": len(errs),
         "latest_cycle_id": ((engine_map or {}).get("latest_trade_lifecycle") or {}).get("trade_id"),
         "broker_mode": (tiles or {}).get("broker_mode"),
         "live_lock_status": pe.get("live_lock_status"),
@@ -206,6 +237,21 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
         "performance_summary.json": perf,
         "promotion_criteria.json": promotion_criteria,
         "universe_summary.json": universe,
+        "paper_validation_productivity.json": productivity,
+        "current_run_trade_truth.json": trade_truth,
+        "p_and_l_guard_trace.json": pnl_trace,
+        "data_freshness_matrix.json": freshness_matrix,
+        "alpha_coverage_matrix.json": alpha_matrix,
+        "blocker_timeline.json": timeline,
+        "changed_since_previous_bundle.json": _safe("changed_since_previous_bundle", errs, lambda: _A("changed_since_previous_bundle").changed_since_previous_bundle(session, cfg)),
+        "paper_order_proof.json": order_proof,
+        "endpoint_latency_summary.json": {
+            "note": "Self-reported: /api/universe/summary is the fast path; /api/universe/status + "
+                    "/api/mission-control/status are the slow heavy builds — prefer the fast paths.",
+            "slow_endpoint_warning": True,
+            "frontend_timeout_risk": bool((universe or {}).get("status_latency_risk")),
+            "prefer_fast_paths": ["/api/universe/summary", "/api/mission-control/tiles", "/api/paper-validation/productivity"],
+        },
         "scheduler_status.json": scheduler,
         "risk_events.json": risk_events,
         "strategy_signals.json": strategy_signals,
@@ -230,16 +276,61 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
     return bundle
 
 
+def latest_bundle_as_zip(session: Session, config: Optional[dict] = None) -> bytes:
+    """Zip the small current-run latest bundle (each file as JSON / .md).
+
+    Building the bundle dict is read-pure; downloading the ZIP is an explicit operator action, so we
+    record a headline snapshot here. That snapshot becomes the comparison baseline for the next
+    download's changed_since_previous_bundle.json. The JSON GET view never writes.
+    """
+    import io
+    import json as _json
+    import zipfile
+
+    bundle = build_latest_bundle(session, config)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, content in bundle.items():
+            if name.endswith(".md") and isinstance(content, str):
+                zf.writestr(name, content)
+            else:
+                zf.writestr(name, _json.dumps(content, indent=2, default=str))
+    try:  # record the "previous bundle" baseline for next time (best-effort, never blocks the download)
+        from app.services.paper_validation_analysis_service import record_headline_snapshot
+
+        record_headline_snapshot(session, config)
+        session.commit()
+    except Exception:
+        try:
+            session.rollback()
+        except Exception:
+            pass
+    return buf.getvalue()
+
+
+def latest_bundle_filename() -> str:
+    return f"latest_bundle_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.zip"
+
+
 def _system_summary_md(r: dict) -> str:
     sd = r.get("stock_data_status") or {}
     return "\n".join([
         "# Caged Hive Quant — Current Validation Truth (READ FIRST)",
-        f"Generated: {r.get('generated_at')}",
+        f"Generated: {r.get('generated_at')} | commit: {r.get('git_commit')}",
+        "## Is the bot running / safe / trading?",
+        f"- Running: yes (scheduler_enabled={r.get('scheduler_enabled')}, paper_learning={r.get('paper_learning_enabled')}).",
+        f"- Safe: live_lock={r.get('live_lock_status')} | live_trading_locked={r.get('live_trading_locked')} | broker={r.get('broker_mode')}.",
+        f"- Trading: NO — current_run_order_attempts={r.get('current_run_order_attempts')}, current_run_closed_trades={r.get('current_run_closed_trades')}.",
+        f"- Why not trading: top blocker = {r.get('current_top_blocker')} (no proven alpha scorecard / data freshness). Heartbeat watches; only evidence-backed, cage-approved candidates trade.",
+        "## Truth",
         f"- validation_run_id: {r.get('current_validation_run_id')}",
-        f"- baseline_equity: {r.get('baseline_equity')} | current_equity: {r.get('current_equity')}",
-        f"- positions: {r.get('current_positions')} | orders: {r.get('current_orders')} | closed_trades_this_run: {r.get('closed_trades_this_run')}",
-        f"- broker_mode: {r.get('broker_mode')} | live_lock_status: {r.get('live_lock_status')} | live_trading_locked: {r.get('live_trading_locked')}",
-        f"- stock_data: feed={sd.get('feed')} subscription={sd.get('subscription')} scanner_allowed={sd.get('stocks_scanner_allowed')} ready={sd.get('symbols_ready')}/{sd.get('symbols_total')}",
-        f"- crypto_data: {r.get('crypto_data_status')}",
-        "- bundle_mode: latest (old history NOT included; use ?mode=forensic for full history)",
+        f"- baseline_equity: {r.get('baseline_equity')} | current_equity: {r.get('current_equity')} | cash: {r.get('current_cash')}",
+        f"- positions: {r.get('current_positions_count')} | active_orders: {r.get('current_active_orders_count')}",
+        f"- paper_candidates: {r.get('paper_candidates_count')} | top_candidate: {r.get('current_top_candidate')}",
+        f"- P&L guard ('exceeds 3%'): {r.get('p_and_l_threshold_status')} | today_pnl%={r.get('daily_pnl_status')} | kill_switch={r.get('kill_switch_status')} (3% of $200 = $6; see p_and_l_guard_trace.json).",
+        f"- stock_data: feed={sd.get('feed')} scanner_allowed={sd.get('stocks_scanner_allowed')} | stock_lane={r.get('stock_lane_mode')} | crypto_active={r.get('crypto_active')}",
+        "## Next safe action",
+        "- Let it keep watching; build alpha evidence (read-only research/backtests). Do NOT loosen gates or force trades.",
+        "- Read first: README_FIRST.json, then paper_validation_productivity.json + p_and_l_guard_trace.json.",
+        "- bundle_mode: latest (old history NOT included; use ?mode=forensic for full history).",
     ])
