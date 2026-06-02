@@ -104,6 +104,9 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
     promotion_criteria = _safe("promotion_criteria", errs, lambda: __import__(
         "app.services.promotion_criteria", fromlist=["authoritative_promotion_criteria"]
     ).authoritative_promotion_criteria(cfg, session=session))
+    universe = _safe("universe_summary", errs, lambda: __import__(
+        "app.services.universe_summary_service", fromlist=["build_universe_summary"]
+    ).build_universe_summary(session, cfg))
 
     # --- capped recent rows (current-run filtered where it makes sense) ---
     def _recent(model, order_col, cap, *, run_filter=False):
@@ -159,6 +162,19 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
             "symbols_total": (stock or {}).get("symbols_total"),
         },
         "crypto_data_status": "active_24_7 (separate lane; unaffected by stock data)",
+        "universe_truth": {
+            "universe_source_total": ((universe or {}).get("source_counts") or {}).get("curated_crypto"),
+            "universe_display_total": ((universe or {}).get("display_counts") or {}).get("total"),
+            "universe_crypto_display": ((universe or {}).get("display_counts") or {}).get("crypto"),
+            "universe_stock_display": ((universe or {}).get("display_counts") or {}).get("stock"),
+            "universe_cached": ((universe or {}).get("freshness_counts") or {}).get("cached"),
+            "universe_fresh": ((universe or {}).get("freshness_counts") or {}).get("fresh"),
+            "universe_eligible": ((universe or {}).get("funnel_counts") or {}).get("eligible"),
+            "universe_execution_shortlist": ((universe or {}).get("funnel_counts") or {}).get("execution_shortlist"),
+            "universe_status_timeout_risk": (universe or {}).get("status_latency_risk"),
+            "source_nonzero_but_eligible_zero": (universe or {}).get("source_nonzero_but_eligible_zero"),
+            "universe_ui_truth_status": "fast_path_healthy; /api/universe/status is slow — read /api/universe/summary FIRST.",
+        },
         "memory_governance_status": {
             "would_archive": (mem_gov or {}).get("would_archive"),
             "evidence_linked_preserved": (mem_gov or {}).get("evidence_linked_preserved"),
@@ -188,6 +204,7 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
         "stock_data_readiness.json": stock,
         "performance_summary.json": perf,
         "promotion_criteria.json": promotion_criteria,
+        "universe_summary.json": universe,
         "scheduler_status.json": scheduler,
         "risk_events.json": risk_events,
         "strategy_signals.json": strategy_signals,
