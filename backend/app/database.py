@@ -1065,6 +1065,20 @@ class PaperExperimentOutcome(SQLModel, table=True):
     exit_reason: Optional[str] = None
     lesson_created: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    # Canonical closed-trade outcome truth (backfilled from OrderRecord + trade ledger). One row
+    # per closed trade, keyed by trade_id, agreeing with trades_history and the dashboard.
+    trade_id: Optional[str] = Field(default=None, index=True)
+    entry_broker_order_id: Optional[str] = None
+    exit_broker_order_id: Optional[str] = None
+    entry_client_order_id: Optional[str] = None
+    exit_client_order_id: Optional[str] = None
+    qty_bought: Optional[float] = None
+    qty_sold: Optional[float] = None
+    fee_adjusted_qty_delta: Optional[float] = None
+    realized_pnl_pct: Optional[float] = None
+    canonical_exit_reason: Optional[str] = None
+    raw_exit_trigger: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    outcome_source: Optional[str] = None
 
 
 class StrategyChangeProposal(SQLModel, table=True):
@@ -1378,6 +1392,27 @@ def _migrate_columns() -> None:
         with engine.begin() as conn:
             if "status_reason" not in state_cols:
                 conn.execute(text("ALTER TABLE strategy_states ADD COLUMN status_reason VARCHAR"))
+
+    # Canonical closed-trade outcome fields (non-destructive backfill columns).
+    if insp.has_table("paper_experiment_outcomes"):
+        po_cols = {c["name"] for c in insp.get_columns("paper_experiment_outcomes")}
+        with engine.begin() as conn:
+            for col, typ in [
+                ("trade_id", "VARCHAR"),
+                ("entry_broker_order_id", "VARCHAR"),
+                ("exit_broker_order_id", "VARCHAR"),
+                ("entry_client_order_id", "VARCHAR"),
+                ("exit_client_order_id", "VARCHAR"),
+                ("qty_bought", "FLOAT"),
+                ("qty_sold", "FLOAT"),
+                ("fee_adjusted_qty_delta", "FLOAT"),
+                ("realized_pnl_pct", "FLOAT"),
+                ("canonical_exit_reason", "VARCHAR"),
+                ("raw_exit_trigger", "JSON"),
+                ("outcome_source", "VARCHAR"),
+            ]:
+                if col not in po_cols:
+                    conn.execute(text(f"ALTER TABLE paper_experiment_outcomes ADD COLUMN {col} {typ}"))
 
     if insp.has_table("strategy_signals"):
         sig_cols = {c["name"] for c in insp.get_columns("strategy_signals")}
