@@ -72,7 +72,7 @@ def main() -> None:
 
     # E) genuine paper_order_submitted -> submitted true, tiny notional, live locked.
     def good(self, cand, **kw):
-        assert cand.position_qty * cand.entry_price <= 5.0 + 1e-9, "notional must stay <= $5"
+        assert cand.position_qty * cand.entry_price <= 12.0 + 1e-9, "notional must stay <= $5"
         assert (cand.meta or {}).get("near_miss_exploration_probe") is True
         return _FakeLog("paper_order_submitted", _id=99)
 

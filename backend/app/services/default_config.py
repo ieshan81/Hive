@@ -168,7 +168,10 @@ DEFAULT_CONFIG = {
         # and never promote a near-miss directly to paper_candidate. Tiny notional, capped.
         "paper_exploration": {
             "allow_paper_exploration_near_misses": True,
-            "exploration_max_notional_usd": 5.0,
+            "exploration_max_notional_usd": 12.0,
+            # Hard operator-settable ceiling for the exploration notional cap (paper-only).
+            # The set-cap endpoint rejects anything above this. Never raise for live trading.
+            "exploration_cap_max_usd": 25.0,
             "exploration_max_positions": 1,
             "exploration_max_entries_per_day": 3,
             "exploration_min_sample_size": 50,

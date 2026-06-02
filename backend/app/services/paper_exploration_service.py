@@ -64,6 +64,62 @@ class PaperExplorationService:
     def max_entries_per_day(self) -> int:
         return int(self._cfg("exploration_max_entries_per_day", 3) or 3)
 
+    @property
+    def cap_max_usd(self) -> float:
+        return float(self._cfg("exploration_cap_max_usd", 25.0) or 25.0)
+
+    # ---- operator: set exploration notional cap (paper-only, audited) ---
+    def set_exploration_cap(self, usd: Any, *, operator: str = "operator") -> dict[str, Any]:
+        """Set alpha_factory.paper_exploration.exploration_max_notional_usd within (0, cap_max].
+        Paper-only: never touches live flags, standard paper-entry safety, or the kill switch, and
+        submits NO order. The change is activated + audited through ConfigManager."""
+        from app.services.config_manager import ConfigManager
+
+        cap_max = self.cap_max_usd
+        try:
+            requested = float(usd)
+        except (TypeError, ValueError):
+            return {"status": "rejected", "ok": False, "reason": "invalid_cap_value",
+                    "safe_human_message": f"Cap must be a number between 0 and ${cap_max:.0f}.",
+                    "orders_created": 0}
+        if requested <= 0 or requested > cap_max:
+            return {"status": "rejected", "ok": False, "reason": "cap_out_of_range",
+                    "requested_usd": requested, "max_allowed_usd": cap_max,
+                    "safe_human_message": f"Cap ${requested:.2f} rejected — must be > 0 and <= ${cap_max:.0f}.",
+                    "orders_created": 0}
+
+        cfg_mgr = ConfigManager(self.session)
+        cur = cfg_mgr.get_current()
+        af = dict(cur.get("alpha_factory") or {})
+        pe = dict(af.get("paper_exploration") or {})
+        previous = pe.get("exploration_max_notional_usd")
+        pe["exploration_max_notional_usd"] = requested
+        af["paper_exploration"] = pe
+        merged = {**cur, "alpha_factory": af}
+        # Hard invariant: this endpoint must NEVER alter live-trading flags.
+        merged["live_trading_enabled"] = bool(cur.get("live_trading_enabled", False))
+        merged.setdefault("execution", {})
+        merged["execution"] = {**(cur.get("execution") or {}),
+                               "live_orders_enabled": bool((cur.get("execution") or {}).get("live_orders_enabled", False))}
+        cfg_mgr._activate(merged, changed_by=operator, reason="paper_exploration_set_cap")
+        self.config = cfg_mgr.get_current()
+        self.factory = AutonomousAlphaFactoryService(self.session, self.config)
+        self.factory._audit("paper_exploration_set_cap", operator, {
+            "previous_usd": previous, "new_usd": requested, "max_allowed_usd": cap_max,
+            "live_trading_enabled": bool(self.config.get("live_trading_enabled", False)),
+            "orders_created": 0,
+        })
+        return {
+            "status": "ok", "ok": True, "orders_created": 0,
+            "exploration_max_notional_usd": requested,
+            "previous_usd": previous,
+            "max_allowed_usd": cap_max,
+            "broker_min_notional_usd": float(cfg_get(self.config, "execution.alpaca_crypto_min_notional_usd", 10.0) or 10.0),
+            "live_trading_enabled": bool(self.config.get("live_trading_enabled", False)),
+            "real_money_entries_allowed": False,
+            "safe_human_message": f"Paper exploration cap set to ${requested:.0f} (paper-only; live trading untouched).",
+        }
+
     # ---- broker / cap truth --------------------------------------------
     def entries_today(self) -> int:
         """Count submitted exploration probes today via the audit trail (the submit path writes

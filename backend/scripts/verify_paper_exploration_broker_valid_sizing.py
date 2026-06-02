@@ -13,21 +13,23 @@ from verify_near_miss_can_be_paper_exploration_candidate import nm  # noqa: E402
 def main() -> None:
     session, cfg = session_with_config()
 
-    # Default $5 cap vs $10 broker min -> invalid.
-    svc5 = PaperExplorationService(session, cfg)
+    # A $5 cap (below the $10 broker min) -> broker-INVALID.
+    cfg5 = copy.deepcopy(cfg)
+    cfg5["alpha_factory"]["paper_exploration"]["exploration_max_notional_usd"] = 5.0
+    svc5 = PaperExplorationService(session, cfg5)
     bv = svc5.broker_validity(nm())
     assert bv["broker_valid"] is False, bv
     assert "broker_min_notional_exceeds_cap" in bv["broker_valid_blockers"], bv
     assert bv["min_required_notional_usd"] >= bv["broker_min_notional_usd"], bv  # includes buffer
     assert bv["exploration_cap_usd"] == 5.0, bv
 
-    # Raise cap above broker min (operator opt-in) -> broker-valid, no silent raise.
-    cfg15 = copy.deepcopy(cfg)
-    cfg15["alpha_factory"]["paper_exploration"]["exploration_max_notional_usd"] = 15.0
-    svc15 = PaperExplorationService(session, cfg15)
-    bv15 = svc15.broker_validity(nm())
-    assert bv15["broker_valid"] is True, bv15
-    assert bv15["broker_valid_blockers"] == [], bv15
+    # The operator-requested $12 cap clears the broker min -> broker-VALID.
+    cfg12 = copy.deepcopy(cfg)
+    cfg12["alpha_factory"]["paper_exploration"]["exploration_max_notional_usd"] = 12.0
+    svc12 = PaperExplorationService(session, cfg12)
+    bv12 = svc12.broker_validity(nm())
+    assert bv12["broker_valid"] is True, bv12
+    assert bv12["broker_valid_blockers"] == [], bv12
 
     # The $5 service did not silently raise its own cap.
     assert svc5.max_notional_usd == 5.0, svc5.max_notional_usd

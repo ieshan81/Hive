@@ -68,6 +68,33 @@ def paper_exploration(session: Session = Depends(get_session)):
     return PaperExplorationService(session).status()
 
 
+@router.post("/paper-exploration/set-cap")
+def set_paper_exploration_cap(
+    body: dict = Body(default_factory=dict),
+    session: Session = Depends(get_session),
+    _op: str = Depends(require_operator_token),
+):
+    """OPERATOR ACTION: set the paper-exploration notional cap within (0, $25]. PAPER-ONLY:
+    never touches live flags, standard paper-entry safety, or the kill switch; submits no order.
+    Default requested cap is $12. Rejects anything above the configured ceiling."""
+    from app.services.paper_exploration_service import PaperExplorationService
+
+    _block_ai_actor(body)
+    requested = body.get("cap_usd", body.get("exploration_max_notional_usd", 12))
+    try:
+        out = PaperExplorationService(session).set_exploration_cap(requested, operator=_actor(body))
+        session.commit()
+        return out
+    except Exception as exc:
+        try:
+            session.rollback()
+        except Exception:
+            pass
+        return {"status": "error", "ok": False, "orders_created": 0,
+                "block_reason": "set_cap_exception", "exception_type": type(exc).__name__,
+                "safe_human_message": "Cap change failed safely; nothing was modified."}
+
+
 @router.post("/run-exploration")
 def run_exploration(
     body: dict = Body(default_factory=dict),

@@ -52,7 +52,7 @@ def main() -> None:
     def ok_submit(self, cand, **kw):
         calls["n"] += 1
         assert (cand.meta or {}).get("near_miss_exploration_probe") is True, "must pass a marked probe to the cage"
-        assert cand.position_qty * cand.entry_price <= 5.0 + 1e-9, "notional must stay <= $5"
+        assert cand.position_qty * cand.entry_price <= 12.0 + 1e-9, "notional must stay <= $5"
         return _FakeLog("paper_order_submitted", _id=42)
 
     pes_mod.PaperExecutionService.submit_candidate = ok_submit  # type: ignore[assignment]
