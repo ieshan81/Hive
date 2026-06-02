@@ -354,18 +354,28 @@ _HEADLINE_NUMERIC = (
 )
 
 
-def _current_headline(session: Session, config: Optional[dict] = None) -> dict[str, Any]:
-    """Small, read-only set of current-run headline metrics used for bundle-to-bundle deltas."""
-    tt = current_run_trade_truth(session, config)
-    fm = data_freshness_matrix(session, config)
-    am = alpha_coverage_matrix(session, config)
-    pnl = pnl_guard_trace(session, config)
-    try:
-        from app.services.paper_validation_productivity_service import build_productivity
+def _current_headline(session: Session, config: Optional[dict] = None, *,
+                      trade_truth: Optional[dict] = None, freshness: Optional[dict] = None,
+                      alpha: Optional[dict] = None, pnl: Optional[dict] = None,
+                      productivity: Optional[dict] = None) -> dict[str, Any]:
+    """Small, read-only set of current-run headline metrics used for bundle-to-bundle deltas.
 
-        prod = build_productivity(session, config) or {}
-    except Exception:
-        prod = {}
+    The bundle passes the reads it has ALREADY computed (trade_truth/freshness/alpha/pnl/productivity)
+    so the headline costs nothing extra; standalone callers fall back to computing them fresh.
+    """
+    tt = trade_truth if trade_truth is not None else current_run_trade_truth(session, config)
+    fm = freshness if freshness is not None else data_freshness_matrix(session, config)
+    am = alpha if alpha is not None else alpha_coverage_matrix(session, config)
+    pnl = pnl if pnl is not None else pnl_guard_trace(session, config)
+    prod = productivity
+    if prod is None:
+        try:
+            from app.services.paper_validation_productivity_service import build_productivity
+
+            prod = build_productivity(session, config) or {}
+        except Exception:
+            prod = {}
+    tt, fm, am, pnl, prod = (tt or {}), (fm or {}), (am or {}), (pnl or {}), (prod or {})
     return {
         "validation_run_id": tt.get("validation_run_id"),
         "snapshot_at": _iso(_now()),
@@ -416,12 +426,17 @@ def _last_headline_snapshot(session: Session) -> Optional[dict]:
         return None
 
 
-def changed_since_previous_bundle(session: Session, config: Optional[dict] = None) -> dict[str, Any]:
-    """Read-only delta of headline metrics vs the last time a bundle ZIP was downloaded."""
+def changed_since_previous_bundle(session: Session, config: Optional[dict] = None, *,
+                                  headline: Optional[dict] = None) -> dict[str, Any]:
+    """Read-only delta of headline metrics vs the last time a bundle ZIP was downloaded.
+
+    Pass `headline` (the bundle's already-computed current headline) to avoid recomputing the heavy
+    reads; standalone callers compute it fresh.
+    """
     from app.database import DiagnosticExportJob
 
     prev = _last_headline_snapshot(session)
-    cur = _current_headline(session, config)
+    cur = headline if headline is not None else _current_headline(session, config)
 
     prev_job = None
     try:
