@@ -148,15 +148,41 @@ class PaperExplorationService:
 
         eligible = not blockers
         score = self.score(nm)
+        bv = self.broker_validity(nm)
         return {
             "exploration_eligible": eligible,
             "exploration_score": score,
             "exploration_stage": EXPLORATION_STAGE if eligible else None,
             "exploration_blockers": blockers,
+            "broker_valid_for_exploration": bv["broker_valid"],
+            "broker_valid_blockers": bv["broker_valid_blockers"],
+            "min_required_notional_usd": bv["min_required_notional_usd"],
             "exploration_next_action": (
                 "Eligible for a tiny capped paper-exploration probe through the cage."
-                if eligible else f"Resolve: {', '.join(blockers)}."
+                if eligible and bv["broker_valid"]
+                else f"Resolve: {', '.join(blockers + bv['broker_valid_blockers']) or 'broker sizing'}."
             ),
+        }
+
+    def broker_validity(self, nm: dict[str, Any]) -> dict[str, Any]:
+        """Can this candidate be VALIDLY submitted under the exploration cap at the broker minimum?
+        The cap is never raised silently — if it is below the broker minimum the candidate is
+        marked invalid so no invalid broker order is ever attempted."""
+        min_notional = float(cfg_get(self.config, "execution.alpaca_crypto_min_notional_usd", 10.0) or 10.0)
+        buffer = float(self._cfg("broker_min_buffer_pct", 2.0) or 0.0) / 100.0
+        required = round(min_notional * (1.0 + buffer), 2)
+        cap = self.max_notional_usd
+        allow_raise = bool(self._cfg("allow_cap_raise_to_broker_min", False))
+        skip_if_exceeds = bool(self._cfg("skip_candidate_if_min_notional_exceeds_cap", True))
+        blockers: list[str] = []
+        if cap < required and not allow_raise and skip_if_exceeds:
+            blockers.append("broker_min_notional_exceeds_cap")
+        return {
+            "broker_valid": not blockers,
+            "broker_valid_blockers": blockers,
+            "min_required_notional_usd": required,
+            "exploration_cap_usd": cap,
+            "broker_min_notional_usd": min_notional,
         }
 
     # ---- scoring (PHASE 3) ---------------------------------------------
@@ -192,32 +218,67 @@ class PaperExplorationService:
         return out
 
     def select_candidate(self) -> Optional[dict[str, Any]]:
-        for nm in self.near_misses(limit=50):
-            if nm["exploration_eligible"]:
-                return nm
-        return None
+        """Highest-score near-miss that is BOTH eligible and broker-valid under the cap."""
+        return self.select_candidate_detailed()["selected"]
+
+    def select_candidate_detailed(self) -> dict[str, Any]:
+        """Pick the best broker-valid eligible candidate; record why higher-scored ones were skipped."""
+        skipped: list[dict[str, Any]] = []
+        selected: Optional[dict[str, Any]] = None
+        for nm in self.near_misses(limit=50):  # already sorted: eligible first, then score desc
+            if not nm.get("exploration_eligible"):
+                continue
+            if not nm.get("broker_valid_for_exploration"):
+                skipped.append({
+                    "symbol": nm.get("symbol"),
+                    "exploration_score": nm.get("exploration_score"),
+                    "skipped_reason": (nm.get("broker_valid_blockers") or ["broker_min_notional_exceeds_cap"])[0],
+                    "min_required_notional_usd": nm.get("min_required_notional_usd"),
+                })
+                continue
+            selected = nm
+            break
+        return {
+            "selected": selected,
+            "skipped_broker_invalid": skipped,
+            "no_broker_valid_candidate": selected is None,
+        }
 
     # ---- status + decision-state (PHASE 6) -----------------------------
     def status(self) -> dict[str, Any]:
         perm = self.permission()
-        cand = self.select_candidate()
+        sel = self.select_candidate_detailed()
+        cand = sel["selected"]
+        # The top-scored eligible near-miss even if broker-invalid (for visibility/UI truth).
+        top = next((n for n in self.near_misses(limit=50) if n.get("exploration_eligible")), None)
         return {
             "paper_exploration_enabled": self.enabled,
             "paper_exploration_allowed": perm["paper_exploration_allowed"],
             "paper_exploration_block_reason": perm["paper_exploration_block_reason"],
-            "current_exploration_candidate": None if not cand else {
+            "current_exploration_candidate": None if not top else {
+                "symbol": top.get("symbol"),
+                "strategy_family": top.get("strategy_family"),
+                "best_session": top.get("best_session"),
+                "exploration_score": top.get("exploration_score"),
+                "edge_after_cost_bps": self._eff_edge(top),
+                "sample_size": max(int(top.get("sample_size") or 0), int(top.get("session_sample_size") or 0)),
+                "verdict": top.get("verdict"),
+                "stage": EXPLORATION_STAGE,
+                "broker_valid_for_exploration": top.get("broker_valid_for_exploration"),
+                "min_required_notional_usd": top.get("min_required_notional_usd"),
+            },
+            "broker_valid_candidate": None if not cand else {
                 "symbol": cand.get("symbol"),
-                "strategy_family": cand.get("strategy_family"),
                 "best_session": cand.get("best_session"),
                 "exploration_score": cand.get("exploration_score"),
-                "edge_after_cost_bps": self._eff_edge(cand),
-                "sample_size": max(int(cand.get("sample_size") or 0), int(cand.get("session_sample_size") or 0)),
-                "verdict": cand.get("verdict"),
-                "stage": EXPLORATION_STAGE,
+                "min_required_notional_usd": cand.get("min_required_notional_usd"),
             },
+            "no_broker_valid_candidate": sel["no_broker_valid_candidate"],
+            "skipped_broker_invalid": sel["skipped_broker_invalid"],
             "exploration_entries_today": perm["exploration_entries_today"],
             "exploration_open_position": perm["exploration_open_positions"] > 0,
             "exploration_max_notional_usd": perm["max_notional_usd"],
+            "broker_min_notional_usd": float(cfg_get(self.config, "execution.alpaca_crypto_min_notional_usd", 10.0) or 10.0),
             "real_money_entries_allowed": perm["real_money_entries_allowed"],
             "standard_paper_entries_allowed": perm["paper_entries_allowed"],
             "exit_management_allowed": perm["exit_management_allowed"],
@@ -329,10 +390,27 @@ class PaperExplorationService:
         if not perm["paper_exploration_allowed"]:
             return {"status": "blocked", "submitted": False, "orders_created": 0,
                     "block_reason": perm["paper_exploration_block_reason"], "permission": perm}
-        nm = self.select_candidate()
+        # Broker-valid selection: never attempt an invalid (below broker-min) order.
+        sel = self.select_candidate_detailed()
+        nm = sel["selected"]
         if not nm:
-            return {"status": "no_candidate", "submitted": False, "orders_created": 0,
-                    "block_reason": "no_eligible_near_miss", "permission": perm}
+            any_eligible_invalid = bool(sel["skipped_broker_invalid"])
+            return {
+                "status": "blocked",
+                "submitted": False,
+                "orders_created": 0,
+                "block_reason": "no_broker_valid_exploration_candidate" if any_eligible_invalid else "no_eligible_near_miss",
+                "execution_status": "preflight_blocked",
+                "error_stage": None,
+                "safe_human_message": (
+                    "Eligible near-miss(es) exist but none can be validly submitted under the "
+                    f"${self.max_notional_usd:.0f} exploration cap (broker minimum notional exceeds the cap)."
+                    if any_eligible_invalid
+                    else "No eligible near-miss candidate for paper exploration right now."
+                ),
+                "skipped_broker_invalid": sel["skipped_broker_invalid"],
+                "permission": perm,
+            }
 
         # --- stage: quote_fetch (live price) ---
         px = price
