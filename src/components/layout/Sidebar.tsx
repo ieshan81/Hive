@@ -10,6 +10,7 @@ import {
   Shield,
   Hexagon,
   LineChart,
+  Workflow,
   Settings as SettingsIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -20,6 +21,7 @@ import { cn } from "@/lib/utils";
 
 const navItems = [
   { href: "/cockpit", label: "AI Cockpit", icon: Brain },
+  { href: "/engine-map", label: "Engine Map", icon: Workflow },
   { href: "/universe", label: "Universe Radar", icon: Globe },
   { href: "/ai-manager", label: "AI Manager", icon: Brain },
   { href: "/portfolio", label: "Portfolio", icon: Wallet },

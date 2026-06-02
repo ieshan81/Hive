@@ -47,7 +47,7 @@ recommended_assets_for_reset_run: crypto + stocks
 options_status: research-only (no options risk engine)
 forex_status: research-only (Alpaca support unverified on this account)
 memory_status: advisory-only today; archive+typed-rebuild planned (PR C) — not a reset blocker
-engine_map_status: documented; read-only endpoint/tab = PR D
+engine_map_status: COMPLETE - read-only GET /api/hive-engine-map + "Engine Map" UI tab (PR D shipped)
 audit_confidence_level: 1 (early 2)
 ```
 
