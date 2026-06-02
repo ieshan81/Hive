@@ -75,15 +75,31 @@ def run_exploration(
     _op: str = Depends(require_operator_token),
 ):
     """OPERATOR ACTION: submit at most one tiny PAPER-ONLY exploration probe through the cage.
-    Never live, never forced, notional-capped. Respects kill switch (catastrophic blocks)."""
+    Never live, never forced, notional-capped. Respects kill switch (catastrophic blocks).
+    Always returns structured JSON — never a bare HTTP 500."""
     from app.services.paper_exploration_service import PaperExplorationService
 
     _block_ai_actor(body)
-    out = PaperExplorationService(session).run_exploration_cycle(
-        operator=_actor(body), dry_run=bool(body.get("dry_run", False))
-    )
-    session.commit()
-    return out
+    try:
+        out = PaperExplorationService(session).run_exploration_cycle(
+            operator=_actor(body), dry_run=bool(body.get("dry_run", False))
+        )
+        session.commit()
+        return out
+    except Exception as exc:  # defense-in-depth: structured error, never an uncaught 500
+        try:
+            session.rollback()
+        except Exception:
+            pass
+        return {
+            "status": "error",
+            "submitted": False,
+            "orders_created": 0,
+            "block_reason": "run_exploration_route_exception",
+            "error_stage": "router",
+            "exception_type": type(exc).__name__,
+            "safe_human_message": "Paper exploration request failed safely; no order was submitted.",
+        }
 
 
 @router.get("/research-runs")
