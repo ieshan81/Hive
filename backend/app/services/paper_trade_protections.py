@@ -13,8 +13,9 @@ The public surface is split so it stays unit-testable without a live DB:
 
 * pure decision functions (``*_protection`` / ``*_guard``) take plain numbers and
   return a :class:`ProtectionResult`;
-* ``collect_protection_context`` reads the DB defensively (fail-open: missing
-  data degrades to "no block" with a warning, never a crash), and
+* ``collect_protection_context`` reads the DB defensively (never crashes); a read
+  failure sets ``degraded`` so ``run_all_protections`` FAILS CLOSED and blocks new
+  entries (exits are never gated by this module), and
 * ``run_all_protections`` runs the configured guards in order and returns the
   first block (or a clean pass).
 """
@@ -45,6 +46,9 @@ class ProtectionResult:
 # protections, not trade-count caps, and they only ever block *new entries*.
 PROTECTION_DEFAULTS: dict[str, Any] = {
     "enabled": True,
+    # Fail-closed: if the protection DB/context is unavailable, BLOCK new entries (exits are
+    # never gated by this module). Prevents silently permitting entries on missing context.
+    "fail_closed_on_degraded": True,
     # MaxDrawdownProtection
     "max_drawdown_block_pct": 12.0,
     # StoplossGuard
@@ -251,6 +255,10 @@ class ProtectionContext:
     setup_net_pnl_usd: float = 0.0
     setup_trade_count: int = 0
     recent_losing_streak: int = 0
+    # Fail-closed signal: True when the protection context could not be read (DB/exception),
+    # so new entries must be blocked rather than silently permitted.
+    degraded: bool = False
+    degraded_reason: Optional[str] = None
     warnings: list[str] = field(default_factory=list)
 
 
@@ -274,6 +282,12 @@ def collect_protection_context(
         edge_after_cost_bps=edge_after_cost_bps,
         setup=str(setup or ""),
     )
+
+    if session is None:
+        ctx.degraded = True
+        ctx.degraded_reason = "PAPER_PROTECTION_CONTEXT_UNAVAILABLE:no_session"
+        ctx.warnings.append("protection_context_degraded:no_session")
+        return ctx
 
     now = datetime.utcnow()
 
@@ -338,7 +352,9 @@ def collect_protection_context(
         ctx.recent_losing_streak = streak
         if last_exit_dt is not None:
             ctx.minutes_since_last_exit = max(0.0, (now - last_exit_dt).total_seconds() / 60.0)
-    except Exception as exc:  # fail-open
+    except Exception as exc:  # context unavailable -> fail-closed for entries (exits unaffected)
+        ctx.degraded = True
+        ctx.degraded_reason = f"DB_CONTEXT_UNAVAILABLE:{type(exc).__name__}"
         ctx.warnings.append(f"protection_context_degraded:{type(exc).__name__}")
 
     return ctx
@@ -351,6 +367,27 @@ def run_all_protections(ctx: ProtectionContext, config: dict) -> ProtectionResul
     cfg = protections_config(config)
     if not bool(cfg.get("enabled", True)):
         return ProtectionResult(warnings=["protections_disabled"])
+
+    # FAIL-CLOSED: if the protection context could not be read, block NEW ENTRIES rather than
+    # silently permitting them. Exits never invoke this module, so they remain unaffected.
+    if getattr(ctx, "degraded", False) and bool(cfg.get("fail_closed_on_degraded", True)):
+        return ProtectionResult(
+            True,
+            "PROTECTIONS_DEGRADED_FAIL_CLOSED",
+            "Paper protection context unavailable — new entries blocked (fail-closed); exits allowed.",
+            {
+                "protections_degraded": True,
+                "degraded_reason": getattr(ctx, "degraded_reason", None),
+                "blocker_codes": [
+                    "PROTECTIONS_DEGRADED_FAIL_CLOSED",
+                    "PAPER_PROTECTION_CONTEXT_UNAVAILABLE",
+                    "DB_CONTEXT_UNAVAILABLE",
+                ],
+                "exits_allowed": True,
+                "entry_quality_block_reason": "PROTECTIONS_DEGRADED_FAIL_CLOSED",
+            },
+            warnings=list(ctx.warnings),
+        )
 
     checks = [
         max_drawdown_protection(ctx.drawdown_pct, _num(cfg["max_drawdown_block_pct"], 12.0)),
