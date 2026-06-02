@@ -43,6 +43,16 @@ def status(session: Session = Depends(get_session)):
     }
 
 
+@router.get("/summary")
+def universe_summary(session: Session = Depends(get_session)):
+    """FAST READ-ONLY path for Universe top cards. Builds the funnel + cached source proof only
+    (no heavy scan, no slow Alpaca discovery, no order path). Prefer this over /status, which runs
+    the full mission-control build and can exceed the UI timeout (producing a false zero)."""
+    from app.services.universe_summary_service import build_universe_summary
+
+    return build_universe_summary(session)
+
+
 @router.get("/scan-summary")
 def scan_summary(session: Session = Depends(get_session)):
     from app.services.mission_control_read_model import build_mission_control_status
