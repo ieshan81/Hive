@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     # Basic plans cannot query the most-recent ~15 min of stock data; request bars up to
     # (now - this many minutes) to avoid empty/blocked responses. 0 disables the delay window.
     alpaca_stock_data_delay_minutes: int = 16
+    # Stock-bar freshness gate: during market hours the latest bar must be within this many
+    # minutes of now (delay window + tolerance) to count as fresh, else it is stale and blocked.
+    alpaca_stock_max_bar_age_minutes: int = 30
+    # When the market is closed the latest bar is the last session close; allow up to this age
+    # (covers weekends/holidays) before calling it stale. ~4 days by default.
+    alpaca_stock_max_closed_bar_age_minutes: int = 5760
     gemini_api_key: str = ""
     # Model IDs from Google AI — set in Railway/local .env when Google deprecates a version
     gemini_model: str = "gemini-2.0-flash"
