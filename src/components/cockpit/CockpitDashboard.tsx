@@ -140,23 +140,21 @@ export function CockpitDashboard() {
 
   const load = useCallback(async () => {
     setErr(null);
-    // Fast-path tiles (always-visible status) + full payload (heavy panels) in parallel,
-    // so the status tiles stay responsive even if the heavy /status build is slow.
-    const [tilesRes, statusRes] = await Promise.all([
-      apiGet<Cockpit>("/api/mission-control/tiles", { timeoutMs: 5000 }),
-      apiGet<Cockpit>("/api/mission-control/status", { timeoutMs: 12000 }),
-    ]);
-    if (statusRes.ok && statusRes.data) {
-      setData(statusRes.data);
-      dispatchCockpitRefresh(statusRes.data as Record<string, unknown>);
-      setErr(null);
-    } else {
-      setErr(statusRes.error || "Cockpit unavailable - check API_URL on Railway frontend");
-    }
-    // Prefer the fast tiles payload; fall back to the full status payload for tile values.
-    const tileData = tilesRes.ok && tilesRes.data ? tilesRes.data : statusRes.ok && statusRes.data ? statusRes.data : null;
-    if (tileData) {
-      setTiles(tileData);
+    // Heavy panels (funnel / research / alpha) on a longer budget — fired independently so the
+    // slow /status build never blocks the always-visible status tiles.
+    apiGet<Cockpit>("/api/mission-control/status", { timeoutMs: 12000 }).then((statusRes) => {
+      if (statusRes.ok && statusRes.data) {
+        setData(statusRes.data);
+        dispatchCockpitRefresh(statusRes.data as Record<string, unknown>);
+        setErr(null);
+      } else {
+        setErr(statusRes.error || "Cockpit unavailable - check API_URL on Railway frontend");
+      }
+    });
+    // Fast-path tiles — render the always-visible status tiles ASAP (~1s), independent of /status.
+    const tilesRes = await apiGet<Cockpit>("/api/mission-control/tiles", { timeoutMs: 5000 });
+    if (tilesRes.ok && tilesRes.data) {
+      setTiles(tilesRes.data);
       setTilesStale(false);
     } else {
       // Could not confirm tile state this cycle → render neutral "refreshing", never alarming RED.
