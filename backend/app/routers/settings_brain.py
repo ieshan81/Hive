@@ -6,7 +6,7 @@ from fastapi import APIRouter, Body, Depends
 from sqlmodel import Session, select
 
 from app.database import PositionSnapshot, SettingsActionAudit, get_session
-from app.services.ai_learning_memory_service import AILearningMemoryService
+from app.services.evidence_memory_service import EvidenceMemoryService
 from app.services.broker_safety import broker_base_url, is_paper_broker_url, live_lock_status
 from app.services.config_manager import ConfigManager
 from app.services.hive_brain_graph_service import HiveBrainGraphService
@@ -106,7 +106,7 @@ def export_brain_bundle(session: Session = Depends(get_session), _op_guard: str 
     cfg = ConfigManager(session).get_current()
     graph = HiveBrainGraphService(session, cfg).build()
     consolidated = MemoryConsolidationService(session, cfg).list_consolidated(30)
-    ai = AILearningMemoryService(session, cfg).list_ai_learning(30)
+    ai = EvidenceMemoryService(session, cfg).list_ai_learning(30)
     out = _audit(session, "export_brain_bundle", {"nodes": len(graph.get("nodes", []))})
     session.commit()
     return {

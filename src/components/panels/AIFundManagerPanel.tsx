@@ -28,7 +28,7 @@ export function AIFundManagerPanel({ data }: AIFundManagerPanelProps) {
   return (
     <>
       <GlassPanel
-        title="AI Fund Manager"
+        title="Strategy Reviewer"
         icon={<Brain className="h-4 w-4" />}
         action={
           <span className={`rounded px-2 py-0.5 text-[10px] font-bold tracking-wider border uppercase ${badgeClass}`}>
@@ -63,7 +63,7 @@ export function AIFundManagerPanel({ data }: AIFundManagerPanelProps) {
               <section className="mb-3 space-y-2 text-[10px]">
                 {data.whatILearned && data.whatILearned.length > 0 && (
                   <div>
-                    <p className="text-cyan-400 font-semibold mb-0.5">What I learned</p>
+                    <p className="text-cyan-400 font-semibold mb-0.5">Evidence learned</p>
                     <ul className="text-slate-400 list-disc pl-4">
                       {data.whatILearned.slice(0, 4).map((l, i) => (
                         <li key={i}>{l}</li>
@@ -73,7 +73,7 @@ export function AIFundManagerPanel({ data }: AIFundManagerPanelProps) {
                 )}
                 {data.whatIWillAvoid && data.whatIWillAvoid.length > 0 && (
                   <div>
-                    <p className="text-amber-400 font-semibold mb-0.5">What I will avoid</p>
+                    <p className="text-amber-400 font-semibold mb-0.5">Patterns to avoid</p>
                     <ul className="text-slate-400 list-disc pl-4">
                       {data.whatIWillAvoid.slice(0, 4).map((l, i) => (
                         <li key={i}>{l}</li>
@@ -83,7 +83,7 @@ export function AIFundManagerPanel({ data }: AIFundManagerPanelProps) {
                 )}
                 {data.whatIWillTestNext && data.whatIWillTestNext.length > 0 && (
                   <div>
-                    <p className="text-violet-400 font-semibold mb-0.5">What I will test next</p>
+                    <p className="text-violet-400 font-semibold mb-0.5">Next tests queued</p>
                     <ul className="text-slate-400 list-disc pl-4">
                       {data.whatIWillTestNext.slice(0, 3).map((l, i) => (
                         <li key={i}>{l}</li>

@@ -1,4 +1,11 @@
-"""AI Fund Manager — Gemini with budget guard, compact payloads."""
+"""Strategy Reviewer — optional Gemini commentary on cycle activity (budget-guarded).
+
+QUARANTINED / advisory only. Renamed from the former "AI Fund Manager". It CANNOT execute trades,
+rank symbols, change scorecards, or override risk — it only writes an AIReview commentary row and may
+propose (never auto-apply) a gated config change. Disabled by default in the decision loop (see
+cycle_engine `legacy_strategy_reviewer.enabled`). No trade/score/rank/promotion/risk decision depends
+on its output.
+"""
 
 from __future__ import annotations
 
@@ -35,7 +42,7 @@ class AIReviewOutput(BaseModel):
     evidence_used: list[str] = Field(default_factory=list)
 
 
-class AIFundManager:
+class StrategyReviewer:
     def __init__(self, session: Session):
         self.session = session
         self.config = ConfigManager(session).get_current()
@@ -96,8 +103,9 @@ class AIFundManager:
             genai.configure(api_key=settings.gemini_api_key)
             gemini = genai.GenerativeModel(model)
             prompt = (
-                "You are the AI Fund Manager for Caged Hive Quant (paper trading, $5/mo AI budget). "
-                "You CANNOT execute trades or override risk. Be concise. "
+                "You are the Strategy Reviewer for Caged Hive Quant (paper trading, $5/mo AI budget). "
+                "You CANNOT execute trades, rank symbols, change scorecards, or override risk. Your output "
+                "is advisory commentary only and requires human approval. Be concise. "
                 "Respond ONLY with valid JSON matching:\n"
                 f"{AIReviewOutput.model_json_schema()}\n\n"
                 f"Subject: {subject_type}\nContext:\n{compact}"

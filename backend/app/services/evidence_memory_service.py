@@ -1,4 +1,10 @@
-"""Generate core AI learning memories from research, training, and rejections."""
+"""Evidence Memory — derive advisory lesson memories from research, training, and rejections.
+
+Renamed from the former "AI Learning Memory". These memories are EVIDENCE-DERIVED and ADVISORY ONLY:
+the deterministic validation gate owns the lifecycle, and no trade/score/rank/promotion/risk decision
+reads these rows (see verify_no_vibe_logic_in_decision_path.py). Method and DB-category names are kept
+stable to avoid a data migration.
+"""
 
 from __future__ import annotations
 
@@ -47,7 +53,7 @@ CORE_LESSON_TEMPLATES = [
 ]
 
 
-class AILearningMemoryService:
+class EvidenceMemoryService:
     def __init__(self, session: Session, config: dict):
         self.session = session
         self.config = config

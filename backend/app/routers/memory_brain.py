@@ -8,7 +8,7 @@ from sqlmodel import Session
 from fastapi import HTTPException
 
 from app.database import get_session
-from app.services.ai_learning_memory_service import AILearningMemoryService
+from app.services.evidence_memory_service import EvidenceMemoryService
 from app.services.config_manager import ConfigManager
 from app.services.hive_brain_graph_service import HiveBrainGraphService
 from app.services.memory_consolidation_service import MemoryConsolidationService
@@ -161,13 +161,13 @@ def list_consolidated(session: Session = Depends(get_session)):
 @router.get("/ai-learning")
 def list_ai_learning(session: Session = Depends(get_session)):
     cfg = ConfigManager(session).get_current()
-    return {"status": "ok", "memories": AILearningMemoryService(session, cfg).list_ai_learning()}
+    return {"status": "ok", "memories": EvidenceMemoryService(session, cfg).list_ai_learning()}
 
 
 @router.post("/ai-learning/generate")
 def generate_ai_learning(body: dict = Body(default={}), session: Session = Depends(get_session), _op_guard: str = Depends(require_operator_token)):
     cfg = ConfigManager(session).get_current()
-    out = AILearningMemoryService(session, cfg).generate(force=bool(body.get("force")))
+    out = EvidenceMemoryService(session, cfg).generate(force=bool(body.get("force")))
     session.commit()
     return out
 

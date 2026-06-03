@@ -4,7 +4,7 @@ from sqlmodel import Session
 
 from app.database import get_session
 from app.services.alpaca_adapter import AlpacaAdapter
-from app.services.ai_fund_manager import AIFundManager
+from app.services.strategy_reviewer import StrategyReviewer
 from app.services.attention_radar_service import AttentionRadarService
 from app.services.config_manager import ConfigManager
 from app.services.dashboard_service import build_dashboard
@@ -538,9 +538,9 @@ def memory_hive_mind(session: Session = Depends(get_session)):
     if latest_review and (latest_review.review_status or "").lower() in ("skipped", "skip"):
         freshness = "skipped"
         skip_reason = (latest_review.payload or {}).get("skip_reason", "rate_or_daily_limit")
-    from app.services.ai_learning_memory_service import AILearningMemoryService
+    from app.services.evidence_memory_service import EvidenceMemoryService
 
-    learning = AILearningMemoryService(session, config).learning_directives()
+    learning = EvidenceMemoryService(session, config).learning_directives()
     return {
         "status": "ok",
         **svc.hive_mind_summary(),
@@ -1007,9 +1007,9 @@ def _run_ai_review(session: Session, cycle_run_id: str | None, mode: str, force:
     from app.database import SystemHealth
     from app.services.cycle_persistence import latest_cycle_end
 
-    ai = AIFundManager(session)
-    if not ai.configured:
-        return {"status": "error", "message": "Gemini not configured or AI disabled", "meta": {}}
+    reviewer = StrategyReviewer(session)
+    if not reviewer.configured:
+        return {"status": "error", "message": "Gemini not configured or Strategy Reviewer disabled", "meta": {}}
 
     cid = resolve_cycle_run_id(session, cycle_run_id or "latest")
     log = latest_cycle_end(session)
@@ -1018,7 +1018,7 @@ def _run_ai_review(session: Session, cycle_run_id: str | None, mode: str, force:
         summary = (session.get(SystemHealth, 1).details or {}).get("last_cycle", {})
 
     ctx = build_compact_cycle_context(session, cid or "", summary) if cid else build_dashboard(session)
-    review, meta = ai.review(
+    review, meta = reviewer.review(
         "manual_review",
         ctx if isinstance(ctx, dict) else {"dashboard": "compact"},
         subject_id=cid,

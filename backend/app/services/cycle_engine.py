@@ -10,7 +10,7 @@ from sqlmodel import Session
 
 from app.database import PositionSnapshot, StrategySignal, SystemHealth
 from app.services.activity_logger import log_activity
-from app.services.ai_fund_manager import AIFundManager
+from app.services.strategy_reviewer import StrategyReviewer
 from app.services.ai_lab_service import build_compact_cycle_context, deterministic_cycle_summary
 from app.services.alpaca_adapter import AlpacaAdapter, normalize_crypto_symbol
 from app.services.capital_buckets import compute_buckets
@@ -59,7 +59,10 @@ class CycleEngine:
         self.radar = MarketRadarService(session, self.config)
         self.strategies = StrategyEngine(session, self.config)
         self.risk = RiskEngine(session)
-        self.ai = AIFundManager(session)
+        # Strategy Reviewer (ex-"AI Fund Manager") is advisory commentary, QUARANTINED: disabled by
+        # default so it never runs in the decision loop. It cannot rank/score/gate/execute.
+        self.reviewer = StrategyReviewer(session)
+        self.reviewer_enabled = bool(self.config.get("legacy_strategy_reviewer_enabled", False))
         self.ai_budget = AIBudgetGuard(session)
         self.positions: list[PositionSnapshot] = []
 
@@ -391,9 +394,12 @@ class CycleEngine:
 
         meaningful_ai = summary["signals_evaluated"] > 0 or summary["blocked"] > 0 or summary["observations"] > 0
         allow, reason = self.ai_budget.allow_review()
-        if meaningful_ai and self.ai.configured and allow:
+        # QUARANTINE: the Strategy Reviewer is advisory commentary only and is DISABLED BY DEFAULT
+        # (legacy_strategy_reviewer_enabled). It never ranks/scores/gates/executes; the cycle's trade
+        # decisions are already complete above. When disabled we use the deterministic system summary.
+        if self.reviewer_enabled and meaningful_ai and self.reviewer.configured and allow:
             ctx = build_compact_cycle_context(self.session, cycle_run_id, summary)
-            review, ai_meta = self.ai.review(
+            review, ai_meta = self.reviewer.review(
                 "cycle",
                 ctx,
                 subject_id=cycle_run_id,
@@ -415,16 +421,19 @@ class CycleEngine:
                 summary["ai_review"] = review.decision
             elif ai_meta.get("ai_review_status") == "failed":
                 summary["errors"].append(
-                    f"AI review failed: {ai_meta.get('ai_review_error_type')}: {ai_meta.get('ai_review_error_message')}"
+                    f"Strategy review failed: {ai_meta.get('ai_review_error_type')}: {ai_meta.get('ai_review_error_message')}"
                 )
                 log_activity(self.session, "ai_review_failed", summary["errors"][-1], ai_meta)
-            summary["steps"].append("ai_review")
+            summary["steps"].append("strategy_review")
         else:
             fb = deterministic_cycle_summary(self.session, cycle_run_id, summary)
             summary["fallback_summary"] = fb
             summary["ai_review_meta"] = {
-                "ai_review_status": "skipped_budget_guard" if not allow else "skipped",
-                "ai_review_error_message": reason if not allow else "Gemini not configured or no meaningful activity",
+                "ai_review_status": "disabled" if not self.reviewer_enabled else ("skipped_budget_guard" if not allow else "skipped"),
+                "ai_review_error_message": (
+                    "Strategy Reviewer disabled (legacy_strategy_reviewer_enabled=false)" if not self.reviewer_enabled
+                    else reason if not allow else "Gemini not configured or no meaningful activity"
+                ),
                 "fallback_summary_source": "system",
             }
             if meaningful_ai and not allow:
@@ -452,7 +461,7 @@ class CycleEngine:
         health = self.session.get(SystemHealth, 1) or SystemHealth(id=1)
         health.alpaca_connected = account is not None
         health.database_connected = True
-        health.gemini_configured = self.ai.configured
+        health.gemini_configured = self.reviewer.configured
         health.last_account_sync = datetime.utcnow() if account else health.last_account_sync
         health.details = {"last_cycle": summary, "cycle_run_id": cycle_run_id}
         health.updated_at = datetime.utcnow()

@@ -55,7 +55,7 @@ export function StrategyProposalsPanel() {
   return (
     <GlassPanel title="Strategy Proposals" icon={<GitPullRequest className="h-4 w-4" />}>
       <p className="text-[10px] text-slate-500 mb-3">
-        Self-improvement suggestions from memory and confidence — operator approval required. Never changes live lock
+        Evidence-based suggestions from memory and scorecards — operator approval required. Never changes live lock
         keys.
       </p>
       <ul className="space-y-2 max-h-96 overflow-y-auto">
