@@ -31,6 +31,16 @@ def main() -> None:
     b = build_latest_bundle(Session(engine), config={})
 
     assert "universe_summary.json" in b and "paper_validation_productivity.json" in b
+    readme = b.get("README_FIRST.json") or {}
+    for key in (
+        "last_tick_at",
+        "next_tick_at",
+        "shadow_count",
+        "why_no_trade",
+        "paper_entry_ready",
+        "paper_orders_enabled",
+    ):
+        assert key in readme, f"README_FIRST missing {key}"
     tt = b["current_run_trade_truth.json"]
     # Current-run vs historical are distinct fields.
     assert "current_run_order_attempts" in tt and "historical_orders_count" in tt

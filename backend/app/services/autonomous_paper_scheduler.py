@@ -8,9 +8,15 @@ from typing import Any, Optional
 from sqlmodel import Session, func, select
 
 from app.database import ExecutionLog, SettingsActionAudit
+import uuid
+
 from app.services.autonomous_paper_learning_service import AutonomousPaperLearningService
 from app.services.config_manager import ConfigManager, _deep_merge
 from app.services.engine_config import cfg_get
+from app.services.fast_training_lease_service import (
+    SCHEDULER_TICK_LEASE_KEY,
+    FastTrainingLeaseService,
+)
 from app.services.paper_autopilot_caps import (
     LIVE_OR_FILLED_STATUSES,
     cap_status,
@@ -184,6 +190,7 @@ class AutonomousPaperScheduler:
                 "broker_flat_stale_symbols": [],
                 "duplicate_buy_source_of_truth": "broker_truth_first_with_local_fallback",
             }
+        tick_lease = self._tick_lease_service().status()
         return {
             "scheduler_enabled": bool(self.cfg.get("scheduler_enabled")),
             "paused": bool(self._state.get("paused")),
@@ -217,9 +224,21 @@ class AutonomousPaperScheduler:
             "last_trade_state_repair_result": self._state.get("last_trade_state_repair_result"),
             "duplicate_buy_source_of_truth": exposure_diag.get("duplicate_buy_source_of_truth"),
             "adaptive_opportunity_budget": self._adaptive_budget_summary(),
+            "tick_lease_held": tick_lease.get("lease_held"),
+            "tick_in_progress": bool(tick_lease.get("lease_held")),
             **self._spread_research_status(),
             **caps,
         }
+
+    def _tick_lease_service(self) -> FastTrainingLeaseService:
+        configured = max(60, int(self.cfg.get("scheduler_interval_seconds", 600)))
+        ttl = max(120, min(configured * 2, 900))
+        return FastTrainingLeaseService(
+            self.session,
+            lease_key=SCHEDULER_TICK_LEASE_KEY,
+            use_db_lease=bool(cfg_get(self.config, "fast_training.use_db_lease", True)),
+            ttl_seconds=ttl,
+        )
 
     def enable(self, operator: str = "operator") -> dict[str, Any]:
         cfg_mgr = ConfigManager(self.session)
@@ -279,116 +298,144 @@ class AutonomousPaperScheduler:
         if not apl_cfg.get("mode_enabled"):
             return {"status": "noop", "reason": "autonomous_paper_learning_off"}
 
+        lease_svc = self._tick_lease_service()
+        holder = f"{operator}-{uuid.uuid4().hex[:10]}"
+        acquired, existing_holder = lease_svc.acquire(holder)
+        if not acquired:
+            return {
+                "status": "skipped",
+                "reason": "tick_in_progress",
+                "holder_id": existing_holder,
+                "live_locked": True,
+            }
+
         # ---- Pacing (cron only; supervised ticks/bursts bypass) ----
         # Min-interval + backoff prevents API/broker spam. This PACES (skips early) — it
         # never hard-stops for the day, so the scheduler keeps scanning on cadence.
-        configured_interval, effective_interval, backoff_reason = self._effective_interval()
-        if operator == "cron":
-            last = self._state.get("last_tick_at")
-            if last:
-                try:
-                    last_dt = datetime.fromisoformat(str(last).replace("Z", ""))
-                    elapsed = (datetime.utcnow() - last_dt).total_seconds()
-                    if elapsed < effective_interval * 0.8:
-                        return {
-                            "status": "skipped",
-                            "reason": "tick_paced",
-                            "elapsed_seconds": round(elapsed, 1),
-                            "configured_interval_seconds": configured_interval,
-                            "effective_interval_seconds": effective_interval,
-                            "backoff_reason": backoff_reason,
-                        }
-                except ValueError:
-                    pass
+        try:
+            configured_interval, effective_interval, backoff_reason = self._effective_interval()
+            if operator == "cron":
+                last = self._state.get("last_tick_at")
+                if last:
+                    try:
+                        last_dt = datetime.fromisoformat(str(last).replace("Z", ""))
+                        elapsed = (datetime.utcnow() - last_dt).total_seconds()
+                        if elapsed < effective_interval * 0.8:
+                            return {
+                                "status": "skipped",
+                                "reason": "tick_paced",
+                                "elapsed_seconds": round(elapsed, 1),
+                                "configured_interval_seconds": configured_interval,
+                                "effective_interval_seconds": effective_interval,
+                                "backoff_reason": backoff_reason,
+                            }
+                    except ValueError:
+                        pass
 
-        # ---- Tick COUNT is telemetry only — the daily tick cap no longer hard-pauses. ----
-        # Pacing/backoff above prevents spam; the scheduler keeps scanning all day. Order
-        # safety lives in the execution cage + adaptive opportunity budget (which gate every
-        # order), not in a tick counter. ticks_today is surfaced in status() for diagnostics.
+            # ---- Tick COUNT is telemetry only — the daily tick cap no longer hard-pauses. ----
 
-        use_allocator = bool(apl_cfg.get("use_capital_allocator", True))
-        max_ticks = int(apl_cfg.get("max_scheduler_ticks_per_day", 0) or 0)
-        if use_allocator:
-            max_ticks = 0  # opportunity-based when allocator is active
-        if max_ticks > 0 and int(self._state.get("ticks_today", 0)) >= max_ticks:
-            self._state["paused"] = True
-            self._state["paused_reason"] = "daily_tick_cap"
-            self._persist_state(operator)
-            return {"status": "stopped", "reason": "daily_tick_cap_reached"}
-
-        max_trades = 0 if use_allocator else int(apl_cfg.get("max_paper_trades_per_day", 0) or 0)
-        if max_trades > 0:
-            start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-            filled_today = len(
-                list(
-                    self.session.exec(
-                        select(ExecutionLog).where(
-                            ExecutionLog.created_at >= start,
-                            ExecutionLog.status == "paper_order_filled",
-                        )
-                    ).all()
-                )
-            )
-            if filled_today >= max_trades:
+            use_allocator = bool(apl_cfg.get("use_capital_allocator", True))
+            max_ticks = int(apl_cfg.get("max_scheduler_ticks_per_day", 0) or 0)
+            if use_allocator:
+                max_ticks = 0  # opportunity-based when allocator is active
+            if max_ticks > 0 and int(self._state.get("ticks_today", 0)) >= max_ticks:
                 self._state["paused"] = True
-                self._state["paused_reason"] = "daily_trade_cap"
+                self._state["paused_reason"] = "daily_tick_cap"
                 self._persist_state(operator)
-                return {"status": "stopped", "reason": "daily_paper_trade_cap"}
+                return {"status": "stopped", "reason": "daily_tick_cap_reached"}
 
-        svc = AutonomousPaperLearningService(self.session, self.config)
-        rejected_before = self._rejected_count()
-        result = svc.run_one_cycle(operator=operator)
-        rejected_after = self._rejected_count()
-        rejected_this_tick = max(0, rejected_after - rejected_before)
-        repair = result.get("trade_state_repair") or {}
-        self._state["last_trade_state_repair_at"] = datetime.utcnow().isoformat() + "Z"
-        self._state["last_trade_state_repair_result"] = {
-            "status": repair.get("status"),
-            "affected_count": repair.get("affected_count", 0),
-            "reason": repair.get("reason"),
-        }
-        self._state["ticks_today"] = int(self._state.get("ticks_today", 0)) + 1
-        self._state["last_tick_at"] = datetime.utcnow().isoformat() + "Z"
+            max_trades = 0 if use_allocator else int(apl_cfg.get("max_paper_trades_per_day", 0) or 0)
+            if max_trades > 0:
+                start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+                filled_today = len(
+                    list(
+                        self.session.exec(
+                            select(ExecutionLog).where(
+                                ExecutionLog.created_at >= start,
+                                ExecutionLog.status == "paper_order_filled",
+                            )
+                        ).all()
+                    )
+                )
+                if filled_today >= max_trades:
+                    self._state["paused"] = True
+                    self._state["paused_reason"] = "daily_trade_cap"
+                    self._persist_state(operator)
+                    return {"status": "stopped", "reason": "daily_paper_trade_cap"}
 
-        # ---- Consecutive broker-error auto-pause ----
-        if result.get("status") in ("error", "blocked") and "broker" in str(result.get("reason", "")).lower():
-            self._state["broker_error_streak"] = int(self._state.get("broker_error_streak", 0)) + 1
-            if self._state["broker_error_streak"] >= resolve_cap(
-                self.config, "auto_pause_after_consecutive_broker_errors"
-            ):
-                self._state["paused"] = True
-                self._state["paused_reason"] = "consecutive_broker_errors"
-        else:
-            self._state["broker_error_streak"] = 0
+            svc = AutonomousPaperLearningService(self.session, self.config)
+            rejected_before = self._rejected_count()
+            result = svc.run_one_cycle(operator=operator)
+            if result.get("reason") == "lease_held":
+                return {
+                    "status": "skipped",
+                    "reason": "tick_in_progress",
+                    "holder_id": result.get("holder_id"),
+                    "live_locked": True,
+                }
 
-        # ---- Consecutive rejection auto-pause ----
-        if rejected_this_tick > 0:
-            self._state["rejection_streak"] = int(self._state.get("rejection_streak", 0)) + 1
-            if self._state["rejection_streak"] >= resolve_cap(
-                self.config, "auto_pause_after_consecutive_rejections"
-            ):
-                self._state["paused"] = True
-                self._state["paused_reason"] = "consecutive_rejections"
-        else:
-            self._state["rejection_streak"] = 0
+            rejected_after = self._rejected_count()
+            rejected_this_tick = max(0, rejected_after - rejected_before)
+            repair = result.get("trade_state_repair") or {}
+            self._state["last_trade_state_repair_at"] = datetime.utcnow().isoformat() + "Z"
+            self._state["last_trade_state_repair_result"] = {
+                "status": repair.get("status"),
+                "affected_count": repair.get("affected_count", 0),
+                "reason": repair.get("reason"),
+            }
+            tick_summary = result.get("tick_summary") or {}
+            self._state["last_shadow_setups_observed"] = int(tick_summary.get("shadow_setups_observed") or 0)
+            self._state["last_shadow_trades_created"] = int(tick_summary.get("shadow_trades_created") or 0)
+            self._state["last_shadow_errors"] = int(tick_summary.get("shadow_errors") or 0)
+            if self._state["last_shadow_errors"]:
+                self._state["last_shadow_error"] = f"shadow_errors={self._state['last_shadow_errors']}"
+            else:
+                self._state["last_shadow_error"] = None
+            self._state["last_tick_shadow_at"] = datetime.utcnow().isoformat() + "Z"
+            self._state["ticks_today"] = int(self._state.get("ticks_today", 0)) + 1
+            self._state["last_tick_at"] = datetime.utcnow().isoformat() + "Z"
 
-        # Auto-consolidate raw memories into visible learned memories (throttled, DB-only).
-        # Previously consolidation only ran from a manual endpoint, so the Hive Mind stayed
-        # at thousands-of-raw / zero-learned ("fresh brain"). Never trades; never crashes the tick.
-        self._maybe_consolidate_memory(operator)
-        self._maybe_run_research(operator)
+            # ---- Consecutive broker-error auto-pause ----
+            if result.get("status") in ("error", "blocked") and "broker" in str(result.get("reason", "")).lower():
+                self._state["broker_error_streak"] = int(self._state.get("broker_error_streak", 0)) + 1
+                if self._state["broker_error_streak"] >= resolve_cap(
+                    self.config, "auto_pause_after_consecutive_broker_errors"
+                ):
+                    self._state["paused"] = True
+                    self._state["paused_reason"] = "consecutive_broker_errors"
+            else:
+                self._state["broker_error_streak"] = 0
 
-        self._persist_state(operator)
-        self.session.flush()
-        tick_result = {
-            "status": "ok",
-            "tick": self.status(),
-            "cycle_result": result,
-            "rejected_this_tick": rejected_this_tick,
-        }
-        self._journal_tick(operator, supervised, tick_result)
-        self._maybe_rotate_daily(operator)
-        return tick_result
+            # ---- Consecutive rejection auto-pause ----
+            if rejected_this_tick > 0:
+                self._state["rejection_streak"] = int(self._state.get("rejection_streak", 0)) + 1
+                if self._state["rejection_streak"] >= resolve_cap(
+                    self.config, "auto_pause_after_consecutive_rejections"
+                ):
+                    self._state["paused"] = True
+                    self._state["paused_reason"] = "consecutive_rejections"
+            else:
+                self._state["rejection_streak"] = 0
+
+            self._maybe_consolidate_memory(operator)
+            self._maybe_run_research(operator)
+
+            self._persist_state(operator)
+            self.session.flush()
+            tick_result = {
+                "status": "ok",
+                "tick": self.status(),
+                "cycle_result": result,
+                "rejected_this_tick": rejected_this_tick,
+            }
+            self._journal_tick(operator, supervised, tick_result)
+            self._maybe_rotate_daily(operator)
+            return tick_result
+        finally:
+            try:
+                lease_svc.release(holder, {"status": "released"})
+            except Exception:
+                pass
 
     def _maybe_consolidate_memory(self, operator: str) -> None:
         """Throttled, fail-safe memory consolidation so raw lessons become visible learned

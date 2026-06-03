@@ -12,6 +12,7 @@ from app.database import FastTrainingLease
 
 LEASE_KEY = "fast_training_run"
 AUTONOMOUS_LEASE_KEY = "autonomous_paper_learning"
+SCHEDULER_TICK_LEASE_KEY = "scheduler_tick"
 DEFAULT_TTL_SECONDS = 120
 
 
