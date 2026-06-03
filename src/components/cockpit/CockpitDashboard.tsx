@@ -7,6 +7,7 @@ import { TickerSymbol } from "@/components/ui/TickerSymbol";
 import { CockpitFunnelBrain } from "@/components/cockpit/CockpitFunnelBrain";
 import { CockpitAutopilotChip } from "@/components/cockpit/CockpitAutopilotChip";
 import { CockpitPortfolioHistory } from "@/components/cockpit/CockpitPortfolioHistory";
+import { ShadowLeagueMiniPanel } from "@/components/cockpit/ShadowLeagueMiniPanel";
 import { apiGet, apiPostOperator } from "@/lib/apiClient";
 import { dispatchCockpitRefresh } from "@/lib/cockpitEvents";
 
@@ -257,6 +258,8 @@ export function CockpitDashboard() {
         </button>
         <CockpitAutopilotChip />
       </div>
+
+      <ShadowLeagueMiniPanel />
 
       <div className="grid gap-3 grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
         {[

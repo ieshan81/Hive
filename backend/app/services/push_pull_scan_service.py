@@ -77,6 +77,8 @@ class PushPullScanService:
                 reason_counts["blocked_other"] += 1
 
         scoring = score_active_universe(self.session, self.config, universe=universe)
+        shadow_created = 0
+        shadow_observed = 0
 
         # Exits first — SL/TP/loss band before new entries
         try:
@@ -151,6 +153,8 @@ class PushPullScanService:
             ev = {**ev, "live_score": row_score, "entry_quality_decision": quality_decision}
             decisions_out.append(ev)
             rc = ev.get("reason_code") or "unknown"
+            paper_submitted = False
+            paper_blocked_reason: str | None = None
             if ev.get("decision") == "approved":
                 approved_count += 1
                 from sqlmodel import select as sel
@@ -170,12 +174,16 @@ class PushPullScanService:
                     quote_refresh_attempts += 1 if ex.get("quote_refreshed") else 0
                     if ex.get("submitted"):
                         order_count += 1
-                    elif ex.get("reject_reason") == "STALE_QUOTE":
+                        paper_submitted = True
+                    else:
+                        paper_blocked_reason = str(ex.get("reject_reason") or ex.get("human_reason") or "paper_not_submitted")
+                    if ex.get("reject_reason") == "STALE_QUOTE":
                         reason_counts["stale_quote_after_refresh"] += 1
                     elif ex.get("reject_reason"):
                         reason_counts[str(ex.get("reject_reason")).lower()] += 1
                     decisions_out.append({"execute": ex, "score": row_score})
             else:
+                paper_blocked_reason = rc or row_score.get("no_trade_reason")
                 from app.services.autopilot_decision_classifier import classify_block_reason
 
                 skipped_count += 1
@@ -197,6 +205,30 @@ class PushPullScanService:
                         "next_candidate_considered": True,
                     }
                 )
+
+            try:
+                from app.services.shadow_outcome_service import ShadowOutcomeService
+                from app.services.shadow_trade_service import ShadowTradeService
+
+                price_map = {}
+                ref = row_score.get("mid_price") or row_score.get("last_price")
+                if ref is not None:
+                    price_map[sym] = float(ref)
+                ShadowOutcomeService(self.session, self.config).update_open_trades(price_by_symbol=price_map)
+                shadow_res = ShadowTradeService(self.session, self.config).consider_setup(
+                    row_score,
+                    strategy_id=strategy_id,
+                    paper_blocked_reason=paper_blocked_reason,
+                    paper_submitted=paper_submitted,
+                )
+                if shadow_res.get("observation"):
+                    shadow_observed += 1
+                st = shadow_res.get("shadow_trade") or {}
+                if st.get("shadow_trade_id") and st.get("status") not in ("skipped", "exists"):
+                    shadow_created += 1
+                decisions_out.append({"shadow_league": shadow_res})
+            except Exception:
+                pass
 
         if eligible_strategy_count == 0:
             reason_counts["no_eligible_strategy"] += 1
@@ -250,6 +282,8 @@ class PushPullScanService:
             "no_trade_reason_breakdown": scoring.get("no_trade_reason_breakdown"),
             "top_candidate": top,
             "threshold_values": scoring.get("threshold_values"),
+            "shadow_trades_created": shadow_created,
+            "shadow_setups_observed": shadow_observed,
         }
 
 
