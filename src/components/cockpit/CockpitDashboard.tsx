@@ -1,130 +1,63 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Brain, FlaskConical, RefreshCw, Shield } from "lucide-react";
+import { Brain, ChevronDown, RefreshCw } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { TickerSymbol } from "@/components/ui/TickerSymbol";
-import { CockpitFunnelBrain } from "@/components/cockpit/CockpitFunnelBrain";
 import { CockpitAutopilotChip } from "@/components/cockpit/CockpitAutopilotChip";
+import { CockpitFunnelBrain } from "@/components/cockpit/CockpitFunnelBrain";
 import { CockpitPortfolioHistory } from "@/components/cockpit/CockpitPortfolioHistory";
 import { ShadowLeagueMiniPanel } from "@/components/cockpit/ShadowLeagueMiniPanel";
-import { apiGet, apiPostOperator } from "@/lib/apiClient";
+import { WhyNoTradeCard } from "@/components/panels/WhyNoTradeCard";
+import { apiGet } from "@/lib/apiClient";
 import { dispatchCockpitRefresh } from "@/lib/cockpitEvents";
 
 type Cockpit = {
   generated_at_utc?: string;
-  live_truth?: boolean;
-  ai_cockpit_message?: string;
-  watchlist?: {
-    total?: number;
-    crypto?: { usd_pairs?: number; symbols?: string[] };
-    stocks?: { count?: number; symbols?: string[] };
-  };
   funnel?: Record<string, number>;
-  shortlist?: Array<{ symbol: string; universe_rank_score?: number; trade_quality_score?: number; stop_loss?: number; take_profit?: number }>;
-  eligible_trades?: Array<{ symbol: string; universe_rank_score?: number; trade_quality_score?: number; stop_loss?: number; take_profit?: number }>;
-  why_zero_shortlist?: string;
-  scores?: Array<{
-    symbol: string;
-    pass?: boolean;
-    entry_allowed?: boolean;
-    quality_score?: number;
-    trade_quality_score?: number;
-    push_score?: number;
-  }>;
-  passed_count?: number;
-  control?: {
-    can_place_paper_orders?: boolean;
-    paper_learning_on?: boolean;
-    bot_can_place?: boolean;
-    blockers?: string[];
-    mode?: string;
+  eligible_trades?: Array<{ symbol: string; trade_quality_score?: number; universe_rank_score?: number; stop_loss?: number; take_profit?: number }>;
+  shortlist?: Array<{ symbol: string; trade_quality_score?: number }>;
+  scores?: Array<{ symbol: string; entry_allowed?: boolean; trade_quality_score?: number }>;
+  why_no_trade_summary?: { plain?: string; top_blockers?: Array<{ code?: string; count?: number; label?: string }> };
+  universe?: {
+    top_blockers?: Array<{ code?: string; count?: number; label?: string }>;
+    top_candidates?: Array<{ symbol?: string; trade_quality_score?: number; no_trade_reason?: string }>;
+    funnel?: { eligible?: number; shortlisted?: number };
   };
   account?: { connected?: boolean; equity?: number; daily_pl?: number };
   alpaca_connected?: boolean;
-  positions?: Array<{ symbol: string; qty: number; unrealized_pl?: number }>;
+  positions?: Array<{ symbol: string; qty: number }>;
   recent_trades?: Array<{ symbol: string; side: string; status: string }>;
-  weights?: { universe_ranking?: Record<string, number>; min_rank_score?: number };
-  ai_brain?: { active_lessons?: number; recent_lessons?: Array<{ title: string; memory_type?: string; symbol?: string }> };
-  research_os?: {
-    research_jobs_running?: number;
-    latest_backtest?: { run_id?: string; status?: string; metrics?: Record<string, unknown> } | null;
-    latest_strategy_proposal?: Record<string, unknown> | null;
-    latest_risk_audit?: { status?: string; pass_fail?: string; risk_score?: number } | null;
-    latest_promotion_proposal?: Record<string, unknown> | null;
-    paper_exploration_status?: string;
-    live_readiness_status?: { live_locked?: boolean; tiny_live_architecture_present?: boolean } | null;
-    code_proposal_pending_count?: number;
-    tradingview_status?: { mode?: string; execution_allowed?: boolean } | null;
-    agent_loop_status?: { latest_status?: string | null; orders_submitted?: number; live_flags_changed?: boolean } | null;
-    next_research_action?: string;
-  };
   alpha_factory?: {
     can_trade_paper_now?: boolean;
-    reason?: string;
     paper_candidate_count?: number;
-    rejected_strategy_count?: number;
-    best_candidate?: { symbol?: string; strategy_family?: string; edge_after_cost_bps?: number } | null;
-    autonomous_status?: { plain_english?: string; enabled?: boolean } | null;
     plain_english?: string;
-    paper_exploration_enabled?: boolean;
     paper_exploration_allowed?: boolean;
-    paper_exploration_block_reason?: string | null;
-    real_money_entries_allowed?: boolean;
-    standard_paper_entries_allowed?: boolean;
-    exit_management_allowed?: boolean;
-    exploration_entries_today?: number;
-    exploration_max_notional_usd?: number;
-    broker_min_notional_usd?: number;
-    no_broker_valid_candidate?: boolean;
-    broker_valid_candidate?: { symbol?: string; min_required_notional_usd?: number } | null;
-    current_exploration_candidate?: {
-      symbol?: string;
-      best_session?: string | null;
-      exploration_score?: number;
-      edge_after_cost_bps?: number | null;
-      sample_size?: number;
-      stage?: string;
-      broker_valid_for_exploration?: boolean;
-      min_required_notional_usd?: number;
-    } | null;
+    best_candidate?: { symbol?: string } | null;
   };
   paper_execution?: {
     paper_broker_connected?: boolean;
-    paper_broker?: boolean;
     paper_orders_enabled?: boolean;
     paper_learning_on?: boolean;
-    scheduler_enabled?: boolean;
-    kill_switch_active?: boolean;
-    drawdown_blocker?: { message?: string; switch_name?: string } | null;
     open_positions_count?: number;
     active_orders_count?: number;
-    can_place_paper_orders_now?: boolean;
-    bot_can_submit_paper_entries_now?: boolean;
-    broker_connected?: boolean;
-    paper_mode_active?: boolean;
     new_entries_allowed?: boolean;
     exits_allowed?: boolean;
-    kill_switch_blocks_exits?: boolean;
-    entries_exits_summary?: string;
-    live_trading_locked?: boolean;
-    blockers?: string[];
     next_action?: string;
-    kill_switch?: { account_daily_pl_pct?: number | null; account_drawdown_pct?: number | null; state?: string };
+    blockers?: string[];
+    live_trading_locked?: boolean;
   };
 };
 
-function symbolKey(symbol: string): string {
-  return String(symbol || "").toUpperCase().replace(/[/-]/g, "");
-}
-
-function dedupeEligible<T extends { symbol: string; trade_quality_score?: number; universe_rank_score?: number; quality_score?: number }>(rows: T[]): T[] {
+function dedupeEligible<T extends { symbol: string; trade_quality_score?: number; universe_rank_score?: number }>(
+  rows: T[]
+): T[] {
   const best = new Map<string, T>();
   for (const row of rows.filter((r) => r.symbol)) {
-    const key = symbolKey(row.symbol);
+    const key = String(row.symbol).toUpperCase().replace(/[/-]/g, "");
     const prev = best.get(key);
-    const prevScore = Number(prev?.universe_rank_score ?? prev?.trade_quality_score ?? prev?.quality_score ?? 0);
-    const nextScore = Number(row.universe_rank_score ?? row.trade_quality_score ?? row.quality_score ?? 0);
+    const prevScore = Number(prev?.universe_rank_score ?? prev?.trade_quality_score ?? 0);
+    const nextScore = Number(row.universe_rank_score ?? row.trade_quality_score ?? 0);
     if (!prev || nextScore >= prevScore) best.set(key, row);
   }
   return Array.from(best.values());
@@ -136,29 +69,23 @@ export function CockpitDashboard() {
   const [tilesStale, setTilesStale] = useState(false);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [readinessMsg, setReadinessMsg] = useState<string | null>(null);
-  const [checkingReadiness, setCheckingReadiness] = useState(false);
+  const [showMore, setShowMore] = useState(false);
 
   const load = useCallback(async () => {
     setErr(null);
-    // Heavy panels (funnel / research / alpha) on a longer budget — fired independently so the
-    // slow /status build never blocks the always-visible status tiles.
     apiGet<Cockpit>("/api/mission-control/status", { timeoutMs: 12000 }).then((statusRes) => {
       if (statusRes.ok && statusRes.data) {
         setData(statusRes.data);
         dispatchCockpitRefresh(statusRes.data as Record<string, unknown>);
-        setErr(null);
       } else {
-        setErr(statusRes.error || "Cockpit unavailable - check API_URL on Railway frontend");
+        setErr(statusRes.error || "Cockpit unavailable");
       }
     });
-    // Fast-path tiles — render the always-visible status tiles ASAP (~1s), independent of /status.
     const tilesRes = await apiGet<Cockpit>("/api/mission-control/tiles", { timeoutMs: 5000 });
     if (tilesRes.ok && tilesRes.data) {
       setTiles(tilesRes.data);
       setTilesStale(false);
     } else {
-      // Could not confirm tile state this cycle → render neutral "refreshing", never alarming RED.
       setTilesStale(true);
     }
     setLoading(false);
@@ -170,347 +97,165 @@ export function CockpitDashboard() {
     return () => clearInterval(t);
   }, [load]);
 
-  const f = data?.funnel ?? {};
-  const ctrl = data?.control ?? {};
-  // Status tiles read the fast-path tiles payload (falling back to the full status payload).
   const tileSrc = tiles ?? data;
   const paper = tileSrc?.paper_execution ?? {};
-  const eligible = dedupeEligible(
-    data?.eligible_trades ??
-    data?.shortlist ??
-    (data?.scores ?? []).filter((s) => s.entry_allowed)
-  );
   const alpha = data?.alpha_factory ?? {};
-  // "Unknown/refreshing": tile source not confirmed this cycle → render neutral grey, never alarming RED.
+  const universe = data?.universe ?? {};
+  const f = data?.funnel ?? universe.funnel ?? {};
   const tilesUnknown = tilesStale || (loading && !tiles);
-  const paperExplorationAllowed = Boolean(tileSrc?.alpha_factory?.paper_exploration_allowed ?? alpha.paper_exploration_allowed);
-  const canSubmitEntries = Boolean(paper.new_entries_allowed ?? paper.bot_can_submit_paper_entries_now ?? paper.can_place_paper_orders_now ?? ctrl.bot_can_place);
-  // Exits are never blocked by the kill switch — the bot can always manage/close open positions while the paper broker is connected.
-  const exitsAllowed = Boolean(paper.exits_allowed ?? (paper.broker_connected ?? paper.paper_broker_connected ?? paper.paper_broker));
-  const explorationReady = Boolean(alpha.paper_exploration_allowed);
-  const entriesExitsSummary = canSubmitEntries
-    ? "Standard paper entries available. Real money locked."
-    : explorationReady
-      ? "Standard entries paused by daily drawdown. Paper exploration remains available under the cage."
-      : exitsAllowed
-        ? "Standard paper entries paused; the bot can still manage and exit open positions. Real money locked."
-        : "Paper broker not connected: neither entries nor exits can submit.";
-  const drawdownReason = paper.drawdown_blocker?.message;
+  const canSubmitEntries = Boolean(paper.new_entries_allowed ?? paper.paper_orders_enabled);
+  const exitsAllowed = Boolean(paper.exits_allowed ?? paper.paper_broker_connected);
+  const eligible = dedupeEligible(
+    data?.eligible_trades ?? data?.shortlist ?? (data?.scores ?? []).filter((s) => s.entry_allowed) ?? []
+  );
+  const topCandidate = universe.top_candidates?.[0] ?? eligible[0] ?? null;
 
-  async function checkPaperReadiness() {
-    setCheckingReadiness(true);
-    setReadinessMsg(null);
-    const res = await apiPostOperator<{ paper_entry_allowed?: boolean; next_action?: string; readiness?: { blockers?: string[] } }>(
-      "/api/execution/paper/readiness-check",
-      { actor: "cockpit_ui" },
-      { timeoutMs: 10000 }
-    );
-    if (res.ok) {
-      const allowed = Boolean(res.data?.paper_entry_allowed);
-      const blockers = res.data?.readiness?.blockers ?? [];
-      setReadinessMsg(
-        allowed
-          ? "Paper entries are allowed when a candidate passes the cage."
-          : String(res.data?.next_action ?? blockers[0] ?? "Paper entries are currently blocked.")
-      );
-    } else {
-      setReadinessMsg(res.error || "Readiness check failed.");
-    }
-    setCheckingReadiness(false);
-    await load();
-  }
+  const statusTiles = [
+    ["Paper broker", tilesUnknown ? "—" : paper.paper_broker_connected ? "ON" : "OFF", paper.paper_broker_connected],
+    ["Entries", tilesUnknown ? "—" : canSubmitEntries ? "READY" : "PAUSED", canSubmitEntries],
+    ["Exits", tilesUnknown ? "—" : exitsAllowed ? "ON" : "OFF", exitsAllowed],
+    ["Live $", "LOCKED", true],
+  ] as const;
 
   return (
-    <div className="space-y-4 w-full max-w-[1500px] mx-auto px-1 sm:px-2">
-      <header>
-        <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-          <Brain className="h-7 w-7 text-hive-cyan" />
-          AI Trading Cockpit
-        </h1>
-        <p className="text-sm text-slate-400 mt-1">
-          Cached product truth - paper-only execution, dynamic SL/TP, and operator-triggered heavy refreshes.
-        </p>
-        {data?.ai_cockpit_message && (
-          <p className="text-xs text-hive-cyan/90 mt-2 border border-hive-cyan/20 rounded-lg px-3 py-2 bg-hive-cyan/5">
-            {data.ai_cockpit_message}
-          </p>
-        )}
-        {err && (
-          <p className="text-xs text-amber-400 mt-2">
-            {err}
-            <span className="block text-slate-500 mt-1">
-              Top banner and cards use /api/mission-control/status. If this fails, verify the backend deployment and
-              database migrations.
-            </span>
-          </p>
-        )}
+    <div className="mx-auto w-full max-w-5xl space-y-4 px-1 sm:px-2">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="flex items-center gap-2 text-2xl font-bold text-white">
+            <Brain className="h-7 w-7 text-hive-cyan" />
+            Cockpit
+          </h1>
+          <p className="mt-1 text-sm text-slate-400">Paper-only truth · live locked · refresh for heavy scans</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={load}
+            disabled={loading}
+            className="flex items-center gap-1.5 rounded border border-white/10 px-3 py-2 text-xs text-slate-300 hover:bg-white/5"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+          <CockpitAutopilotChip />
+        </div>
       </header>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={load}
-          disabled={loading}
-          className="flex items-center gap-1.5 text-xs px-3 py-2 rounded border border-white/10 text-slate-300 hover:bg-white/5"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-          Refresh live
-        </button>
-        <CockpitAutopilotChip />
-      </div>
+      {err ? <p className="text-xs text-amber-400">{err}</p> : null}
 
-      <ShadowLeagueMiniPanel />
-
-      <div className="grid gap-3 grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
-        {[
-          ["Paper Learning", tilesUnknown ? "—" : (paper.paper_learning_on ? "ON" : "OFF"), tilesUnknown ? "#64748B" : (paper.paper_learning_on ? "#00FF66" : "#F59E0B")],
-          ["Standard Paper Entries", tilesUnknown ? "—" : (canSubmitEntries ? "ON" : "PAUSED"), tilesUnknown ? "#64748B" : (canSubmitEntries ? "#00FF66" : "#F59E0B")],
-          ["Paper Exploration", tilesUnknown ? "—" : (paperExplorationAllowed ? "READY" : "BLOCKED"), tilesUnknown ? "#64748B" : (paperExplorationAllowed ? "#00FF66" : "#F59E0B")],
-          ["Exits", tilesUnknown ? "—" : (exitsAllowed ? "ACTIVE" : "BLOCKED"), tilesUnknown ? "#64748B" : (exitsAllowed ? "#00FF66" : "#EF4444")],
-          ["Real Money", "LOCKED", "#FB7185"],
-          [
-            "Alpaca",
-            tilesUnknown ? "—" : (tileSrc?.account?.connected || tileSrc?.alpaca_connected ? "CONNECTED" : "OFFLINE"),
-            tilesUnknown ? "#64748B" : (tileSrc?.account?.connected || tileSrc?.alpaca_connected ? "#00FF66" : "#EF4444"),
-          ],
-        ].map(([label, val, color]) => (
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+        {statusTiles.map(([label, val, ok]) => (
           <div key={label} className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
             <p className="text-[10px] uppercase text-slate-500">{label}</p>
-            <p className="text-lg font-bold mono-metric" style={{ color }}>
+            <p
+              className="text-base font-bold mono-metric"
+              style={{
+                color: label === "Live $" ? "#FB7185" : tilesUnknown ? "#64748B" : ok ? "#00FF66" : "#F59E0B",
+              }}
+            >
               {val}
             </p>
           </div>
         ))}
       </div>
 
-      <CockpitPortfolioHistory />
+      <WhyNoTradeCard
+        plain={data?.why_no_trade_summary?.plain ?? paper.next_action}
+        topBlockers={universe.top_blockers ?? data?.why_no_trade_summary?.top_blockers ?? []}
+        topCandidate={topCandidate}
+        shortlisted={Number(f.shortlisted ?? 0)}
+        eligible={Number(f.eligible ?? 0)}
+        canPlacePaperOrders={canSubmitEntries}
+      />
 
-      <CockpitFunnelBrain funnel={f} blockers={data?.why_zero_shortlist} aiNote={data?.ai_cockpit_message} />
-
-      <GlassPanel title="Paper Trading Readiness" icon={<Shield className="h-4 w-4" />}>
-        <div className="grid gap-2 text-xs md:grid-cols-3 lg:grid-cols-5">
-          {[
-            ["Paper broker connected", paper.paper_broker_connected ?? paper.paper_broker ? "Yes" : "No", paper.paper_broker_connected ?? paper.paper_broker],
-            ["Paper orders enabled", paper.paper_orders_enabled ? "Yes" : "No", paper.paper_orders_enabled],
-            ["Paper learning enabled", paper.paper_learning_on ? "Yes" : "No", paper.paper_learning_on],
-            ["Scheduler enabled", paper.scheduler_enabled ? "Yes" : "No", paper.scheduler_enabled],
-            ["Kill switch active", paper.kill_switch_active ? "Yes" : "No", !paper.kill_switch_active],
-            ["Open positions", String(paper.open_positions_count ?? data?.positions?.length ?? 0), true],
-            ["Active orders", String(paper.active_orders_count ?? 0), true],
-            ["New entries allowed", canSubmitEntries ? "Yes" : "No", canSubmitEntries],
-            ["Exits allowed", exitsAllowed ? "Yes" : "No", exitsAllowed],
-          ].map(([label, value, ok]) => (
-            <div key={String(label)} className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
-              <p className="text-[10px] uppercase text-slate-500">{label}</p>
-              <p className={`mt-1 font-semibold ${tilesUnknown ? "text-slate-400" : ok ? "text-emerald-300" : "text-amber-300"}`}>{tilesUnknown ? "—" : String(value)}</p>
-            </div>
-          ))}
-        </div>
-        <div className="mt-3 rounded-lg border border-amber-300/20 bg-amber-300/10 p-3 text-[11px] text-amber-100">
-          <p className="font-semibold text-amber-50">{entriesExitsSummary}</p>
-          {drawdownReason ? (
-            <p className="mt-1">New paper entries are paused by the daily drawdown kill switch (exits still allowed). Wait for window reset or intentionally change risk config. Detail: {drawdownReason}</p>
-          ) : canSubmitEntries ? (
-            <p className="mt-1">Paper entries can submit only when a candidate passes the deterministic execution cage.</p>
-          ) : (
-            <p className="mt-1">{paper.next_action ?? paper.blockers?.[0] ?? "New paper entries are currently paused; check operator controls and latest scan freshness."}</p>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={checkPaperReadiness}
-          disabled={checkingReadiness}
-          className="mt-3 rounded-lg border border-hive-cyan/30 px-3 py-2 text-xs text-hive-cyan hover:bg-hive-cyan/10 disabled:opacity-50"
-        >
-          {checkingReadiness ? "Checking..." : "Check paper-entry readiness"}
-        </button>
-        {readinessMsg && <p className="mt-2 text-[11px] text-slate-400">{readinessMsg}</p>}
-      </GlassPanel>
-
-      <GlassPanel title="Trade Permission" icon={<Shield className="h-4 w-4" />}>
-        <div className="grid gap-2 text-xs md:grid-cols-2 lg:grid-cols-4">
-          {[
-            ["Real Money", "LOCKED", false],
-            ["Standard Paper Entries", canSubmitEntries ? "ALLOWED" : "BLOCKED", canSubmitEntries],
-            ["Paper Exploration", paperExplorationAllowed ? "ALLOWED" : "BLOCKED", paperExplorationAllowed],
-            ["Exit Management", exitsAllowed ? "ACTIVE" : "INACTIVE", exitsAllowed],
-          ].map(([label, value, ok]) => {
-            const isRealMoney = label === "Real Money"; // always-locked safe invariant
-            const neutral = tilesUnknown && !isRealMoney;
-            return (
-            <div key={String(label)} className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
-              <p className="text-[10px] uppercase text-slate-500">{String(label)}</p>
-              <p className={`mt-1 font-bold ${isRealMoney ? "text-rose-300" : neutral ? "text-slate-400" : ok ? "text-emerald-300" : "text-amber-300"}`}>
-                {neutral ? "—" : String(value)}
-              </p>
-            </div>
-          );})}
-        </div>
-        <div className="mt-3 rounded-lg border border-white/10 bg-white/[0.02] p-3 text-[11px] text-slate-300">
-          {alpha.current_exploration_candidate?.symbol ? (
-            <p>
-              <span className="text-hive-cyan font-semibold">Exploration candidate:</span>{" "}
-              {alpha.current_exploration_candidate.symbol}
-              {alpha.current_exploration_candidate.best_session ? ` · ${alpha.current_exploration_candidate.best_session}` : ""}
-              {" "}· score {Number(alpha.current_exploration_candidate.exploration_score ?? 0).toFixed(2)}
-              {" "}· tiny paper probe ≤ ${Number(alpha.exploration_max_notional_usd ?? 5).toFixed(0)} (cage-approved, never live).
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="space-y-4">
+          <ShadowLeagueMiniPanel />
+          <GlassPanel title="Alpha & exploration">
+            <p className="text-xs text-slate-300">
+              {alpha.plain_english ??
+                (alpha.can_trade_paper_now
+                  ? "Paper candidate evidence ready."
+                  : "No paper candidate yet — research/scorecard required.")}
             </p>
-          ) : (
-            <p>
-              No exploration candidate right now
-              {alpha.paper_exploration_block_reason ? ` — ${alpha.paper_exploration_block_reason}.` : "."}
-              {" "}Paper exploration is a tiny, capped, paper-only learning lane; it never enables real money.
+            <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+              <div className="rounded border border-white/10 bg-black/20 p-2">
+                <p className="text-slate-500">Candidates</p>
+                <p className="font-semibold text-white">{alpha.paper_candidate_count ?? 0}</p>
+              </div>
+              <div className="rounded border border-white/10 bg-black/20 p-2">
+                <p className="text-slate-500">Best setup</p>
+                <p className="font-semibold text-white">{alpha.best_candidate?.symbol ?? "—"}</p>
+              </div>
+            </div>
+            <p className="mt-2 text-[10px] text-slate-500">
+              Positions {paper.open_positions_count ?? 0} · Orders {paper.active_orders_count ?? 0} · Exploration{" "}
+              {alpha.paper_exploration_allowed ? "allowed" : "blocked"}
             </p>
-          )}
-          <p className="mt-1 text-slate-500">Exploration entries today: {alpha.exploration_entries_today ?? 0} · Real money stays locked.</p>
-          <p className="mt-1 text-slate-500">
-            Broker validity:{" "}
-            {alpha.no_broker_valid_candidate ? (
-              <span className="text-amber-300">
-                no broker-valid candidate under ${Number(alpha.exploration_max_notional_usd ?? 5).toFixed(0)} cap
-                (min ≈ ${Number(alpha.broker_min_notional_usd ?? 10).toFixed(0)})
-              </span>
-            ) : alpha.broker_valid_candidate?.symbol ? (
-              <span className="text-emerald-300">{alpha.broker_valid_candidate.symbol} valid for a tiny paper probe</span>
+          </GlassPanel>
+        </div>
+        <CockpitFunnelBrain funnel={f} blockers={data?.why_no_trade_summary?.plain} />
+      </div>
+
+      <button
+        type="button"
+        onClick={() => setShowMore((v) => !v)}
+        className="flex w-full items-center justify-center gap-1 rounded-lg border border-white/10 py-2 text-xs text-slate-400 hover:bg-white/5"
+      >
+        <ChevronDown className={`h-4 w-4 transition-transform ${showMore ? "rotate-180" : ""}`} />
+        {showMore ? "Hide" : "Show"} portfolio & trade history
+      </button>
+
+      {showMore ? (
+        <div className="space-y-4">
+          <CockpitPortfolioHistory />
+          <GlassPanel title="Eligible setups">
+            {eligible.length === 0 ? (
+              <p className="text-[11px] text-slate-500">None this scan.</p>
             ) : (
-              <span>checking…</span>
+              <ul className="max-h-48 space-y-1 overflow-y-auto">
+                {eligible.slice(0, 12).map((row) => {
+                  const score = Number(
+                    (row as { universe_rank_score?: number }).universe_rank_score ?? row.trade_quality_score ?? 0
+                  );
+                  return (
+                  <li key={row.symbol} className="flex justify-between border-b border-white/5 py-1 text-[11px] text-white">
+                    <TickerSymbol symbol={row.symbol} size="sm" labelClassName="text-[11px]" />
+                    <span className="text-hive-cyan shrink-0">Q{Math.round(score * 100)}</span>
+                  </li>
+                  );
+                })}
+              </ul>
             )}
-          </p>
+          </GlassPanel>
+          <GlassPanel title="Recent paper trades">
+            {(data?.recent_trades?.length ?? 0) === 0 ? (
+              <p className="text-[11px] text-slate-500">No trades this run.</p>
+            ) : (
+              <ul className="space-y-1">
+                {data?.recent_trades?.slice(0, 8).map((t, i) => (
+                  <li key={i} className="flex items-center gap-2 text-[10px] text-slate-300">
+                    <TickerSymbol symbol={t.symbol} size="sm" />
+                    <span>
+                      {t.side} · {t.status}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </GlassPanel>
         </div>
-      </GlassPanel>
-
-      {data?.research_os && (
-        <GlassPanel title="Research OS" icon={<FlaskConical className="h-4 w-4" />}>
-          <div className="grid gap-3 md:grid-cols-4 text-xs">
-            <div>
-              <p className="text-slate-500 uppercase text-[10px]">Research jobs</p>
-              <p className="text-white font-semibold">{data.research_os.research_jobs_running ?? 0}</p>
-            </div>
-            <div>
-              <p className="text-slate-500 uppercase text-[10px]">Latest backtest</p>
-              <p className="text-white font-semibold">{data.research_os.latest_backtest?.status ?? "none"}</p>
-            </div>
-            <div>
-              <p className="text-slate-500 uppercase text-[10px]">Code drafts</p>
-              <p className="text-white font-semibold">{data.research_os.code_proposal_pending_count ?? 0}</p>
-            </div>
-            <div>
-              <p className="text-slate-500 uppercase text-[10px]">Live readiness</p>
-              <p className="text-emerald-300 font-semibold">
-                {data.research_os.live_readiness_status?.live_locked === false ? "review" : "locked"}
-              </p>
-            </div>
-          </div>
-          <p className="mt-3 text-[11px] text-slate-400">
-            {data.research_os.next_research_action ?? "No research action queued."}
-          </p>
-        </GlassPanel>
-      )}
-
-      <GlassPanel title="Alpha Factory" icon={<FlaskConical className="h-4 w-4" />}>
-        <div className="grid gap-3 md:grid-cols-4 text-xs">
-          <div>
-            <p className="text-slate-500 uppercase text-[10px]">Paper entry</p>
-            <p className={alpha.can_trade_paper_now ? "text-emerald-300 font-semibold" : "text-amber-300 font-semibold"}>
-              {alpha.can_trade_paper_now ? "evidence ready" : "blocked"}
-            </p>
-          </div>
-          <div>
-            <p className="text-slate-500 uppercase text-[10px]">Candidates</p>
-            <p className="text-white font-semibold">{alpha.paper_candidate_count ?? 0}</p>
-          </div>
-          <div>
-            <p className="text-slate-500 uppercase text-[10px]">Rejected</p>
-            <p className="text-white font-semibold">{alpha.rejected_strategy_count ?? 0}</p>
-          </div>
-          <div>
-            <p className="text-slate-500 uppercase text-[10px]">Best setup</p>
-            <p className="text-white font-semibold">{alpha.best_candidate?.symbol ?? "none"}</p>
-          </div>
-        </div>
-        <p className="mt-3 text-[11px] text-slate-400">
-          {alpha.plain_english ??
-            alpha.autonomous_status?.plain_english ??
-            "No alpha scorecards yet. Research must produce evidence before paper entry."}
-        </p>
-      </GlassPanel>
-
-      {data?.ai_brain && (data.ai_brain.active_lessons ?? 0) > 0 && (
-        <p className="text-[10px] text-violet-200/80">
-          AI memory: {data.ai_brain.active_lessons} active lesson(s)
-          {data.ai_brain.recent_lessons?.[0]?.title
-            ? ` · latest: ${data.ai_brain.recent_lessons[0].title}`
-            : ""}
-        </p>
-      )}
-
-      <GlassPanel title="TradingView wrapper">
-        <p className="text-[11px] text-slate-400">
-          Chart overlays are display-only and live on the TradingView page. The cockpit stays on cached truth so opening
-          Mission Control does not fetch fresh bars or rescore the universe.
-        </p>
-        <a
-          href="/tradingview"
-          className="mt-3 inline-flex rounded-lg border border-hive-cyan/30 px-3 py-2 text-xs text-hive-cyan hover:bg-hive-cyan/10"
-        >
-          Open TradingView overlays
-        </a>
-      </GlassPanel>
-
-      <GlassPanel title="Eligible trades (all pass gates — no shortlist cap)" icon={<Shield className="h-4 w-4" />}>
-        {eligible.length === 0 ? (
-          <p className="text-[11px] text-slate-500">
-            None this scan — radar still watches full universe; next cycle retries all eligible symbols with TP/SL bands.
-          </p>
-        ) : (
-          <ul className="space-y-1 max-h-[280px] overflow-y-auto">
-            {eligible.map((s) => {
-              const row = s as {
-                symbol: string;
-                universe_rank_score?: number;
-                trade_quality_score?: number;
-                quality_score?: number;
-                stop_loss?: number;
-                take_profit?: number;
-              };
-              const q =
-                row.universe_rank_score != null
-                  ? (row.universe_rank_score * 100).toFixed(0)
-                  : ((row.trade_quality_score ?? row.quality_score ?? 0) * 100).toFixed(0);
-              return (
-              <li key={row.symbol} className="text-[11px] flex justify-between gap-2 text-white border-b border-white/5 py-1">
-                <TickerSymbol symbol={row.symbol} size="sm" labelClassName="text-[11px] text-white" />
-                <span className="text-hive-cyan shrink-0">
-                  Q{q}
-                  {row.stop_loss != null ? ` · SL ${Number(row.stop_loss).toFixed(2)}` : ""}
-                  {row.take_profit != null ? ` · TP ${Number(row.take_profit).toFixed(2)}` : ""}
-                </span>
-              </li>
-              );
-            })}
-          </ul>
-        )}
-      </GlassPanel>
-
-      <GlassPanel title="Recent paper trades">
-        {(data?.recent_trades?.length ?? 0) === 0 ? (
-          <p className="text-[11px] text-slate-500">No trades yet - waiting for the next approved paper cycle.</p>
-        ) : (
-          <ul className="space-y-1">
-            {data?.recent_trades?.map((t, i) => (
-              <li key={i} className="text-[10px] text-slate-300 flex items-center gap-2">
-                <TickerSymbol symbol={t.symbol} size="sm" labelClassName="text-[10px] text-slate-300" />
-                <span>
-                  {t.side} - {t.status}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </GlassPanel>
+      ) : null}
 
       <p className="text-[9px] text-slate-600">
-        Live @ {data?.generated_at_utc?.slice(0, 19) ?? "-"} - scheduler ~45s when paper learning ON
+        Updated {data?.generated_at_utc?.slice(0, 19) ?? "—"} ·{" "}
+        <a href="/reports" className="text-hive-cyan/80 hover:underline">
+          Latest diagnostic bundle
+        </a>{" "}
+        ·{" "}
+        <a href="/universe" className="text-hive-cyan/80 hover:underline">
+          Universe
+        </a>
       </p>
     </div>
   );
