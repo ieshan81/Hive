@@ -38,7 +38,7 @@ export function Dashboard({ data }: DashboardProps) {
         <StrategyLabPanel strategies={data.strategies} />
       </div>
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-4 items-stretch">
-        <RiskCagePanel rules={data.riskRules} />
+        <RiskCagePanel />
         <DynamicMarketRadarPanel
           assets={data.marketAssets}
           refreshedAt={data.marketRadarMeta.refreshedAt}

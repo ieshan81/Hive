@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { RefreshCw, Workflow, ShieldCheck } from "lucide-react";
 import { apiGet } from "@/lib/apiClient";
+import { fetchRuntimeTruth, type RuntimeTruth } from "@/lib/runtimeTruth";
 
 type Node = {
   key: string;
@@ -53,18 +54,23 @@ function dot(status: string) {
 
 export function HiveEngineMapPanel() {
   const [data, setData] = useState<EngineMap | null>(null);
+  const [runtime, setRuntime] = useState<RuntimeTruth | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [selected, setSelected] = useState<Node | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const r = await apiGet<EngineMap>("/api/hive-engine-map", { timeoutMs: 8000 });
+    const [r, rt] = await Promise.all([
+      apiGet<EngineMap>("/api/hive-engine-map", { timeoutMs: 8000 }),
+      fetchRuntimeTruth({ timeoutMs: 5000 }),
+    ]);
+    if (rt.ok && rt.data) setRuntime(rt.data);
     if (r.ok && r.data) {
       setData(r.data);
       setErr(null);
     } else {
-      setErr(r.error || "Engine map unavailable");
+      setErr(r.error || "Engine map detail temporarily unavailable");
     }
     setLoading(false);
   }, []);
@@ -105,7 +111,17 @@ export function HiveEngineMapPanel() {
         </button>
       </header>
 
-      {err && <p className="text-xs text-amber-400">{err}</p>}
+      {err && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
+          Detailed engine map: {err}
+          {runtime ? (
+            <p className="mt-1 text-slate-300">
+              Fast lifecycle truth — scheduler {runtime.scheduler_enabled ? "ON" : "OFF"} · paper broker{" "}
+              {runtime.paper_broker ? "yes" : "no"} · live locked · last tick {runtime.last_tick_at?.slice(0, 19) ?? "—"}
+            </p>
+          ) : null}
+        </div>
+      )}
 
       {/* Paper / live separation */}
       <div className="grid gap-2 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">

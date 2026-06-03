@@ -73,7 +73,7 @@ def _parallel_enabled() -> bool:
 
 
 def _run_fetches(jobs: dict, session: Session, errs: list, *, parallel: Optional[bool] = None,
-                 max_workers: int = 6, per_job_timeout: float = 8.0) -> dict[str, Any]:
+                 max_workers: int = 8, per_job_timeout: float = 6.0) -> dict[str, Any]:
     """Run independent, read-only fetch jobs and return {name: result}.
 
     A SQLAlchemy Session is NOT thread-safe, so on a real DB each job runs in its own thread with its
@@ -141,6 +141,18 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
     def _imp(mod, name):
         return getattr(__import__(f"app.services.{mod}", fromlist=[name]), name)
 
+    def _shadow_bundle_jobs(s):
+        mod = __import__(
+            "app.services.shadow_league_bundle_service",
+            fromlist=["shadow_trades_summary", "shadow_outcomes", "strategy_promotion_ladder", "why_no_trade"],
+        )
+        return {
+            "shadow_summary": mod.shadow_trades_summary(s, cfg),
+            "shadow_outcomes": mod.shadow_outcomes(s, cfg),
+            "shadow_ladder": mod.strategy_promotion_ladder(s, cfg),
+            "why_no_trade": mod.why_no_trade(s, cfg),
+        }
+
     jobs = {
         "tiles": lambda s: _imp("mission_control_read_model", "build_mission_control_tiles")(s),
         "engine_map": lambda s: _imp("hive_engine_map_service", "HiveEngineMapService")(s, cfg).map(),
@@ -158,12 +170,11 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
         "alpha_coverage_matrix": lambda s: _A("alpha_coverage_matrix").alpha_coverage_matrix(s, cfg),
         "blocker_timeline": lambda s: _A("blocker_timeline").blocker_timeline(s, cfg),
         "paper_order_proof": lambda s: _imp("paper_order_proof_service", "PaperOrderProofService")(s, cfg).summary(),
-        "shadow_summary": lambda s: _imp("shadow_league_bundle_service", "shadow_trades_summary")(s, cfg),
-        "shadow_outcomes": lambda s: _imp("shadow_league_bundle_service", "shadow_outcomes")(s, cfg),
-        "shadow_ladder": lambda s: _imp("shadow_league_bundle_service", "strategy_promotion_ladder")(s, cfg),
-        "why_no_trade": lambda s: _imp("shadow_league_bundle_service", "why_no_trade")(s, cfg),
+        "shadow_bundle": _shadow_bundle_jobs,
     }
+    t_jobs = time.time()
     res = _run_fetches(jobs, session, errs)
+    section_timings = {"parallel_fetch_seconds": round(time.time() - t_jobs, 3)}
     tiles = res["tiles"]
     engine_map = res["engine_map"]
     mem_gov = res["memory_governance"]
@@ -180,10 +191,17 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
     alpha_matrix = res["alpha_coverage_matrix"]
     timeline = res["blocker_timeline"]
     order_proof = res["paper_order_proof"]
-    shadow_summary = res.get("shadow_summary")
-    shadow_outcomes_export = res.get("shadow_outcomes")
-    shadow_ladder = res.get("shadow_ladder")
-    why_no_trade_export = res.get("why_no_trade")
+    shadow_bundle = res.get("shadow_bundle") or {}
+    if isinstance(shadow_bundle, dict) and shadow_bundle.get("status") == "degraded":
+        shadow_summary = shadow_bundle
+        shadow_outcomes_export = shadow_bundle
+        shadow_ladder = shadow_bundle
+        why_no_trade_export = shadow_bundle
+    else:
+        shadow_summary = shadow_bundle.get("shadow_summary") if isinstance(shadow_bundle, dict) else None
+        shadow_outcomes_export = shadow_bundle.get("shadow_outcomes") if isinstance(shadow_bundle, dict) else None
+        shadow_ladder = shadow_bundle.get("shadow_ladder") if isinstance(shadow_bundle, dict) else None
+        why_no_trade_export = shadow_bundle.get("why_no_trade") if isinstance(shadow_bundle, dict) else None
     import os as _os
     git_commit = _os.environ.get("RAILWAY_GIT_COMMIT_SHA", "dev")[:12]
 
@@ -226,6 +244,11 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
 
     sched = _safe("scheduler", errs, lambda: _imp("autonomous_paper_scheduler", "AutonomousPaperScheduler")(session, cfg).status())
     shadow_status = _safe("shadow_status", errs, lambda: _imp("shadow_league_status_service", "build_shadow_league_status")(session, cfg))
+    paper_status_for_readme = _safe(
+        "paper_status",
+        errs,
+        lambda: _imp("paper_execution_service", "PaperExecutionService")(session, cfg).status(),
+    )
     # README_FIRST — the single first thing to read.
     acct = (tiles or {}).get("account") or {}
     pe = (tiles or {}).get("paper_execution") or {}
@@ -249,7 +272,11 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
         "last_tick_at": (sched or {}).get("last_tick_at") if isinstance(sched, dict) else None,
         "next_tick_at": (sched or {}).get("next_planned_at_utc") if isinstance(sched, dict) else None,
         "paper_orders_enabled": pe.get("paper_orders_enabled"),
-        "paper_entry_ready": pe.get("can_place_paper_orders_now") or pe.get("new_entries_allowed"),
+        "paper_entry_ready": (
+            paper_status_for_readme.get("paper_entry_ready")
+            if isinstance(paper_status_for_readme, dict)
+            else None
+        ),
         "paper_learning_enabled": pe.get("paper_learning_on"),
         "shadow_league_enabled": bool((shadow_status or {}).get("enabled")) if isinstance(shadow_status, dict) else True,
         "shadow_count": (shadow_status or {}).get("shadow_league_count") if isinstance(shadow_status, dict) else None,
@@ -349,6 +376,7 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
             "bundle_mode": "latest",
             "generated_at": _now(),
             "generation_seconds": None,  # filled below
+            "section_timings": section_timings,
             "validation_run_id": run_id,
             "reset_epoch_id": (epoch or {}).get("reset_epoch_id"),
             "caps": CAPS,

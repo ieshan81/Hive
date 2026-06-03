@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import { Activity, Brain, Clock, Shield } from "lucide-react";
 import { apiGet } from "@/lib/apiClient";
-import { fetchAlpacaConnected } from "@/lib/brokerStatus";
 import { formatSyncTime } from "@/lib/datetime";
+import { brokerLabel, showNotConnectedWarning, type RuntimeTruth } from "@/lib/runtimeTruth";
+import { useRuntimeTruth } from "@/components/layout/RuntimeTruthProvider";
 import type { StatusChip, SystemStatus } from "@/types/dashboard";
 
 interface TopStatusBarProps {
@@ -17,20 +18,28 @@ interface TopStatusBarProps {
 function ChipIcon({ label }: { label: string }) {
   if (label.includes("Stocks") || label.includes("Crypto")) return <Activity className="h-3.5 w-3.5" />;
   if (label.includes("Market")) return <Activity className="h-3.5 w-3.5" />;
-  if (label.includes("AI")) return <Brain className="h-3.5 w-3.5" />;
+  if (label.includes("AI") || label.includes("Scheduler")) return <Brain className="h-3.5 w-3.5" />;
   if (label.includes("Risk")) return <Shield className="h-3.5 w-3.5" />;
   return <Clock className="h-3.5 w-3.5" />;
 }
 
 export function TopStatusBar({ lastSync, lastSyncAt, statusChips, systemStatus }: TopStatusBarProps) {
-  const [brokerProof, setBrokerProof] = useState<{
-    alpacaConnected?: boolean;
-    aiLearning?: boolean;
-  }>({});
-  const syncLabel = formatSyncTime(lastSyncAt ?? (lastSync !== "Not synced" ? lastSync : null));
-  const alpacaConnected = systemStatus.alpacaConnected || Boolean(brokerProof.alpacaConnected);
+  const { truth, degraded } = useRuntimeTruth();
+  const [aiLearning, setAiLearning] = useState(false);
+  const runtime = truth as RuntimeTruth | null;
+  const syncLabel = formatSyncTime(lastSyncAt ?? runtime?.generated_at ?? (lastSync !== "Not synced" ? lastSync : null));
+  const brokerOk = Boolean(runtime?.broker_connected || (runtime?.paper_broker && runtime?.paper_orders_enabled));
+  const showNotConnected = showNotConnectedWarning(runtime) && !brokerOk && !systemStatus.paperBroker;
+
   const displayedChips = statusChips.map((chip) => {
-    if (chip.label === "AI Mode" && brokerProof.aiLearning) {
+    if (chip.label === "Scheduler" && runtime?.scheduler_enabled != null) {
+      return {
+        ...chip,
+        value: runtime.scheduler_enabled ? "ON" : "OFF",
+        variant: runtime.scheduler_enabled ? ("success" as const) : ("neutral" as const),
+      };
+    }
+    if (chip.label === "AI Mode" && aiLearning) {
       return { ...chip, value: "LEARNING", variant: "info" as const };
     }
     return chip;
@@ -38,23 +47,12 @@ export function TopStatusBar({ lastSync, lastSyncAt, statusChips, systemStatus }
 
   useEffect(() => {
     let cancelled = false;
-    async function loadBrokerProof() {
-      const [alpacaConnected, advisor] = await Promise.all([
-        fetchAlpacaConnected({ timeoutMs: 6000 }),
-        apiGet<Record<string, unknown>>("/api/ai-advisor/status", { timeoutMs: 4000 }),
-      ]);
+    apiGet<Record<string, unknown>>("/api/ai-advisor/status", { timeoutMs: 4000 }).then((advisor) => {
       if (cancelled) return;
-      setBrokerProof({
-        alpacaConnected,
-        aiLearning:
-          Boolean(advisor.data?.advisor_active) || Boolean(advisor.data?.gemini_configured),
-      });
-    }
-    loadBrokerProof();
-    const t = setInterval(loadBrokerProof, 30000);
+      setAiLearning(Boolean(advisor.data?.advisor_active) || Boolean(advisor.data?.gemini_configured));
+    });
     return () => {
       cancelled = true;
-      clearInterval(t);
     };
   }, []);
 
@@ -62,10 +60,18 @@ export function TopStatusBar({ lastSync, lastSyncAt, statusChips, systemStatus }
     <header className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-white">Caged Hive Quant</h1>
-        <p className="text-sm text-slate-500 mt-0.5">AI-managed formula paper learning · Live locked</p>
-        {!alpacaConnected && (
-          <p className="text-xs text-amber-400 mt-1">Not connected — configure Alpaca credentials</p>
-        )}
+        <p className="text-sm text-slate-500 mt-0.5">
+          AI-managed formula paper learning · {runtime?.live_locked === false ? "Live check" : "Live locked"}
+        </p>
+        {degraded || runtime?.data_degraded ? (
+          <p className="text-xs text-amber-300/90 mt-1">Status degraded — using latest runtime snapshot</p>
+        ) : showNotConnected ? (
+          <p className="text-xs text-amber-400 mt-1">Broker sync pending — paper runtime may still be OK</p>
+        ) : runtime?.paper_broker ? (
+          <p className="text-xs text-emerald-400/90 mt-1">
+            {brokerLabel(runtime, degraded)} · paper mode · scheduler {runtime.scheduler_enabled ? "ON" : "OFF"}
+          </p>
+        ) : null}
       </div>
       <div className="flex flex-wrap items-center gap-2 lg:gap-3">
         {displayedChips.map((chip) => (

@@ -37,6 +37,7 @@ type Cockpit = {
   };
   paper_execution?: {
     paper_broker_connected?: boolean;
+    paper_broker?: boolean;
     paper_orders_enabled?: boolean;
     paper_learning_on?: boolean;
     scheduler_enabled?: boolean;
@@ -67,6 +68,8 @@ function dedupeEligible<T extends { symbol: string; trade_quality_score?: number
 export function CockpitDashboard() {
   const [data, setData] = useState<Cockpit | null>(null);
   const [tiles, setTiles] = useState<Cockpit | null>(null);
+  const [funnelData, setFunnelData] = useState<Record<string, number>>({});
+  const [productivity, setProductivity] = useState<Record<string, unknown> | null>(null);
   const [tilesStale, setTilesStale] = useState(false);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -81,6 +84,24 @@ export function CockpitDashboard() {
       } else {
         setErr(statusRes.error || "Cockpit unavailable");
       }
+    });
+    void Promise.all([
+      apiGet<Record<string, unknown>>("/api/universe/summary", { timeoutMs: 6000 }),
+      apiGet<Record<string, unknown>>("/api/paper-validation/productivity", { timeoutMs: 8000 }),
+    ]).then(([uniRes, prodRes]) => {
+      if (uniRes.ok && uniRes.data) {
+        const fc = (uniRes.data.funnel_counts ?? {}) as Record<string, number>;
+        const fr = (uniRes.data.freshness_counts ?? {}) as Record<string, number>;
+        setFunnelData({
+          available: Number(fc.available ?? 0),
+          cached: Number(fr.cached ?? 0),
+          fresh: Number(fr.fresh ?? 0),
+          eligible: Number(fc.eligible ?? 0),
+          ranked: Number(fc.ranked ?? 0),
+          shortlist: Number(fc.execution_shortlist ?? fc.to_trade ?? 0),
+        });
+      }
+      if (prodRes.ok && prodRes.data) setProductivity(prodRes.data);
     });
     const tilesRes = await apiGet<Cockpit>("/api/mission-control/tiles", { timeoutMs: 5000 });
     if (tilesRes.ok && tilesRes.data) {
@@ -101,7 +122,11 @@ export function CockpitDashboard() {
   const tileSrc = tiles ?? data;
   const paper = tileSrc?.paper_execution ?? {};
   const universe = data?.universe ?? {};
-  const f = data?.funnel ?? universe.funnel ?? {};
+  const f =
+    Object.keys(funnelData).length > 0
+      ? funnelData
+      : ((data?.funnel ?? universe.funnel ?? {}) as Record<string, number>);
+  const paperCandidates = Number(productivity?.paper_candidates ?? data?.alpha_factory?.paper_candidate_count ?? 0);
   const tilesUnknown = tilesStale || (loading && !tiles);
   const canSubmitEntries = Boolean(paper.new_entries_allowed ?? paper.paper_orders_enabled);
   const exitsAllowed = Boolean(paper.exits_allowed ?? paper.paper_broker_connected);
@@ -112,7 +137,7 @@ export function CockpitDashboard() {
 
   const statusTiles = [
     ["Scheduler", tilesUnknown ? "—" : paper.scheduler_enabled ? "ON" : "OFF", paper.scheduler_enabled],
-    ["Paper broker", tilesUnknown ? "—" : paper.paper_broker_connected ? "ON" : "OFF", paper.paper_broker_connected],
+    ["Paper broker", tilesUnknown ? "—" : paper.paper_broker_connected || paper.paper_broker ? "ON" : "OFF", paper.paper_broker_connected ?? paper.paper_broker],
     ["Entries", tilesUnknown ? "—" : canSubmitEntries ? "READY" : "PAUSED", canSubmitEntries],
     ["Live $", "LOCKED", true],
   ] as const;
@@ -173,10 +198,14 @@ export function CockpitDashboard() {
       </div>
 
       <WhyNoTradeCard
-        plain={data?.why_no_trade_summary?.plain ?? paper.next_action}
+        plain={
+          (productivity?.why_no_paper_trade_plain as string) ??
+          data?.why_no_trade_summary?.plain ??
+          paper.next_action
+        }
         topBlockers={universe.top_blockers ?? data?.why_no_trade_summary?.top_blockers ?? []}
         topCandidate={topCandidate}
-        shortlisted={Number(f.shortlisted ?? 0)}
+        shortlisted={Number(f.shortlist ?? f.shortlisted ?? 0)}
         eligible={Number(f.eligible ?? 0)}
         canPlacePaperOrders={canSubmitEntries}
       />
@@ -191,13 +220,26 @@ export function CockpitDashboard() {
             <li>Exits {exitsAllowed ? "allowed" : "blocked"}</li>
             <li>
               Shadow learning{" "}
+              {paper.scheduler_enabled ? "active" : "needs scheduler"}{" "}
               <Link href="/shadow-league" className="text-hive-cyan hover:underline">
                 view league →
               </Link>
             </li>
+            <li>
+              Why no trade:{" "}
+              {(productivity?.exact_next_blocker as { label?: string })?.label ??
+                (productivity?.why_no_paper_trade_plain as string) ??
+                "Alpha / cage gate"}
+            </li>
           </ul>
         </GlassPanel>
-        <CockpitFunnelBrain funnel={f} blockers={data?.why_no_trade_summary?.plain} />
+        <CockpitFunnelBrain
+          funnel={f}
+          blockers={
+            (productivity?.why_no_paper_trade_plain as string) ?? data?.why_no_trade_summary?.plain
+          }
+          paperCandidates={paperCandidates}
+        />
       </div>
 
       <button

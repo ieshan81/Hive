@@ -60,12 +60,36 @@ def _reason_shadow_count_zero(
     return "no_observations_yet_after_tick"
 
 
+def _ui_state(
+    *,
+    enabled: bool,
+    scheduler_enabled: bool,
+    total_count: int,
+    trade_count: int,
+    obs_count: int,
+    reason_zero: Optional[str],
+) -> str:
+    if not enabled:
+        return "disabled_by_config"
+    if not scheduler_enabled:
+        return "enabled_waiting_for_setups"
+    if total_count == 0:
+        if reason_zero in ("no_eligible_setups_met_observation_floor", "no_observations_yet_after_tick"):
+            return "enabled_waiting_for_setups"
+        return "enabled_waiting_for_setups"
+    if trade_count > 0:
+        return "enabled_tracking_shadow_trades"
+    if obs_count > 0:
+        return "enabled_collecting_observations"
+    return "enabled_waiting_for_setups"
+
+
 def build_shadow_league_status(session: Session, config: Optional[dict] = None) -> dict[str, Any]:
     from app.services.config_manager import ConfigManager
 
     cfg = config or ConfigManager(session).get_current_readonly()
     if not shadow_league_enabled(cfg):
-        return {"status": "disabled", "enabled": False}
+        return {"status": "disabled", "enabled": False, "ui_state": "disabled_by_config"}
 
     summary = shadow_trades_summary(session, cfg)
     ladder = strategy_promotion_ladder(session, cfg)
@@ -106,10 +130,19 @@ def build_shadow_league_status(session: Session, config: Optional[dict] = None) 
         total_count=total_count,
         scheduler_state=sched,
     )
+    ui_state = _ui_state(
+        enabled=True,
+        scheduler_enabled=scheduler_enabled,
+        total_count=total_count,
+        trade_count=len(trade_rows),
+        obs_count=len(obs_rows),
+        reason_zero=reason_zero,
+    )
 
     return {
         "status": "ok",
         "enabled": True,
+        "ui_state": ui_state,
         "shadow_league_count": total_count,
         "open_shadow_trades": summary.get("open_shadow_trades", 0),
         "total_shadow_observations": len(obs_rows),

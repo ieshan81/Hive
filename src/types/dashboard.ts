@@ -148,6 +148,8 @@ export interface SystemStatus {
   killSwitchActive: boolean;
   paperTradingOnly: boolean;
   liveTradingEnabled: boolean;
+  paperBroker?: boolean;
+  runtimeDegraded?: boolean;
 }
 
 export interface PortfolioDecisionRow {
@@ -192,6 +194,7 @@ export interface DashboardData {
   lastSync: string;
   lastSyncAt?: string | null;
   systemStatus: SystemStatus;
+  runtimeTruth?: import("@/lib/runtimeTruth").RuntimeTruth | null;
   statusChips: StatusChip[];
   accountSurvival: AccountSurvivalData;
   aiFundManager: AIFundManagerData;

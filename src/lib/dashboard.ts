@@ -1,6 +1,7 @@
 import type { DashboardData } from "@/types/dashboard";
 import { apiGet } from "@/lib/apiClient";
-import { fetchAlpacaConnected } from "@/lib/brokerStatus";
+import type { RuntimeTruth } from "@/lib/runtimeTruth";
+import { fetchRuntimeTruth } from "@/lib/runtimeTruth";
 
 function emptyDashboard(message: string): DashboardData {
   return {
@@ -12,7 +13,10 @@ function emptyDashboard(message: string): DashboardData {
       killSwitchActive: false,
       paperTradingOnly: true,
       liveTradingEnabled: false,
+      paperBroker: false,
+      runtimeDegraded: false,
     },
+    runtimeTruth: null,
     statusChips: [
       { label: "U.S. Stocks", value: "Session aware", variant: "neutral" },
       { label: "Crypto", value: "OPEN", variant: "success" },
@@ -75,55 +79,50 @@ function emptyDashboard(message: string): DashboardData {
   };
 }
 
-export async function getDashboardData(): Promise<DashboardData> {
-  const [cockpit, health, alpacaConnected] = await Promise.all([
-    apiGet<Record<string, unknown>>("/api/mission-control/status", {
-      forServer: true,
-      timeoutMs: 3500,
-    }),
-    apiGet<Record<string, unknown>>("/api/health", {
-      forServer: true,
-      timeoutMs: 2500,
-    }),
-    fetchAlpacaConnected({ forServer: true, timeoutMs: 2500 }),
-  ]);
-
-  const fallback = emptyDashboard(
-    cockpit.error || health.error || `API unavailable (${cockpit.status || health.status})`
-  );
-  const cockpitData = cockpit.data || {};
-  const control = (cockpitData.control as Record<string, unknown> | undefined) || {};
-  const account = (cockpitData.account as Record<string, unknown> | undefined) || {};
-  const watchlist = (cockpitData.watchlist as Record<string, unknown> | undefined) || {};
-  const crypto = (watchlist.crypto as Record<string, unknown> | undefined) || {};
-
-  fallback.lastSyncAt = String(cockpitData.generated_at_utc || new Date().toISOString());
-  fallback.lastSync = fallback.lastSyncAt;
-  fallback.systemStatus.alpacaConnected = Boolean(
-    alpacaConnected || cockpitData.alpaca_connected || account.connected || health.data?.alpaca_configured
-  );
-  fallback.systemStatus.databaseConnected = health.ok || cockpit.ok;
-  fallback.systemStatus.geminiConfigured = Boolean(health.data?.gemini_configured);
+function applyRuntimeTruth(fallback: DashboardData, truth: RuntimeTruth | null, healthOk: boolean) {
+  if (!truth) return;
+  fallback.runtimeTruth = truth;
+  fallback.lastSyncAt = truth.generated_at || fallback.lastSyncAt;
+  fallback.lastSync = fallback.lastSyncAt || fallback.lastSync;
+  fallback.systemStatus.alpacaConnected = Boolean(truth.broker_connected);
+  fallback.systemStatus.paperBroker = Boolean(truth.paper_broker);
+  fallback.systemStatus.runtimeDegraded = Boolean(truth.data_degraded);
+  fallback.systemStatus.killSwitchActive = truth.kill_switch_clear === false;
+  fallback.systemStatus.databaseConnected = healthOk;
+  fallback.accountSurvival.status = truth.broker_connected ? "waiting" : "not_connected";
+  fallback.accountSurvival.capital = typeof truth.account_equity === "number" ? truth.account_equity : null;
+  fallback.accountSurvival.message = truth.data_degraded
+    ? "Status degraded — using latest runtime snapshot."
+    : truth.broker_connected
+      ? "Paper broker connected — live locked."
+      : truth.paper_broker
+        ? "Paper broker configured — awaiting sync."
+        : fallback.accountSurvival.message;
   fallback.statusChips = [
     { label: "U.S. Stocks", value: "Session aware", variant: "neutral" },
     { label: "Crypto", value: "OPEN", variant: "success" },
     {
-      label: "AI Mode",
-      value: control.paper_learning_on ? "LEARNING" : "WATCHING",
-      variant: control.paper_learning_on ? "info" : "neutral",
+      label: "Scheduler",
+      value: truth.scheduler_enabled ? "ON" : "OFF",
+      variant: truth.scheduler_enabled ? "success" : "neutral",
     },
-    { label: "Risk Mode", value: "PAPER ONLY", variant: "info" },
+    { label: "Risk Mode", value: truth.live_locked ? "PAPER ONLY" : "CHECK", variant: "info" },
   ];
-  fallback.accountSurvival.status = fallback.systemStatus.alpacaConnected ? "waiting" : "not_connected";
-  fallback.accountSurvival.capital = typeof account.equity === "number" ? account.equity : null;
-  fallback.accountSurvival.message = fallback.systemStatus.alpacaConnected
-    ? "Shell loaded from lightweight broker truth."
-    : fallback.accountSurvival.message;
-  fallback.marketRadarMeta.opportunitiesScanned =
-    typeof crypto.usd_pairs === "number" ? crypto.usd_pairs : fallback.marketRadarMeta.opportunitiesScanned;
-  fallback.marketRadarMeta.message = cockpit.ok
-    ? "Open the cockpit for scanner and shortlist truth."
-    : fallback.marketRadarMeta.message;
+}
+
+export async function getDashboardData(): Promise<DashboardData> {
+  const [runtime, health] = await Promise.all([
+    fetchRuntimeTruth({ forServer: true, timeoutMs: 5000 }),
+    apiGet<Record<string, unknown>>("/api/health", { forServer: true, timeoutMs: 2500 }),
+  ]);
+
+  const fallback = emptyDashboard(
+    runtime.error || health.error || `API unavailable (${runtime.status || health.status})`
+  );
+  if (runtime.ok && runtime.data) {
+    applyRuntimeTruth(fallback, runtime.data, health.ok);
+  }
+  fallback.systemStatus.geminiConfigured = Boolean(health.data?.gemini_configured);
   return fallback;
 }
 

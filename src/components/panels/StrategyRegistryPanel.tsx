@@ -13,7 +13,7 @@ type Snapshot = {
   counts?: Record<string, number>;
 };
 
-export function StrategyRegistryPanel() {
+export function StrategyRegistryPanel({ hideLiveLockRejection = false }: { hideLiveLockRejection?: boolean }) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [all, setAll] = useState<RegistryRow[]>([]);
   const [active, setActive] = useState<RegistryRow[]>([]);
@@ -177,14 +177,19 @@ export function StrategyRegistryPanel() {
 
       <GlassPanel title="System Strategy Banner">
         <div className="flex flex-wrap gap-3 text-xs">
-          <span className="text-red-300 flex items-center gap-1">
-            <Shield className="h-3 w-3" /> Live trading: LOCKED
+          <span className="text-rose-200 flex items-center gap-1">
+            <Shield className="h-3 w-3" /> Live locked — expected. Paper validation only.
           </span>
           <span className="text-emerald-300">Paper: enabled (runtime)</span>
           <span className="text-slate-400">Active: {snapshot?.counts?.active ?? 0}</span>
           <span className="text-slate-400">Candidates: {snapshot?.counts?.paper_candidates ?? 0}</span>
           <span className="text-amber-400">Rejected: {snapshot?.counts?.rejected ?? 0}</span>
         </div>
+        {hideLiveLockRejection ? (
+          <p className="mt-2 text-[10px] text-slate-500">
+            Live lock is system safety, not a paper-candidate rejection. See pipeline summary for alpha blockers.
+          </p>
+        ) : null}
       </GlassPanel>
 
       <StrategyTable title="Active / Paper Active" rows={active} onSelect={openDetail} />
