@@ -35,7 +35,7 @@ export function CockpitFunnelBrain({ funnel, blockers, aiNote }: Props) {
 
   return (
     <div className="rounded-xl border border-violet-500/20 bg-violet-950/10 p-4">
-      <p className="text-[10px] uppercase tracking-wider text-violet-300/80 mb-3">AI brain · 6-stage funnel</p>
+      <p className="text-[10px] uppercase tracking-wider text-violet-300/80 mb-3">Scan funnel · 6 stages</p>
       <div className="flex flex-wrap items-center gap-1 md:gap-2">
         {STAGES.map(([key, label], i) => (
           <div key={key} className="flex items-center gap-1">

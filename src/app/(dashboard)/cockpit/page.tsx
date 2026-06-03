@@ -1,5 +1,5 @@
-import { CockpitDashboard } from "@/components/cockpit/CockpitDashboard";
+import { redirect } from "next/navigation";
 
-export default function CockpitPage() {
-  return <CockpitDashboard />;
+export default function CockpitRedirectPage() {
+  redirect("/mission-control");
 }

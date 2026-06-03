@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-/** Research v2 — AI cockpit is the primary entry (live truth, no snapshot cache). */
+/** Primary entry — Mission Control answers “Is the system safe and running?” */
 export default function HomePage() {
-  redirect("/cockpit");
+  redirect("/mission-control");
 }

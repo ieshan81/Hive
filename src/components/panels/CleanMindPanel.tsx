@@ -51,7 +51,7 @@ export function CleanMindPanel() {
   }
 
   return (
-    <GlassPanel title="Clean Mind" icon={<Brain className="h-4 w-4" />}>
+    <GlassPanel title="Quarantined patterns" icon={<Brain className="h-4 w-4" />}>
       <p className="text-[10px] text-slate-500 mb-3">
         Bulk manage memories. Default graph shows active trading memories only; system bugs stay in audit.
       </p>

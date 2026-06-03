@@ -129,7 +129,7 @@ export function CandleChartPanel({
   symbolOptions,
   compact = false,
   lockSymbol = false,
-  title = "Live Candles + AI brain",
+  title = "Live candles + scan overlay",
 }: {
   defaultSymbol?: string;
   symbolOptions?: string[];
