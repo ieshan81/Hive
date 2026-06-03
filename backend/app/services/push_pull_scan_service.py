@@ -82,7 +82,7 @@ class PushPullScanService:
         shadow_errors = 0
         from app.services.cycle_context import current_cycle_run_id
 
-        cycle_run_id = current_cycle_run_id(self.session)
+        cycle_run_id = current_cycle_run_id.get()
 
         # Exits first — SL/TP/loss band before new entries
         try:
