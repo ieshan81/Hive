@@ -126,6 +126,45 @@ def hive_engine_map(session: Session = Depends(get_session)):
     return HiveEngineMapService(session, ConfigManager(session).get_current()).map()
 
 
+@router.get("/runtime/summary")
+def runtime_summary(session: Session = Depends(get_session)):
+    """Fast runtime truth for global UI header/sidebar — prefer over slow mission-control/status."""
+    from app.services.runtime_summary_service import build_runtime_summary
+
+    return build_runtime_summary(session, ConfigManager(session).get_current_readonly())
+
+
+@router.get("/evidence-memory/graph")
+def evidence_memory_graph(
+    show_raw: bool = False,
+    expand_cluster: str | None = None,
+    mode: str = "research",
+    session: Session = Depends(get_session),
+):
+    """Compatibility alias for Evidence Memory UI (delegates to hive-brain graph builder)."""
+    from app.services.hive_brain_graph_service import HiveBrainGraphService
+
+    cfg = ConfigManager(session).get_current()
+    graph_mode = mode if mode in ("skeleton", "research", "validated", "default") else "research"
+    try:
+        return HiveBrainGraphService(session, cfg).build_full(
+            show_raw=show_raw, expand_cluster=expand_cluster, graph_mode=graph_mode
+        )
+    except Exception as exc:
+        out = HiveBrainGraphService(session, cfg).build_full(show_raw=False, graph_mode="skeleton")
+        out["status"] = "degraded"
+        out["error"] = str(exc)[:120]
+        return out
+
+
+@router.get("/evidence-memory/node/{node_id}")
+def evidence_memory_node(node_id: str, session: Session = Depends(get_session)):
+    from app.services.hive_brain_node_service import HiveBrainNodeService
+
+    cfg = ConfigManager(session).get_current()
+    return HiveBrainNodeService(session, cfg).get_node(node_id)
+
+
 @router.get("/live-lock/status")
 def live_lock_status_endpoint(session: Session = Depends(get_session)):
     from app.services.broker_safety import broker_base_url, is_paper_broker_url, live_lock_status

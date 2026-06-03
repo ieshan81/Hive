@@ -8,6 +8,7 @@ import { apiGet } from "@/lib/apiClient";
 type ShadowStatus = {
   status?: string;
   enabled?: boolean;
+  ui_state?: string;
   shadow_league_count?: number;
   total_shadow_observations?: number;
   total_shadow_trades?: number;
@@ -24,23 +25,42 @@ type ShadowStatus = {
   broker_evidence_count?: number;
 };
 
+const WAITING_STATES = new Set([
+  "enabled_waiting_for_setups",
+  "enabled_collecting_observations",
+]);
+
 export function ShadowLeaguePanel() {
   const [data, setData] = useState<ShadowStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     apiGet<ShadowStatus>("/api/shadow-league/status", { timeoutMs: 12000 }).then((res) => {
       if (cancelled) return;
-      if (res.ok) setData(res.data ?? null);
-      else setErr(res.error || "Shadow league unavailable");
+      setLoading(false);
+      if (res.ok && res.data) {
+        setData(res.data);
+        setErr(null);
+      } else {
+        setErr(res.error || "Shadow league unavailable");
+      }
     });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  if (!data?.enabled && data?.status !== "ok") {
+  if (loading) {
+    return (
+      <GlassPanel title="Shadow League">
+        <p className="text-sm text-slate-400">Loading shadow league status…</p>
+      </GlassPanel>
+    );
+  }
+
+  if (data?.enabled === false && data?.ui_state === "disabled_by_config") {
     return (
       <GlassPanel title="Shadow League">
         <p className="text-sm text-slate-400">Shadow league is disabled in config.</p>
@@ -48,8 +68,17 @@ export function ShadowLeaguePanel() {
     );
   }
 
+  if (!data && err) {
+    return (
+      <GlassPanel title="Shadow League">
+        <p className="text-sm text-amber-300">{err}</p>
+      </GlassPanel>
+    );
+  }
+
   const closest = data?.closest_setup;
   const missing = closest?.missing_evidence?.length ? closest.missing_evidence : data?.missing_evidence ?? [];
+  const waiting = data?.enabled && (data.shadow_league_count ?? 0) === 0 && WAITING_STATES.has(data.ui_state || "");
 
   return (
     <div className="mx-auto max-w-4xl space-y-4">
@@ -59,6 +88,12 @@ export function ShadowLeaguePanel() {
       </header>
 
       {err ? <p className="text-xs text-amber-400">{err}</p> : null}
+
+      {waiting ? (
+        <div className="rounded-xl border border-cyan-500/30 bg-cyan-950/20 px-4 py-3 text-sm text-cyan-100">
+          Shadow learning active — no setups met observation floor yet.
+        </div>
+      ) : null}
 
       {!data?.scheduler_enabled ? (
         <div className="rounded-xl border-2 border-red-500/50 bg-red-950/30 px-4 py-3 text-sm text-red-200">
@@ -85,6 +120,9 @@ export function ShadowLeaguePanel() {
 
       <GlassPanel title="Status">
         <ul className="space-y-2 text-sm text-slate-300">
+          <li>
+            <span className="text-slate-500">UI state:</span> {data?.ui_state?.replace(/_/g, " ") ?? "—"}
+          </li>
           <li>
             <span className="text-slate-500">Total records:</span> {data?.shadow_league_count ?? 0}
           </li>

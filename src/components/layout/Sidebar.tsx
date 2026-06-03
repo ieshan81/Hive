@@ -16,6 +16,8 @@ import {
   Workflow,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { brokerLabel } from "@/lib/runtimeTruth";
+import { useRuntimeTruth } from "@/components/layout/RuntimeTruthProvider";
 
 const primaryNav = [
   { href: "/mission-control", label: "Mission Control", icon: Activity },
@@ -35,12 +37,17 @@ const operatorNav = [
 ];
 
 interface SidebarProps {
-  systemStatus?: { alpacaConnected: boolean; paperTradingOnly: boolean };
+  systemStatus?: { alpacaConnected: boolean; paperTradingOnly: boolean; paperBroker?: boolean };
 }
 
 export function Sidebar({ systemStatus }: SidebarProps) {
   const pathname = usePathname();
-  const alpacaConnected = Boolean(systemStatus?.alpacaConnected);
+  const { truth, degraded } = useRuntimeTruth();
+  const paperOk = Boolean(
+    truth?.broker_connected || truth?.paper_broker || systemStatus?.paperBroker || systemStatus?.alpacaConnected
+  );
+  const label = truth ? brokerLabel(truth, degraded) : paperOk ? "Paper OK" : "Offline";
+  const color = paperOk || truth?.paper_broker ? "#00FF66" : degraded ? "#F59E0B" : "#F59E0B";
 
   return (
     <aside
@@ -61,7 +68,7 @@ export function Sidebar({ systemStatus }: SidebarProps) {
       </div>
 
       <nav className="scrollbar-thin flex-1 space-y-0.5 overflow-y-auto px-2 py-3">
-        {primaryNav.map(({ href, label, icon: Icon }) => {
+        {primaryNav.map(({ href, label: navLabel, icon: Icon }) => {
           const isActive = pathname === href;
           return (
             <Link
@@ -76,12 +83,12 @@ export function Sidebar({ systemStatus }: SidebarProps) {
                 <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r bg-[#00FF66]" />
               )}
               <Icon className={cn("h-4 w-4 shrink-0", isActive && "text-[#00dbe9]")} strokeWidth={1.75} />
-              <span>{label}</span>
+              <span>{navLabel}</span>
             </Link>
           );
         })}
         <p className="label-caps mb-1 mt-4 px-3 text-[#849495]">Operator</p>
-        {operatorNav.map(({ href, label, icon: Icon }) => {
+        {operatorNav.map(({ href, label: navLabel, icon: Icon }) => {
           const isActive = pathname === href;
           return (
             <Link
@@ -93,7 +100,7 @@ export function Sidebar({ systemStatus }: SidebarProps) {
               )}
             >
               <Icon className="h-3.5 w-3.5 shrink-0" />
-              <span>{label}</span>
+              <span>{navLabel}</span>
             </Link>
           );
         })}
@@ -102,18 +109,20 @@ export function Sidebar({ systemStatus }: SidebarProps) {
       <div
         className="mx-3 mb-4 rounded-xl border p-3"
         style={{
-          borderColor: alpacaConnected ? "rgba(0, 255, 102, 0.25)" : "rgba(245, 158, 11, 0.25)",
-          backgroundColor: alpacaConnected ? "rgba(0, 255, 102, 0.04)" : "rgba(245, 158, 11, 0.04)",
+          borderColor: paperOk ? "rgba(0, 255, 102, 0.25)" : "rgba(245, 158, 11, 0.25)",
+          backgroundColor: paperOk ? "rgba(0, 255, 102, 0.04)" : "rgba(245, 158, 11, 0.04)",
         }}
       >
         <div className="mb-1 flex items-center gap-2">
-          <Shield className="h-3.5 w-3.5" style={{ color: alpacaConnected ? "#00FF66" : "#F59E0B" }} />
+          <Shield className="h-3.5 w-3.5" style={{ color }} />
           <span className="text-[10px] uppercase text-[#b9cacb]">Broker</span>
         </div>
-        <p className="mono-metric text-lg font-bold" style={{ color: alpacaConnected ? "#00FF66" : "#F59E0B" }}>
-          {alpacaConnected ? "Paper OK" : "Offline"}
+        <p className="mono-metric text-lg font-bold" style={{ color }}>
+          {label}
         </p>
-        <p className="mt-1 text-[9px] text-[#849495]">Live locked</p>
+        <p className="mt-1 text-[9px] text-[#849495]">
+          {truth?.live_locked === false ? "Live check" : "Live locked"} · paper only
+        </p>
       </div>
     </aside>
   );

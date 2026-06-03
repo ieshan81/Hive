@@ -105,12 +105,19 @@ def build_productivity(session: Session, config: Optional[dict] = None) -> dict[
     paper_exec = _safe(
         lambda: __import__(
             "app.services.mission_control_read_model", fromlist=["build_mission_control_tiles"]
-        ).build_mission_control_tiles(session, cfg),
+        ).build_mission_control_tiles(session),
         {},
     )
     pe = paper_exec.get("paper_execution") or {}
+    paper_exec_status = _safe(
+        lambda: __import__(
+            "app.services.paper_execution_service", fromlist=["PaperExecutionService"]
+        ).PaperExecutionService(session, cfg).status(),
+        {},
+    )
     paper_orders_enabled = bool(pe.get("paper_orders_enabled"))
-    paper_entry_ready = bool(pe.get("can_place_paper_orders_now") or pe.get("new_entries_allowed"))
+    # Execution-path ready (broker paper + orders on + cage clear) — NOT blocked by zero candidates.
+    paper_entry_ready = bool(paper_exec_status.get("paper_entry_ready"))
 
     blocker_category = "none"
     if not scheduler_enabled:
@@ -198,6 +205,8 @@ def build_productivity(session: Session, config: Optional[dict] = None) -> dict[
         "is_bot_scanning": is_bot_scanning,
         "paper_trading_enabled": paper_orders_enabled,
         "paper_entry_ready": paper_entry_ready,
+        "paper_execution_path_ready": paper_entry_ready,
+        "paper_candidate_count": paper_candidates,
         "why_no_paper_trade_plain": why_no_paper_trade_plain,
         "blocker_category": blocker_category,
         "live_trading_locked": True,

@@ -53,7 +53,7 @@ const FUNNEL_STAGES = [
   ["cached", "Cached"],
   ["fresh", "Fresh"],
   ["eligible", "Eligible"],
-  ["to_trade", "To trade"],
+  ["to_trade", "Shortlist"],
 ] as const;
 
 function humanize(key: string): string {
@@ -250,10 +250,13 @@ export function UniversePanel() {
         )}
       </GlassPanel>
 
-      <GlassPanel title={`Eligible trades (${eligibleTrades.length})`}>
+      <GlassPanel title={`Paper candidates (${eligibleTrades.length})`}>
+        <p className="text-[10px] text-slate-500 mb-2">
+          Shortlist ({counts.to_trade ?? "—"}) = execution shortlist · Paper candidates = alpha-approved broker entries
+        </p>
         {eligibleTrades.length === 0 ? (
           <p className="text-[11px] text-slate-500">
-            None this scan — radar keeps watching; when gates pass, all eligible symbols enter with dynamic TP/SL.
+            Paper candidates: 0 · Reason: Alpha not ready / no scorecard — shortlist symbols still need evidence.
           </p>
         ) : (
           <ul className="space-y-1.5 max-h-[320px] overflow-y-auto">

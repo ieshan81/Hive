@@ -4,6 +4,7 @@ type Props = {
   funnel?: Record<string, number>;
   blockers?: string;
   aiNote?: string;
+  paperCandidates?: number;
 };
 
 const STAGES = [
@@ -12,7 +13,7 @@ const STAGES = [
   ["fresh", "Fresh"],
   ["eligible", "Eligible"],
   ["ranked", "Ranked"],
-  ["shortlist", "To trade"],
+  ["shortlist", "Shortlist"],
 ] as const;
 
 function formatBlockers(raw?: string, funnel?: Record<string, number>): string | undefined {
@@ -28,7 +29,7 @@ function formatBlockers(raw?: string, funnel?: Record<string, number>): string |
   return raw;
 }
 
-export function CockpitFunnelBrain({ funnel, blockers, aiNote }: Props) {
+export function CockpitFunnelBrain({ funnel, blockers, aiNote, paperCandidates }: Props) {
   const f = funnel ?? {};
   const blockerText = formatBlockers(blockers, f);
   const showAiNote = aiNote && aiNote !== blockerText;
@@ -47,9 +48,12 @@ export function CockpitFunnelBrain({ funnel, blockers, aiNote }: Props) {
           </div>
         ))}
       </div>
+      <p className="text-[10px] text-slate-400 mt-3">
+        Paper candidates: {paperCandidates ?? 0} · Shortlist ≠ broker-ready candidates
+      </p>
       {blockerText && (
-        <p className="text-[10px] text-amber-300/90 mt-3 border-t border-white/5 pt-2">
-          Cage blockers: {blockerText}
+        <p className="text-[10px] text-amber-300/90 mt-2 border-t border-white/5 pt-2">
+          Why no trade: {blockerText}
         </p>
       )}
       {showAiNote && <p className="text-[10px] text-cyan-200/80 mt-2">{aiNote}</p>}

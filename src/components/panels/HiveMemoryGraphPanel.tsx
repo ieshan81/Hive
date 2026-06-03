@@ -41,8 +41,8 @@ export function HiveMemoryGraphPanel({ compact = false }: Props) {
     if (showRaw) params.set("show_raw", "true");
     if (expandCluster) params.set("expand_cluster", expandCluster);
     params.set("mode", "research");
-    const path = `/api/hive-brain/graph?${params}`;
-    const result = await apiGet<HiveBrainGraphResponse>(path);
+    const path = `/api/evidence-memory/graph?${params}`;
+    const result = await apiGet<HiveBrainGraphResponse>(path, { timeoutMs: 15000 });
     if (result.ok && result.data?.nodes) {
       setGraph(result.data);
       setMeta({
@@ -79,8 +79,8 @@ export function HiveMemoryGraphPanel({ compact = false }: Props) {
     setDrawerLoading(true);
     setDrawerNode(null);
     setLegacyLesson(null);
-    const path = `/api/hive-brain/node/${encodeURIComponent(nodeId)}`;
-    const result = await apiGet<HiveBrainNodeResponse>(path);
+    const path = `/api/evidence-memory/node/${encodeURIComponent(nodeId)}`;
+    const result = await apiGet<HiveBrainNodeResponse>(path, { timeoutMs: 12000 });
     if (result.ok && result.data?.node) {
       setDrawerNode(result.data.node);
       setDrawerLoading(false);
@@ -158,16 +158,11 @@ export function HiveMemoryGraphPanel({ compact = false }: Props) {
           />
         ) : showEmpty ? (
           <div className="min-h-[200px] flex flex-col items-center justify-center text-center px-4">
-            <EmptyState
-              message={String(
-                graphMeta?.empty_state_headline ?? "Fresh brain. No learned memories yet."
-              )}
-              className="min-h-0"
-            />
-            <p className="text-[11px] text-slate-500 mt-2 max-w-md">
+            <p className="text-sm text-slate-400">No evidence memory yet — consolidated lessons appear after paper outcomes.</p>
+            <p className="text-[10px] text-slate-600 mt-2">
               {String(
                 graphMeta?.empty_state_subtext ??
-                  "Paper learning is available. The next push-pull tick will create new lessons."
+                  "Graph is learning-only; it never places broker orders."
               )}
             </p>
           </div>
