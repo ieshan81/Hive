@@ -100,7 +100,8 @@ If build fails on `npm ci` / lock file sync, latest `nixpacks.toml` uses `npm in
 - `backend/app/services/risk_engine.py` — final trade authority
 - `backend/app/services/strategy_engine.py` — momentum ORB + pairs mean reversion
 - `backend/app/services/quant_math.py` — deterministic formulas
-- `backend/app/services/ai_fund_manager.py` — Gemini structured reviews
+- `backend/app/services/strategy_reviewer.py` — Gemini post-hoc cycle commentary (advisory; disabled in loop by default)
+- `backend/app/services/evidence_memory_service.py` — evidence-derived advisory memories
 - `backend/app/services/memory_engine.py` — database-backed memory
 - `backend/app/services/backtest_engine.py` — real backtests only
 - `backend/app/services/monte_carlo_engine.py` — real trade outcomes only

@@ -67,7 +67,7 @@ export function HiveMindSection() {
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Brain className="h-5 w-5 text-hive-violet" />
-          <h2 className="text-lg font-semibold text-white">Hive Mind</h2>
+          <h2 className="text-lg font-semibold text-white">Evidence Memory</h2>
         </div>
         <label className="flex items-center gap-2 text-[10px] text-slate-400">
           <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
@@ -76,7 +76,7 @@ export function HiveMindSection() {
       </header>
 
       {meta.error && (
-        <PanelError title="Hive Mind API failed" meta={meta} expectedShape="{ trading_recent, system_recent, patterns }" />
+        <PanelError title="Evidence Memory API failed" meta={meta} expectedShape="{ trading_recent, system_recent, patterns }" />
       )}
 
       {fr && (

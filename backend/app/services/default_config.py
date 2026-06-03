@@ -360,6 +360,12 @@ DEFAULT_CONFIG = {
         "failure_penalty": 0.15,
     },
     "ai_enabled": True,
+    # Phase 0 quarantine: Strategy Reviewer is post-hoc commentary only (disabled in cycle by default).
+    "legacy_strategy_reviewer_enabled": False,
+    "strategy_reviewer": {"enabled": False},
+    "evidence_memory": {"enabled": True},
+    "legacy_ai_fund_manager": {"disabled_by_default": True},
+    "legacy_sentience": {"disabled_by_default": True},
     "ai_monthly_budget_usd": 5.0,
     "ai_max_reviews_per_day": 8,
     "ai_max_tokens_per_review": 2048,

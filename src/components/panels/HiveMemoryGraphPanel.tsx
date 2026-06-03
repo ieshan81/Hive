@@ -109,7 +109,7 @@ export function HiveMemoryGraphPanel({ compact = false }: Props) {
   return (
     <>
       <GlassPanel
-        title={compact ? "Hive Brain" : "Hive Brain — Collective Intelligence"}
+        title={compact ? "Evidence Memory Graph" : "Evidence Memory Graph — consolidated lessons"}
         icon={<Network className="h-4 w-4" />}
         action={
           <span className="text-[9px] text-slate-600">
@@ -149,10 +149,10 @@ export function HiveMemoryGraphPanel({ compact = false }: Props) {
         )}
 
         {loading ? (
-          <EmptyState message="Loading Hive Brain graph…" className="min-h-[200px]" />
+          <EmptyState message="Loading evidence memory graph…" className="min-h-[200px]" />
         ) : showError ? (
           <PanelError
-            title="Could not load Hive Brain graph"
+            title="Could not load evidence memory graph"
             meta={meta}
             expectedShape='{ status: "ok", nodes: [...], edges: [...], legend: [...] }'
           />
