@@ -54,7 +54,7 @@ def control_center_status(session: Session, config: Optional[dict] = None) -> di
             {"label": "Start fresh paper learning", "endpoint": "POST /api/autonomous-paper-learning/enable"},
             {"label": "Run one paper cycle", "endpoint": "POST /api/autonomous-paper-learning/run-one-cycle"},
             {"label": "Run push-pull backtest", "endpoint": "POST /api/backtesting/run-push-pull"},
-            {"label": "Export diagnostic bundle", "endpoint": "GET /api/diagnostic-bundle/download"},
+            {"label": "Export diagnostic bundle (latest)", "endpoint": "GET /api/diagnostic-bundle/download?mode=latest"},
             {"label": "Repair database bootstrap", "endpoint": "POST /api/admin/repair-database-bootstrap"},
         ],
         "danger_zone": {

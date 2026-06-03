@@ -1,6 +1,8 @@
 """Async diagnostic export job API."""
 
-from fastapi import APIRouter, Depends
+from typing import Any, Optional
+
+from fastapi import APIRouter, Body, Depends
 from fastapi.responses import Response
 from sqlmodel import Session
 
@@ -16,9 +18,13 @@ router = APIRouter(prefix="/api/diagnostics/export", tags=["diagnostics-export"]
 
 
 @router.post("/run")
-def run_export(_op: str = Depends(require_operator_token)):
-    """OPERATOR ACTION: starts heavy diagnostic export work in background."""
-    return start_export_job()
+def run_export(
+    body: Optional[dict[str, Any]] = Body(default=None),
+    _op: str = Depends(require_operator_token),
+):
+    """OPERATOR ACTION: background export. Default mode=latest (small current-run). Use mode=forensic for full history."""
+    mode = str((body or {}).get("mode") or "latest").strip().lower()
+    return start_export_job(mode=mode)
 
 
 @router.get("/status")

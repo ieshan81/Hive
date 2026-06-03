@@ -79,7 +79,11 @@ export function DiagnosticBundlePanel() {
   async function startExport() {
     setBusy(true);
     setMsg("Export running in background.");
-    const res = await apiPostOperator<{ job_id?: string }>("/api/diagnostics/export/run", {}, { timeoutMs: 10000 });
+    const res = await apiPostOperator<{ job_id?: string }>(
+      "/api/diagnostics/export/run",
+      { mode: "latest" },
+      { timeoutMs: 10000 }
+    );
     if (!res.ok || !res.data?.job_id) {
       setMsg(res.error ?? "Could not start export.");
       setBusy(false);
@@ -126,7 +130,8 @@ export function DiagnosticBundlePanel() {
           <FileArchive className="h-5 w-5 text-hive-cyan" /> Reports
         </h2>
         <p className="mb-4 text-sm text-slate-400">
-          Diagnostic exports run as operator jobs. Status is persisted in the database, so refreshing this page keeps the latest job state.
+          Exports default to the small current-run latest bundle (~30 files, README_FIRST.json). Full forensic history
+          requires <span className="font-mono text-slate-300">?mode=forensic</span> on the download endpoint.
         </p>
 
         <div className="grid gap-2 text-sm md:grid-cols-3">

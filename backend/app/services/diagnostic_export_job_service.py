@@ -95,10 +95,19 @@ def _update_job(job_id: str, **fields: Any) -> None:
         session.commit()
 
 
-def start_export_job() -> dict[str, Any]:
-    """OPERATOR ACTION: starts the heavy diagnostic export worker."""
+def _resolve_export_mode(mode: str | None) -> str:
+    from app.config import settings
+
+    resolved = (mode or getattr(settings, "diagnostic_export_mode", "latest") or "latest").lower()
+    return resolved if resolved in ("latest", "forensic") else "latest"
+
+
+def start_export_job(mode: str | None = None) -> dict[str, Any]:
+    """OPERATOR ACTION: starts diagnostic export worker (default = small latest bundle)."""
 
     from datetime import datetime
+
+    export_mode = _resolve_export_mode(mode)
 
     with _JOB_LOCK:
         with Session(engine) as session:
@@ -121,6 +130,7 @@ def start_export_job() -> dict[str, Any]:
                     status="running",
                     progress_pct=0,
                     started_at=datetime.utcnow(),
+                    current_step=f"queued_{export_mode}",
                 )
             )
             session.commit()
@@ -129,28 +139,43 @@ def start_export_job() -> dict[str, Any]:
         from datetime import datetime
 
         try:
-            from app.services.diagnostic_export import (
-                bundle_dict_as_zip_bytes,
-                diagnostic_bundle_filename,
-                export_diagnostic_bundle_safe,
-            )
-
-            _update_job(job_id, progress_pct=5, current_step="starting")
+            _update_job(job_id, progress_pct=5, current_step=f"starting_{export_mode}")
             with Session(engine) as session:
-                _update_job(job_id, progress_pct=15, current_step="collecting_db_truth")
-                bundle = export_diagnostic_bundle_safe(session)
+                if export_mode == "forensic":
+                    from app.services.diagnostic_export import (
+                        bundle_dict_as_zip_bytes,
+                        diagnostic_bundle_filename,
+                        export_diagnostic_bundle_safe,
+                    )
 
-                _update_job(job_id, progress_pct=55, current_step="collecting_api_snapshots", last_completed_file="api_snapshots/_manifest.json")
-                _update_job(job_id, progress_pct=65, current_step="capturing_screenshots")
+                    _update_job(job_id, progress_pct=15, current_step="collecting_db_truth")
+                    bundle = export_diagnostic_bundle_safe(session)
+                    _update_job(job_id, progress_pct=55, current_step="collecting_api_snapshots", last_completed_file="api_snapshots/_manifest.json")
+                    _update_job(job_id, progress_pct=65, current_step="capturing_screenshots")
+                    failed = []
+                    errors = bundle.get("diagnostic_export_errors.json")
+                    if isinstance(errors, list):
+                        failed = [e.get("section") for e in errors if isinstance(e, dict) and e.get("section")]
+                    _update_job(job_id, progress_pct=80, failed_sections=failed[:20], current_step="writing_zip")
+                    zip_bytes = bundle_dict_as_zip_bytes(bundle)
+                    filename = diagnostic_bundle_filename(session)
+                else:
+                    from app.services.diagnostic_bundle_latest import (
+                        build_latest_bundle,
+                        latest_bundle_as_zip,
+                        latest_bundle_filename,
+                    )
 
-                failed = []
-                errors = bundle.get("diagnostic_export_errors.json")
-                if isinstance(errors, list):
-                    failed = [e.get("section") for e in errors if isinstance(e, dict) and e.get("section")]
-                _update_job(job_id, progress_pct=80, failed_sections=failed[:20], current_step="writing_zip")
+                    _update_job(job_id, progress_pct=25, current_step="building_latest_bundle")
+                    bundle = build_latest_bundle(session)
+                    failed = []
+                    section_errors = (bundle.get("bundle_meta.json") or {}).get("section_errors")
+                    if isinstance(section_errors, list):
+                        failed = [e.get("section") for e in section_errors if isinstance(e, dict) and e.get("section")]
+                    _update_job(job_id, progress_pct=70, failed_sections=failed[:20], current_step="writing_zip", last_completed_file="README_FIRST.json")
+                    zip_bytes = latest_bundle_as_zip(session)
+                    filename = latest_bundle_filename()
 
-                zip_bytes = bundle_dict_as_zip_bytes(bundle)
-                filename = diagnostic_bundle_filename(session)
                 file_count = len(zipfile.ZipFile(io.BytesIO(zip_bytes)).namelist()) if zip_bytes else 0
 
             _update_job(job_id, progress_pct=92, current_step="persisting_zip")
