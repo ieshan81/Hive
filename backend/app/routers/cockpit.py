@@ -51,9 +51,11 @@ def get_paper_validation_productivity(session: Session = Depends(get_session)):
     """READ ONLY: why the bot is/isn't producing candidates — scanned vs scored vs blocked
     (data/alpha/edge/portfolio/preflight), best candidate, exact next blocker, missing evidence,
     and engine state (watching/waiting/degraded). Never trades, never mutates."""
+    from app.services.config_manager import ConfigManager
     from app.services.paper_validation_productivity_service import build_productivity
 
-    return build_productivity(session)
+    cfg = ConfigManager(session).get_current_readonly()
+    return build_productivity(session, cfg, fast_path=True)
 
 
 @router.get("/watchlist")

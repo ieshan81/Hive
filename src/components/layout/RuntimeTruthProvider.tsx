@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { fetchRuntimeTruth, type RuntimeTruth } from "@/lib/runtimeTruth";
 
 type RuntimeTruthContextValue = {
@@ -27,12 +27,17 @@ export function RuntimeTruthProvider({
   const [truth, setTruth] = useState<RuntimeTruth | null>(initial ?? null);
   const [loading, setLoading] = useState(!initial);
   const [degraded, setDegraded] = useState(false);
+  const truthRef = useRef(truth);
+  truthRef.current = truth;
 
   const refresh = useCallback(async () => {
-    const res = await fetchRuntimeTruth({ timeoutMs: 6000 });
+    const res = await fetchRuntimeTruth({ timeoutMs: 15000 });
     if (res.ok && res.data) {
       setTruth(res.data);
       setDegraded(Boolean(res.data.data_degraded));
+    } else if (truthRef.current) {
+      // Keep last good snapshot — transient timeout must not flash false offline states.
+      setDegraded(true);
     } else {
       setDegraded(true);
     }

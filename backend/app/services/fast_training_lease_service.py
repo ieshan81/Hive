@@ -39,18 +39,47 @@ class FastTrainingLeaseService:
         return row
 
     def status(self) -> dict[str, Any]:
+        stale_cleared = self.recover_if_stale(commit=True)
         row = self._row()
         now = datetime.utcnow()
         held = bool(row.holder_id and row.expires_at and row.expires_at > now)
         return {
             "use_db_lease": self.use_db_lease,
             "lease_held": held,
+            "lease_stale_cleared": stale_cleared,
             "holder_id": row.holder_id,
             "acquired_at": row.acquired_at.isoformat() + "Z" if row.acquired_at else None,
             "expires_at": row.expires_at.isoformat() + "Z" if row.expires_at else None,
             "last_completed_at": row.last_completed_at.isoformat() + "Z" if row.last_completed_at else None,
             "last_result": row.last_result_json,
         }
+
+    def recover_if_stale(self, *, commit: bool = True) -> bool:
+        """Clear expired or abandoned leases so tick_in_progress cannot stick forever."""
+        if not self.use_db_lease:
+            return False
+        row = self._row()
+        now = datetime.utcnow()
+        if not row.holder_id:
+            return False
+        expired = bool(row.expires_at and row.expires_at <= now)
+        abandoned = bool(
+            row.acquired_at
+            and (now - row.acquired_at).total_seconds() > max(self.ttl_seconds * 2, 180)
+        )
+        if not expired and not abandoned:
+            return False
+        row.holder_id = None
+        row.acquired_at = None
+        row.expires_at = None
+        row.last_completed_at = now
+        row.last_result_json = {"status": "stale_lease_recovered"}
+        self.session.add(row)
+        if commit:
+            self.session.commit()
+        else:
+            self.session.flush()
+        return True
 
     def acquire(self, holder_id: Optional[str] = None) -> tuple[bool, str]:
         if not self.use_db_lease:

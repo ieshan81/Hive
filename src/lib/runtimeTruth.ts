@@ -26,28 +26,33 @@ export type RuntimeTruth = {
   data_degraded?: boolean;
   degraded_reason?: string | null;
   account_equity?: number | null;
+  account_last_sync_at?: string | null;
   funnel_counts?: Record<string, number | null>;
 };
 
 export async function fetchRuntimeTruth(options?: { forServer?: boolean; timeoutMs?: number }) {
   return apiGet<RuntimeTruth>("/api/runtime/summary", {
     forServer: options?.forServer,
-    timeoutMs: options?.timeoutMs ?? 5000,
+    timeoutMs: options?.timeoutMs ?? 12000,
   });
 }
 
 export function brokerLabel(truth: RuntimeTruth | null | undefined, degraded?: boolean): string {
-  if (degraded && truth?.paper_broker) return "Status degraded";
-  if (truth?.data_degraded && truth?.paper_broker) return "Degraded snapshot";
-  if (truth?.broker_connected && truth?.paper_broker) return "Paper OK";
-  if (truth?.paper_broker && truth?.paper_orders_enabled) return "Paper ready";
-  if (truth?.paper_broker) return "Paper broker";
-  return "Offline";
+  if (!truth) return "Loading…";
+  if (truth.paper_broker && truth.paper_orders_enabled) return "Paper OK";
+  if (truth.broker_connected && truth.paper_broker) return "Paper OK";
+  if (truth.paper_broker && truth.scheduler_enabled) return "Paper ready";
+  if (degraded && truth.paper_broker) return "Status degraded";
+  if (truth.data_degraded && truth.paper_broker) return "Degraded snapshot";
+  if (truth.paper_broker) return "Paper broker";
+  if (degraded) return "Status degraded";
+  return "Check broker";
 }
 
 export function showNotConnectedWarning(truth: RuntimeTruth | null | undefined): boolean {
   if (!truth) return false;
-  if (truth.data_degraded && truth.paper_broker) return false;
+  if (truth.broker_connected) return false;
   if (truth.paper_broker && truth.paper_orders_enabled) return false;
+  if (truth.data_degraded && truth.paper_broker) return false;
   return !truth.broker_connected && !truth.paper_broker;
 }

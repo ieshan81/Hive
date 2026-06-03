@@ -1,6 +1,6 @@
 /** Format ISO UTC timestamps for display (browser local time + UTC label). */
 export function formatSyncTime(isoUtc: string | null | undefined): string {
-  if (!isoUtc) return "Not synced";
+  if (!isoUtc) return "Awaiting sync";
   const date = new Date(isoUtc);
   if (Number.isNaN(date.getTime())) return isoUtc;
 

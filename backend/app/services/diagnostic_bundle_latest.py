@@ -133,6 +133,8 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
     run_id = (epoch or {}).get("validation_run_id") or (PAPER_VALIDATION_RUN_ID if epoch else None)
     cutoff_iso = (epoch or {}).get("nuke_completed_at")
 
+    section_timings: dict[str, float] = {}
+
     # --- fast read-models (current truth) ---
     # These reads are independent; the heavy ones (tiles/universe/stock/productivity) are Alpaca-I/O
     # bound. Run them concurrently (own Session per job) on a real DB; sequential on sqlite/tests.
@@ -140,6 +142,14 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
 
     def _imp(mod, name):
         return getattr(__import__(f"app.services.{mod}", fromlist=[name]), name)
+
+    t_runtime = time.time()
+    runtime_summary = _safe(
+        "runtime_summary",
+        errs,
+        lambda: _imp("runtime_summary_service", "build_runtime_summary")(session, cfg),
+    )
+    section_timings["runtime_summary_seconds"] = round(time.time() - t_runtime, 3)
 
     def _shadow_bundle_jobs(s):
         mod = __import__(
@@ -163,7 +173,6 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
         "scheduler": lambda s: _imp("autonomous_paper_scheduler", "AutonomousPaperScheduler")(s, cfg).status(),
         "promotion_criteria": lambda s: _imp("promotion_criteria", "authoritative_promotion_criteria")(cfg, session=s),
         "universe_summary": lambda s: _imp("universe_summary_service", "build_universe_summary")(s, cfg),
-        "productivity": lambda s: _imp("paper_validation_productivity_service", "build_productivity")(s, cfg),
         "current_run_trade_truth": lambda s: _A("current_run_trade_truth").current_run_trade_truth(s, cfg),
         "pnl_guard_trace": lambda s: _A("pnl_guard_trace").pnl_guard_trace(s, cfg),
         "data_freshness_matrix": lambda s: _A("data_freshness_matrix").data_freshness_matrix(s, cfg),
@@ -174,7 +183,14 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
     }
     t_jobs = time.time()
     res = _run_fetches(jobs, session, errs)
-    section_timings = {"parallel_fetch_seconds": round(time.time() - t_jobs, 3)}
+    section_timings["parallel_fetch_seconds"] = round(time.time() - t_jobs, 3)
+    t_prod = time.time()
+    productivity = _safe(
+        "productivity",
+        errs,
+        lambda: _imp("paper_validation_productivity_service", "build_productivity")(session, cfg, fast_path=True),
+    )
+    section_timings["productivity_seconds"] = round(time.time() - t_prod, 3)
     tiles = res["tiles"]
     engine_map = res["engine_map"]
     mem_gov = res["memory_governance"]
@@ -184,7 +200,6 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
     scheduler = res["scheduler"]
     promotion_criteria = res["promotion_criteria"]
     universe = res["universe_summary"]
-    productivity = res["productivity"]
     trade_truth = res["current_run_trade_truth"]
     pnl_trace = res["pnl_guard_trace"]
     freshness_matrix = res["data_freshness_matrix"]
@@ -346,6 +361,7 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
         "promotion_criteria.json": promotion_criteria,
         "universe_summary.json": universe,
         "paper_validation_productivity.json": productivity,
+        "runtime_summary.json": runtime_summary,
         "current_run_trade_truth.json": trade_truth,
         "p_and_l_guard_trace.json": pnl_trace,
         "data_freshness_matrix.json": freshness_matrix,

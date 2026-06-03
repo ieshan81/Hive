@@ -32,6 +32,9 @@ def main() -> None:
         assert meta.get("bundle_mode") == "latest", meta
         assert "README_FIRST.json" in bundle
         assert "paper_validation_productivity.json" in bundle
+        prod = bundle.get("paper_validation_productivity.json") or {}
+        assert prod.get("status") != "degraded" or prod.get("error") != "timeout", prod
+        assert prod.get("why_no_trade") or prod.get("why_no_paper_trade_plain"), prod
         assert gen < 30.0, f"generation_seconds too high: {gen}"
         if gen > 10.0:
             assert meta.get("section_timings") or meta.get("section_errors") is not None, (

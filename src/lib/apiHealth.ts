@@ -77,7 +77,7 @@ export function logApiHealthToConsole(probes: EndpointProbe[]): void {
 }
 
 export const UI_PANEL_DATA_SOURCES = [
-  { panel: "HiveMemoryGraphPanel", endpoints: ["/api/hive-brain/graph", "/api/hive-brain/node/{id}", "/api/memory/node/{id}"] },
+  { panel: "HiveMemoryGraphPanel", endpoints: ["/api/evidence-memory/graph", "/api/evidence-memory/node/{id}", "/api/memory/node/{id}"] },
   { panel: "PositionsPage", endpoints: ["/api/positions", "/api/positions/state", "/api/trades/history", "/api/orders"] },
   { panel: "DecisionDrilldownModal", endpoints: ["/api/decisions/{type}?cycle_run_id=latest"] },
   { panel: "HiveMindSection", endpoints: ["/api/memory/hive-mind", "/api/memory/graph"] },

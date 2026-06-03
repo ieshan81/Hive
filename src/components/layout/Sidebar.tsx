@@ -42,12 +42,17 @@ interface SidebarProps {
 
 export function Sidebar({ systemStatus }: SidebarProps) {
   const pathname = usePathname();
-  const { truth, degraded } = useRuntimeTruth();
+  const { truth, degraded, loading } = useRuntimeTruth();
   const paperOk = Boolean(
-    truth?.broker_connected || truth?.paper_broker || systemStatus?.paperBroker || systemStatus?.alpacaConnected
+    truth?.broker_connected ||
+      truth?.paper_broker ||
+      (truth?.paper_broker && truth?.paper_orders_enabled) ||
+      systemStatus?.paperBroker ||
+      systemStatus?.alpacaConnected
   );
-  const label = truth ? brokerLabel(truth, degraded) : paperOk ? "Paper OK" : "Offline";
-  const color = paperOk || truth?.paper_broker ? "#00FF66" : degraded ? "#F59E0B" : "#F59E0B";
+  const label = loading && !truth ? "Loading…" : truth ? brokerLabel(truth, degraded) : "Loading…";
+  const color =
+    paperOk || truth?.paper_broker ? "#00FF66" : loading ? "#94A3B8" : degraded ? "#F59E0B" : "#F59E0B";
 
   return (
     <aside
