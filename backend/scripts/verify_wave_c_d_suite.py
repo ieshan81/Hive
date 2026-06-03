@@ -14,7 +14,7 @@ from app.services.config_manager import ConfigManager
 from app.services.fast_crypto_training_loop import FastCryptoTrainingLoop
 from app.services.training_execution_service import TrainingExecutionService
 from app.services.open_position_review_service import OpenPositionReviewService
-from app.services.ai_learning_memory_service import AILearningMemoryService
+from app.services.evidence_memory_service import EvidenceMemoryService
 from app.services.hive_brain_graph_service import HiveBrainGraphService
 from app.services.memory_consolidation_service import MemoryConsolidationService
 from app.services.lesson_memory_service import LessonMemoryService
@@ -110,7 +110,7 @@ def main():
         run("verify_fast_training_no_live_orders", no_live)
 
         def stale_ai():
-            AILearningMemoryService(session, cfg).generate(force=True)
+            EvidenceMemoryService(session, cfg).generate(force=True)
             session.commit()
             core = list(
                 session.exec(
@@ -134,7 +134,7 @@ def main():
 
         run("verify_hive_brain_core_lessons_from_training_memory", brain_core)
 
-        directives = AILearningMemoryService(session, cfg).learning_directives()
+        directives = EvidenceMemoryService(session, cfg).learning_directives()
         assert "what_i_learned" in directives
         assert "what_i_will_avoid" in directives
         assert "what_i_will_test_next" in directives

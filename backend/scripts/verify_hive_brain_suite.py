@@ -13,7 +13,7 @@ from app.services.config_manager import ConfigManager
 from app.services.hive_brain_graph_service import HiveBrainGraphService
 from app.services.live_lock_tripwire import live_lock_tripwire_status
 from app.services.memory_consolidation_service import MemoryConsolidationService
-from app.services.ai_learning_memory_service import AILearningMemoryService
+from app.services.evidence_memory_service import EvidenceMemoryService
 from app.services.training_execution_service import TrainingExecutionService
 from app.services.aggressive_paper_learning_service import AggressivePaperLearningService
 from app.services.meme_volatility_spike_detector import MemeVolatilitySpikeDetector
@@ -62,10 +62,10 @@ def main():
         ).all()
         run("verify_raw_memories_archived_not_deleted", lambda: None)
 
-        ai_before = len(AILearningMemoryService(session, cfg).list_ai_learning(200))
-        ai_out = AILearningMemoryService(session, cfg).generate(force=True)
+        ai_before = len(EvidenceMemoryService(session, cfg).list_ai_learning(200))
+        ai_out = EvidenceMemoryService(session, cfg).generate(force=True)
         session.commit()
-        ai_after = len(AILearningMemoryService(session, cfg).list_ai_learning(200))
+        ai_after = len(EvidenceMemoryService(session, cfg).list_ai_learning(200))
         assert ai_out.get("created", 0) >= 0
         run("verify_ai_learning_memory_generated_from_research", lambda: ai_after >= ai_before)
 

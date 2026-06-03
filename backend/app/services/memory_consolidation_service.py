@@ -199,9 +199,9 @@ class MemoryConsolidationService:
         )
         ai_created = 0
         try:
-            from app.services.ai_learning_memory_service import AILearningMemoryService
+            from app.services.evidence_memory_service import EvidenceMemoryService
 
-            ai_created = AILearningMemoryService(self.session, self.config).generate(force=force).get("created", 0)
+            ai_created = EvidenceMemoryService(self.session, self.config).generate(force=force).get("created", 0)
         except Exception:
             pass
         self.session.flush()

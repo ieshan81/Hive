@@ -1069,7 +1069,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
         from app.services.open_position_review_service import OpenPositionReviewService
         from app.services.meme_volatility_spike_detector import MemeVolatilitySpikeDetector
         from app.services.memory_consolidation_service import MemoryConsolidationService
-        from app.services.ai_learning_memory_service import AILearningMemoryService
+        from app.services.evidence_memory_service import EvidenceMemoryService
         from app.services.live_lock_tripwire import live_lock_tripwire_status
         from app.services.memory_policy import load_memory_policy
 
@@ -1108,7 +1108,7 @@ def export_diagnostic_bundle(session: Session) -> dict[str, Any]:
             ]
         graph = brain_graph
         cons_svc = MemoryConsolidationService(session, cfg_brain)
-        ai_svc = AILearningMemoryService(session, cfg_brain)
+        ai_svc = EvidenceMemoryService(session, cfg_brain)
         train_svc = TrainingExecutionService(session, cfg_brain)
         from app.services.fast_crypto_training_loop import FastCryptoTrainingLoop
         from app.services.fast_training_exit_only_service import FastTrainingExitOnlyService

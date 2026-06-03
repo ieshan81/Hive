@@ -14,7 +14,7 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: "Caged Hive Quant — Institutional Cockpit",
-  description: "Self-improving paper-trading AI command system. Live trading locked.",
+  description: "Evidence-driven paper-trading validation lab. Live trading locked.",
 };
 
 export default function RootLayout({

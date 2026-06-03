@@ -27,7 +27,7 @@ from app.services.kill_switch_service import KillSwitchService
 from app.services.promotion_service import PromotionService
 from app.services.cooldown_service import CooldownService
 from app.services.ai_budget_guard import AIBudgetGuard
-from app.services.ai_fund_manager import AIFundManager
+from app.services.strategy_reviewer import StrategyReviewer
 from app.services.capital_buckets import compute_buckets
 from app.services.alpaca_adapter import AlpacaAdapter
 from app.services.config_manager import ConfigManager
@@ -92,7 +92,7 @@ def build_dashboard(session: Session) -> dict[str, Any]:
     config = config_mgr.get_current()
     alpaca = AlpacaAdapter(session)
     memory = MemoryEngine(session)
-    ai = AIFundManager(session)
+    ai = StrategyReviewer(session)
     ai_budget = AIBudgetGuard(session).status()
     StrategyEngine(session, config)
 
@@ -229,9 +229,9 @@ def build_dashboard(session: Session) -> dict[str, Any]:
                 f"e.g. {deferred_early[0].portfolio_reason_code}"
             )
 
-    from app.services.ai_learning_memory_service import AILearningMemoryService
+    from app.services.evidence_memory_service import EvidenceMemoryService
 
-    ai_learning_payload = AILearningMemoryService(session, config).learning_directives()
+    ai_learning_payload = EvidenceMemoryService(session, config).learning_directives()
 
     # AI Fund Manager
     latest_review: AIReview | None = ai.get_latest_review()
