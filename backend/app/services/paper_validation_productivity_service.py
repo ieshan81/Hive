@@ -84,6 +84,59 @@ def build_productivity(session: Session, config: Optional[dict] = None) -> dict[
     else:
         zero_reason = "WATCHING_NO_FORCED_ENTRY"
 
+    sched = _safe(
+        lambda: __import__(
+            "app.services.autonomous_paper_scheduler", fromlist=["AutonomousPaperScheduler"]
+        ).AutonomousPaperScheduler(session, cfg).status(),
+        {},
+    )
+    scheduler_enabled = bool((cfg.get("autonomous_paper_learning") or {}).get("scheduler_enabled"))
+    last_tick_at = sched.get("last_tick_at")
+    next_tick_at = sched.get("next_planned_at_utc")
+    interval = max(60, int((cfg.get("autonomous_paper_learning") or {}).get("scheduler_interval_seconds", 600)))
+    scheduler_seen = False
+    if scheduler_enabled and last_tick_at:
+        try:
+            last_dt = datetime.fromisoformat(str(last_tick_at).replace("Z", ""))
+            scheduler_seen = (datetime.utcnow() - last_dt).total_seconds() <= interval * 2.5
+        except ValueError:
+            scheduler_seen = False
+
+    paper_exec = _safe(
+        lambda: __import__(
+            "app.services.mission_control_read_model", fromlist=["build_mission_control_tiles"]
+        ).build_mission_control_tiles(session, cfg),
+        {},
+    )
+    pe = paper_exec.get("paper_execution") or {}
+    paper_orders_enabled = bool(pe.get("paper_orders_enabled"))
+    paper_entry_ready = bool(pe.get("can_place_paper_orders_now") or pe.get("new_entries_allowed"))
+
+    blocker_category = "none"
+    if not scheduler_enabled:
+        blocker_category = "scheduler"
+    elif blocked_by_data and blocked_by_data >= max(blocked_by_alpha, blocked_by_edge, blocked_by_preflight):
+        blocker_category = "data"
+    elif blocked_by_alpha:
+        blocker_category = "alpha"
+    elif blocked_by_edge:
+        blocker_category = "edge_after_cost"
+    elif blocked_by_portfolio:
+        blocker_category = "risk"
+    elif blocked_by_preflight:
+        blocker_category = "preflight"
+
+    why_plain_parts = []
+    if not scheduler_enabled:
+        why_plain_parts.append("Scheduler is OFF — enable it for automatic scanning.")
+    elif paper_orders_enabled and paper_candidates == 0:
+        why_plain_parts.append("Paper enabled, no approved candidate.")
+    if next_blocker and next_blocker.get("label"):
+        why_plain_parts.append(str(next_blocker.get("label")))
+    why_no_paper_trade_plain = " ".join(why_plain_parts) or "Watching — no cage-approved candidate yet."
+
+    is_bot_scanning = bool(scheduler_enabled and scheduler_seen and scanned > 0)
+
     # Engine state.
     if uni.get("status") not in ("ok", None) or (alpha.get("status") not in ("ok", None) and alpha):
         engine_state = "degraded"
@@ -138,6 +191,15 @@ def build_productivity(session: Session, config: Optional[dict] = None) -> dict[
         },
         "crypto_active": (uni.get("policy") or {}).get("crypto_active"),
         "why_not_trading": why_not,
+        "scheduler_enabled": scheduler_enabled,
+        "scheduler_seen": scheduler_seen,
+        "last_tick_at": last_tick_at,
+        "next_tick_at": next_tick_at,
+        "is_bot_scanning": is_bot_scanning,
+        "paper_trading_enabled": paper_orders_enabled,
+        "paper_entry_ready": paper_entry_ready,
+        "why_no_paper_trade_plain": why_no_paper_trade_plain,
+        "blocker_category": blocker_category,
         "live_trading_locked": True,
         "orders_authority": "none",
         "note": "Read-only productivity truth — never trades. Heartbeat watches every candle; only "

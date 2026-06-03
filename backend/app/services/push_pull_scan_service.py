@@ -79,6 +79,10 @@ class PushPullScanService:
         scoring = score_active_universe(self.session, self.config, universe=universe)
         shadow_created = 0
         shadow_observed = 0
+        shadow_errors = 0
+        from app.services.cycle_context import current_cycle_run_id
+
+        cycle_run_id = current_cycle_run_id(self.session)
 
         # Exits first — SL/TP/loss band before new entries
         try:
@@ -220,6 +224,7 @@ class PushPullScanService:
                     strategy_id=strategy_id,
                     paper_blocked_reason=paper_blocked_reason,
                     paper_submitted=paper_submitted,
+                    cycle_run_id=cycle_run_id,
                 )
                 if shadow_res.get("observation"):
                     shadow_observed += 1
@@ -227,8 +232,15 @@ class PushPullScanService:
                 if st.get("shadow_trade_id") and st.get("status") not in ("skipped", "exists"):
                     shadow_created += 1
                 decisions_out.append({"shadow_league": shadow_res})
-            except Exception:
-                pass
+            except Exception as exc:
+                shadow_errors += 1
+                log_activity(
+                    self.session,
+                    "shadow_league_error",
+                    f"Shadow league hook failed for {sym}",
+                    {"symbol": sym, "error": type(exc).__name__, "message": str(exc)[:200]},
+                    commit=False,
+                )
 
         if eligible_strategy_count == 0:
             reason_counts["no_eligible_strategy"] += 1
@@ -284,6 +296,7 @@ class PushPullScanService:
             "threshold_values": scoring.get("threshold_values"),
             "shadow_trades_created": shadow_created,
             "shadow_setups_observed": shadow_observed,
+            "shadow_errors": shadow_errors,
         }
 
 

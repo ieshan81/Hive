@@ -224,6 +224,8 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
     changed = _safe("changed_since_previous_bundle", errs, lambda: _A(
         "changed_since_previous_bundle").changed_since_previous_bundle(session, cfg, headline=headline))
 
+    sched = _safe("scheduler", errs, lambda: _imp("autonomous_paper_scheduler", "AutonomousPaperScheduler")(session, cfg).status())
+    shadow_status = _safe("shadow_status", errs, lambda: _imp("shadow_league_status_service", "build_shadow_league_status")(session, cfg))
     # README_FIRST — the single first thing to read.
     acct = (tiles or {}).get("account") or {}
     pe = (tiles or {}).get("paper_execution") or {}
@@ -244,7 +246,14 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
         "current_run_order_attempts": (trade_truth or {}).get("current_run_order_attempts"),
         "current_run_closed_trades": (trade_truth or {}).get("current_run_closed_trades"),
         "scheduler_enabled": pe.get("scheduler_enabled"),
+        "last_tick_at": (sched or {}).get("last_tick_at") if isinstance(sched, dict) else None,
+        "next_tick_at": (sched or {}).get("next_planned_at_utc") if isinstance(sched, dict) else None,
+        "paper_orders_enabled": pe.get("paper_orders_enabled"),
+        "paper_entry_ready": pe.get("can_place_paper_orders_now") or pe.get("new_entries_allowed"),
         "paper_learning_enabled": pe.get("paper_learning_on"),
+        "shadow_league_enabled": bool((shadow_status or {}).get("enabled")) if isinstance(shadow_status, dict) else True,
+        "shadow_count": (shadow_status or {}).get("shadow_league_count") if isinstance(shadow_status, dict) else None,
+        "why_no_trade": (productivity or {}).get("why_no_paper_trade_plain") if isinstance(productivity, dict) else None,
         "stock_lane_mode": (universe.get("policy") or {}).get("stock_lane_mode") if isinstance(universe, dict) else None,
         "stock_entries_allowed": (universe.get("policy") or {}).get("stock_entries_allowed") if isinstance(universe, dict) else None,
         "crypto_active": (universe.get("policy") or {}).get("crypto_active") if isinstance(universe, dict) else None,

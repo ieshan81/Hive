@@ -117,6 +117,27 @@ When data is missing, the dashboard shows honest states:
 - Monte Carlo unavailable
 - Strategy inactive
 
+## Paper scheduler cron (Railway)
+
+The paper push-pull scheduler is **cron-driven** — enabling `scheduler_enabled` alone does not tick. Configure a Railway **Cron Job** on the backend service:
+
+- **Schedule:** every 10 minutes (`*/10 * * * *`)
+- **Command:** `python scripts/cron_paper_scheduler_tick.py`
+- **Env:** `OPERATOR_TOKEN`, `HIVE_BACKEND=https://your-backend.up.railway.app`
+
+The script treats `tick_in_progress` and `tick_paced` as success (idempotent, no overlap storms). Overlapping ticks are blocked by a DB lease in `AutonomousPaperScheduler`.
+
+**Preferred prod enable (preserves validation run):**
+
+```
+POST /api/autonomous-paper-learning/scheduler/enable
+POST /api/autonomous-paper-learning/supervised-burst  {"max_ticks": 2}
+```
+
+Do **not** use `start-fresh` unless you have verified it preserves `paper_validation_run_001`.
+
+**Local/dev loop:** `HIVE_PAPER_SCHEDULER_WORKER=1 python worker.py` (separate from Railway web).
+
 ## Principles
 
 > Rules trade fast. AI learns slowly. Risk engine blocks danger.

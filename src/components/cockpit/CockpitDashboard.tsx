@@ -35,10 +35,11 @@ type Cockpit = {
     paper_exploration_allowed?: boolean;
     best_candidate?: { symbol?: string } | null;
   };
-  paper_execution?: {
+    paper_execution?: {
     paper_broker_connected?: boolean;
     paper_orders_enabled?: boolean;
     paper_learning_on?: boolean;
+    scheduler_enabled?: boolean;
     open_positions_count?: number;
     active_orders_count?: number;
     new_entries_allowed?: boolean;
@@ -111,9 +112,9 @@ export function CockpitDashboard() {
   const topCandidate = universe.top_candidates?.[0] ?? eligible[0] ?? null;
 
   const statusTiles = [
+    ["Scheduler", tilesUnknown ? "—" : paper.scheduler_enabled ? "ON" : "OFF", paper.scheduler_enabled],
     ["Paper broker", tilesUnknown ? "—" : paper.paper_broker_connected ? "ON" : "OFF", paper.paper_broker_connected],
     ["Entries", tilesUnknown ? "—" : canSubmitEntries ? "READY" : "PAUSED", canSubmitEntries],
-    ["Exits", tilesUnknown ? "—" : exitsAllowed ? "ON" : "OFF", exitsAllowed],
     ["Live $", "LOCKED", true],
   ] as const;
 
@@ -142,6 +143,19 @@ export function CockpitDashboard() {
       </header>
 
       {err ? <p className="text-xs text-amber-400">{err}</p> : null}
+
+      {!tilesUnknown && paper.scheduler_enabled === false ? (
+        <div
+          className="rounded-xl border-2 border-red-500/60 bg-red-950/40 px-4 py-3"
+          role="alert"
+        >
+          <p className="text-sm font-bold text-red-300">Scheduler OFF</p>
+          <p className="mt-1 text-xs text-red-200/90">
+            Paper is ready but automatic push-pull ticks are disabled. Enable the scheduler in Settings
+            or via operator API — live trading stays locked.
+          </p>
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
         {statusTiles.map(([label, val, ok]) => (
