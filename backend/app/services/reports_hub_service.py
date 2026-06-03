@@ -13,18 +13,17 @@ from app.services.live_lock_tripwire import live_lock_tripwire_status
 
 
 EXPECTED_BUNDLE_FILES = [
+    "README_FIRST.json",
     "bundle_meta.json",
-    "health_snapshot.json",
-    "system_log.json",
-    "audit_trail.json",
-    "env_pause_status.json",
-    "live_lock_status.json",
-    "latest_tick_execution_logs.json",
-    "historical_execution_logs.json",
-    "capital_allocator_plan.json",
-    "push_pull_latest_tick.json",
-    "ai_memory.json",
-    "diagnostic_export_errors.json",
+    "current_run_trade_truth.json",
+    "paper_validation_productivity.json",
+    "alpha_coverage_matrix.json",
+    "data_freshness_matrix.json",
+    "p_and_l_guard_trace.json",
+    "shadow_trades_summary.json",
+    "shadow_outcomes.json",
+    "strategy_promotion_ladder.json",
+    "why_no_trade.json",
 ]
 
 
@@ -37,9 +36,10 @@ class ReportsHubService:
         return {
             "status": "ok",
             "headline": "Diagnostic proof package",
-            "description": "Download includes trading, AI, push-pull, allocator, and error sections. Partial failures are listed in diagnostic_export_errors.json.",
+            "description": "Default download is the small current-run latest bundle (README_FIRST.json first). Full history requires ?mode=forensic.",
             "expected_files": EXPECTED_BUNDLE_FILES,
-            "download_path": "/api/diagnostic-bundle/download",
+            "download_path": "/api/diagnostic-bundle/download?mode=latest",
+            "forensic_download_path": "/api/diagnostic-bundle/download?mode=forensic",
             "no_secrets": True,
             "env_pause": env_pause_status(),
             "live_lock": live_lock_tripwire_status(self.config),

@@ -12,7 +12,7 @@ const BACKEND_URL = (
 /** Long-running diagnostic zip proxy — avoids default rewrite timeout. */
 export async function GET() {
   try {
-    const res = await fetch(`${BACKEND_URL}/api/diagnostic-bundle/download`, {
+    const res = await fetch(`${BACKEND_URL}/api/diagnostic-bundle/download?mode=latest`, {
       method: "GET",
       cache: "no-store",
     });
