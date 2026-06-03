@@ -39,9 +39,21 @@ ranked, scored, gated, or executed a trade.
 runs in the decision loop — the cycle uses the deterministic system summary. Trade decisions are
 already complete before the (disabled) reviewer would run.
 
+**Config flags** (`default_config.py`):
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `legacy_strategy_reviewer_enabled` | `False` | Cycle runs Strategy Reviewer only when `True`. |
+| `strategy_reviewer.enabled` | `False` | Documented alias; cycle uses `legacy_strategy_reviewer_enabled`. |
+| `evidence_memory.enabled` | `True` | Evidence Memory generate/list (advisory only). |
+| `legacy_ai_fund_manager.disabled_by_default` | `True` | Documents retired autonomous fund-manager semantics. |
+| `legacy_sentience.disabled_by_default` | `True` | Documents retired sentience/vibe decision semantics. |
+
 ### Frontend copy scrubbed (user-facing)
 - `AIFundManagerPanel` title → **"Strategy Reviewer"**; first-person labels → "Evidence learned" /
   "Patterns to avoid" / "Next tests queued".
+- `HiveMemoryGraphPanel` / `HiveMindSection` user-facing titles → **Evidence Memory Graph** /
+  **Evidence Memory**.
 - `layout.tsx` description → "Evidence-driven paper-trading validation lab. Live trading locked."
 - `globals.css` brand comment: "sentient" → "evidence-driven".
 - `StrategyProposalsPanel` blurb: "Self-improvement suggestions from memory and confidence" →
@@ -60,11 +72,9 @@ Evidence-based blocker or scorecard.
   for contract/data stability; the reviewer that writes them is disabled by default.
 
 ## Staged for the follow-up UI-rename PR (NOT in this PR)
-Per the agreed scope ("Phase 0 + semantics doc only"), these branding **identifiers** remain and are
-renamed in the staged full-UI-rename PR (they are code identifiers, not decision-implying copy):
-`HiveBrainCanvas/CustomNode/Drawer`, `HiveMindSection`, `HiveMemoryGraphPanel`, `CleanMindPanel`,
-`CockpitFunnelBrain`, `SettingsBrainMaintenance`, `AIFundManagerPanel`/`AIFundManagerData`,
-`types/hiveBrain.ts`, `ai-manager/page.tsx`. Target names: Hive Brain/Mind → **Evidence Memory Graph**.
+These **code identifiers** remain (not user-facing copy) and can be renamed in a follow-up PR:
+`HiveBrainCanvas/CustomNode/Drawer`, `CleanMindPanel`, `CockpitFunnelBrain`, `SettingsBrainMaintenance`,
+`AIFundManagerPanel`/`AIFundManagerData`, `types/hiveBrain.ts`, `ai-manager/page.tsx`.
 
 ## What is NOT changing
 Safety cage, live locks, risk gates, `paper_validation_run_001`, broker behavior — all unchanged.
