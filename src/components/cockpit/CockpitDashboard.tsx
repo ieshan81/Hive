@@ -1,13 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Brain, ChevronDown, RefreshCw } from "lucide-react";
+import Link from "next/link";
+import { Activity, ChevronDown, RefreshCw } from "lucide-react";
 import { GlassPanel } from "@/components/ui/GlassPanel";
 import { TickerSymbol } from "@/components/ui/TickerSymbol";
 import { CockpitAutopilotChip } from "@/components/cockpit/CockpitAutopilotChip";
 import { CockpitFunnelBrain } from "@/components/cockpit/CockpitFunnelBrain";
 import { CockpitPortfolioHistory } from "@/components/cockpit/CockpitPortfolioHistory";
-import { ShadowLeagueMiniPanel } from "@/components/cockpit/ShadowLeagueMiniPanel";
 import { WhyNoTradeCard } from "@/components/panels/WhyNoTradeCard";
 import { apiGet } from "@/lib/apiClient";
 import { dispatchCockpitRefresh } from "@/lib/cockpitEvents";
@@ -35,7 +35,7 @@ type Cockpit = {
     paper_exploration_allowed?: boolean;
     best_candidate?: { symbol?: string } | null;
   };
-    paper_execution?: {
+  paper_execution?: {
     paper_broker_connected?: boolean;
     paper_orders_enabled?: boolean;
     paper_learning_on?: boolean;
@@ -100,7 +100,6 @@ export function CockpitDashboard() {
 
   const tileSrc = tiles ?? data;
   const paper = tileSrc?.paper_execution ?? {};
-  const alpha = data?.alpha_factory ?? {};
   const universe = data?.universe ?? {};
   const f = data?.funnel ?? universe.funnel ?? {};
   const tilesUnknown = tilesStale || (loading && !tiles);
@@ -123,10 +122,10 @@ export function CockpitDashboard() {
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-bold text-white">
-            <Brain className="h-7 w-7 text-hive-cyan" />
-            Cockpit
+            <Activity className="h-7 w-7 text-hive-cyan" />
+            Mission Control
           </h1>
-          <p className="mt-1 text-sm text-slate-400">Paper-only truth · live locked · refresh for heavy scans</p>
+          <p className="mt-1 text-sm text-slate-400">Is the system safe and running? · live locked · paper only</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -183,31 +182,21 @@ export function CockpitDashboard() {
       />
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <div className="space-y-4">
-          <ShadowLeagueMiniPanel />
-          <GlassPanel title="Alpha & exploration">
-            <p className="text-xs text-slate-300">
-              {alpha.plain_english ??
-                (alpha.can_trade_paper_now
-                  ? "Paper candidate evidence ready."
-                  : "No paper candidate yet — research/scorecard required.")}
-            </p>
-            <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
-              <div className="rounded border border-white/10 bg-black/20 p-2">
-                <p className="text-slate-500">Candidates</p>
-                <p className="font-semibold text-white">{alpha.paper_candidate_count ?? 0}</p>
-              </div>
-              <div className="rounded border border-white/10 bg-black/20 p-2">
-                <p className="text-slate-500">Best setup</p>
-                <p className="font-semibold text-white">{alpha.best_candidate?.symbol ?? "—"}</p>
-              </div>
-            </div>
-            <p className="mt-2 text-[10px] text-slate-500">
-              Positions {paper.open_positions_count ?? 0} · Orders {paper.active_orders_count ?? 0} · Exploration{" "}
-              {alpha.paper_exploration_allowed ? "allowed" : "blocked"}
-            </p>
-          </GlassPanel>
-        </div>
+        <GlassPanel title="Runtime snapshot">
+          <ul className="space-y-1 text-xs text-slate-300">
+            <li>Equity {tileSrc?.account?.equity != null ? `$${tileSrc.account.equity}` : "—"}</li>
+            <li>
+              Positions {paper.open_positions_count ?? 0} · Orders {paper.active_orders_count ?? 0}
+            </li>
+            <li>Exits {exitsAllowed ? "allowed" : "blocked"}</li>
+            <li>
+              Shadow learning{" "}
+              <Link href="/shadow-league" className="text-hive-cyan hover:underline">
+                view league →
+              </Link>
+            </li>
+          </ul>
+        </GlassPanel>
         <CockpitFunnelBrain funnel={f} blockers={data?.why_no_trade_summary?.plain} />
       </div>
 
@@ -263,13 +252,13 @@ export function CockpitDashboard() {
 
       <p className="text-[9px] text-slate-600">
         Updated {data?.generated_at_utc?.slice(0, 19) ?? "—"} ·{" "}
-        <a href="/reports" className="text-hive-cyan/80 hover:underline">
-          Latest diagnostic bundle
+        <a href="/diagnostics" className="text-hive-cyan/80 hover:underline">
+          Diagnostics bundle
         </a>{" "}
         ·{" "}
-        <a href="/universe" className="text-hive-cyan/80 hover:underline">
-          Universe
-        </a>
+        <a href="/paper-candidates" className="text-hive-cyan/80 hover:underline">
+          Paper candidates
+        </a>{" "}
       </p>
     </div>
   );

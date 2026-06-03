@@ -1,5 +1,5 @@
-import { DiagnosticBundlePanel } from "@/components/panels/DiagnosticBundlePanel";
+import { redirect } from "next/navigation";
 
-export default function ReportsPage() {
-  return <DiagnosticBundlePanel />;
+export default function ReportsRedirectPage() {
+  redirect("/diagnostics");
 }

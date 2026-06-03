@@ -122,7 +122,7 @@ export function SettingsBrainMaintenance() {
         </div>
       </GlassPanel>
 
-      <GlassPanel title="Brain maintenance">
+      <GlassPanel title="Memory maintenance">
         <p className="text-[10px] text-slate-500 mb-2">
           Memory consolidation and graph rebuild update learning data only. They do not submit broker
           orders.

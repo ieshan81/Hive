@@ -123,7 +123,7 @@ The paper push-pull scheduler is **cron-driven** — enabling `scheduler_enabled
 
 - **Schedule:** every 10 minutes (`*/10 * * * *`)
 - **Command:** `python scripts/cron_paper_scheduler_tick.py`
-- **Env:** `OPERATOR_TOKEN`, `HIVE_BACKEND=https://your-backend.up.railway.app`
+- **Env:** `OPERATOR_TOKEN` (must match backend `OPERATOR_SECRET`), `HIVE_BACKEND=https://your-backend.up.railway.app`
 
 The script treats `tick_in_progress` and `tick_paced` as success (idempotent, no overlap storms). Overlapping ticks are blocked by a DB lease in `AutonomousPaperScheduler`.
 

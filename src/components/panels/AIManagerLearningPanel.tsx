@@ -69,7 +69,7 @@ export function AIManagerLearningPanel() {
     <section className="space-y-4 max-w-5xl">
       <h1 className="text-xl font-bold text-white flex items-center gap-2">
         <Brain className="h-6 w-6 text-hive-cyan" />
-        AI Manager
+        Evidence lessons
       </h1>
       <p className="text-sm text-slate-400">{String(status?.headline ?? "Learning from paper trades")}</p>
 

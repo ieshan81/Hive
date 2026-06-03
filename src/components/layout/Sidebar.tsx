@@ -3,29 +3,34 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Brain,
+  Activity,
   Globe,
-  Wallet,
   FileText,
   Hexagon,
   LineChart,
-  Workflow,
   Settings as SettingsIcon,
   Shield,
+  Sparkles,
+  Target,
+  Wallet,
+  Workflow,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const primaryNav = [
-  { href: "/cockpit", label: "Cockpit", icon: Brain },
+  { href: "/mission-control", label: "Mission Control", icon: Activity },
   { href: "/universe", label: "Universe", icon: Globe },
-  { href: "/portfolio", label: "Portfolio", icon: Wallet },
-  { href: "/reports", label: "Reports", icon: FileText },
-  { href: "/settings", label: "Settings", icon: SettingsIcon },
+  { href: "/shadow-league", label: "Shadow League", icon: Sparkles },
+  { href: "/paper-candidates", label: "Paper Candidates", icon: Target },
+  { href: "/risk-cage", label: "Risk Cage", icon: Shield },
+  { href: "/evidence-memory", label: "Evidence Memory", icon: Sparkles },
+  { href: "/diagnostics", label: "Diagnostics", icon: FileText },
 ];
 
-const moreNav = [
+const operatorNav = [
+  { href: "/portfolio", label: "Portfolio", icon: Wallet },
+  { href: "/settings", label: "Settings", icon: SettingsIcon },
   { href: "/engine-map", label: "Engine map", icon: Workflow },
-  { href: "/ai-manager", label: "Evidence memory", icon: Brain },
   { href: "/tradingview", label: "TradingView", icon: LineChart },
 ];
 
@@ -46,11 +51,11 @@ export function Sidebar({ systemStatus }: SidebarProps) {
         <div className="flex items-center gap-3">
           <div className="relative flex h-9 w-9 items-center justify-center rounded-lg border border-[#00dbe9]/30 bg-[#00f0ff]/10">
             <Hexagon className="absolute h-9 w-9 text-[#00dbe9]" strokeWidth={1.3} />
-            <Brain className="relative h-4 w-4 text-[#00dbe9]" strokeWidth={2} />
+            <Activity className="relative h-4 w-4 text-[#00dbe9]" strokeWidth={2} />
           </div>
           <div>
             <h1 className="text-[17px] font-bold leading-none tracking-tight text-[#00dbe9]">Caged Hive</h1>
-            <p className="label-caps mt-1 text-[#b9cacb] opacity-70">Paper validation</p>
+            <p className="label-caps mt-1 text-[#b9cacb] opacity-70">Paper validation lab</p>
           </div>
         </div>
       </div>
@@ -75,8 +80,8 @@ export function Sidebar({ systemStatus }: SidebarProps) {
             </Link>
           );
         })}
-        <p className="label-caps mb-1 mt-4 px-3 text-[#849495]">More</p>
-        {moreNav.map(({ href, label, icon: Icon }) => {
+        <p className="label-caps mb-1 mt-4 px-3 text-[#849495]">Operator</p>
+        {operatorNav.map(({ href, label, icon: Icon }) => {
           const isActive = pathname === href;
           return (
             <Link
