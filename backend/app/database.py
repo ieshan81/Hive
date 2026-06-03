@@ -1081,6 +1081,38 @@ class PaperExperimentOutcome(SQLModel, table=True):
     outcome_source: Optional[str] = None
 
 
+class ShadowTrade(SQLModel, table=True):
+    """Shadow Trading League — simulated learning trades; never broker-submitted."""
+
+    __tablename__ = "shadow_trades"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    shadow_trade_id: str = Field(index=True, unique=True)
+    validation_run_id: str = Field(index=True, default="paper_validation_run_001")
+    symbol: str = Field(index=True)
+    asset_class: str = Field(default="crypto", index=True)
+    strategy_id: Optional[str] = Field(default=None, index=True)
+    side: str = Field(default="buy")
+    # 0=observed_setup, 1=shadow_trade, 2=shadow_proven, 3=paper_candidate (shadow ladder only)
+    promotion_level: int = Field(default=1, index=True)
+    status: str = Field(default="open", index=True)  # observed|open|closed|void
+    data_quality: str = Field(default="execution_grade", index=True)
+    data_quality_note: Optional[str] = None
+    entry_reference_price: Optional[float] = None
+    exit_reference_price: Optional[float] = None
+    simulated_pnl_bps: Optional[float] = None
+    outcome_verdict: Optional[str] = Field(default=None, index=True)  # pending|win|loss|flat
+    paper_blocked_reason: Optional[str] = None
+    paper_would_be_allowed: bool = False
+    counts_as_broker_evidence: bool = False
+    setup_fingerprint: str = Field(index=True)
+    evidence_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    outcome_json: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    cycle_run_id: Optional[str] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    closed_at: Optional[datetime] = None
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class StrategyChangeProposal(SQLModel, table=True):
     __tablename__ = "strategy_change_proposals"
     id: Optional[int] = Field(default=None, primary_key=True)

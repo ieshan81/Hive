@@ -158,6 +158,10 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
         "alpha_coverage_matrix": lambda s: _A("alpha_coverage_matrix").alpha_coverage_matrix(s, cfg),
         "blocker_timeline": lambda s: _A("blocker_timeline").blocker_timeline(s, cfg),
         "paper_order_proof": lambda s: _imp("paper_order_proof_service", "PaperOrderProofService")(s, cfg).summary(),
+        "shadow_summary": lambda s: _imp("shadow_league_bundle_service", "shadow_trades_summary")(s, cfg),
+        "shadow_outcomes": lambda s: _imp("shadow_league_bundle_service", "shadow_outcomes")(s, cfg),
+        "shadow_ladder": lambda s: _imp("shadow_league_bundle_service", "strategy_promotion_ladder")(s, cfg),
+        "why_no_trade": lambda s: _imp("shadow_league_bundle_service", "why_no_trade")(s, cfg),
     }
     res = _run_fetches(jobs, session, errs)
     tiles = res["tiles"]
@@ -176,6 +180,10 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
     alpha_matrix = res["alpha_coverage_matrix"]
     timeline = res["blocker_timeline"]
     order_proof = res["paper_order_proof"]
+    shadow_summary = res.get("shadow_summary")
+    shadow_outcomes_export = res.get("shadow_outcomes")
+    shadow_ladder = res.get("shadow_ladder")
+    why_no_trade_export = res.get("why_no_trade")
     import os as _os
     git_commit = _os.environ.get("RAILWAY_GIT_COMMIT_SHA", "dev")[:12]
 
@@ -309,6 +317,10 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
         "blocker_timeline.json": timeline,
         "changed_since_previous_bundle.json": changed,
         "paper_order_proof.json": order_proof,
+        "shadow_trades_summary.json": shadow_summary,
+        "shadow_outcomes.json": shadow_outcomes_export,
+        "strategy_promotion_ladder.json": shadow_ladder,
+        "why_no_trade.json": why_no_trade_export,
         "endpoint_latency_summary.json": {
             "note": "Self-reported: /api/universe/summary is the fast path; /api/universe/status + "
                     "/api/mission-control/status are the slow heavy builds — prefer the fast paths.",
