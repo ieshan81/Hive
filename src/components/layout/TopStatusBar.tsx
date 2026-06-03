@@ -27,7 +27,10 @@ export function TopStatusBar({ lastSync, lastSyncAt, statusChips, systemStatus }
   const { truth, degraded } = useRuntimeTruth();
   const [aiLearning, setAiLearning] = useState(false);
   const runtime = truth as RuntimeTruth | null;
-  const syncLabel = formatSyncTime(lastSyncAt ?? runtime?.generated_at ?? (lastSync !== "Not synced" ? lastSync : null));
+  const syncLabel = formatSyncTime(
+    lastSyncAt ?? runtime?.account_last_sync_at ?? runtime?.last_tick_at ?? runtime?.generated_at ??
+      (lastSync !== "Not synced" ? lastSync : null)
+  );
   const brokerOk = Boolean(runtime?.broker_connected || (runtime?.paper_broker && runtime?.paper_orders_enabled));
   const showNotConnected = showNotConnectedWarning(runtime) && !brokerOk && !systemStatus.paperBroker;
 

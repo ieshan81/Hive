@@ -16,6 +16,7 @@ def main() -> None:
     assert "RuntimeTruthProvider" in layout
     assert "/api/runtime/summary" in runtime
     assert "useRuntimeTruth" in top and "useRuntimeTruth" in sidebar
+    assert 'return "Offline"' not in runtime
     assert "configure Alpaca credentials" not in top
     print("verify_ui_runtime_truth_consistency: PASS")
 

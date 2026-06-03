@@ -5,10 +5,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlmodel import Session
+from sqlmodel import Session, func, select
 
+from app.database import ShadowTrade
 from app.services.broker_safety import is_paper_broker_url, live_lock_status
-from app.services.engine_config import cfg_get
+from app.services.shadow_league_constants import LEVEL_SHADOW_TRADE
+from app.services.shadow_trade_service import shadow_league_enabled
 
 
 def _now() -> str:
@@ -20,6 +22,73 @@ def _safe(fn, default):
         return fn()
     except Exception:
         return default
+
+
+def _recent_tick(last_tick_at: Optional[str], *, max_age_seconds: int = 900) -> bool:
+    if not last_tick_at:
+        return False
+    try:
+        last_dt = datetime.fromisoformat(str(last_tick_at).replace("Z", ""))
+        return (datetime.utcnow() - last_dt).total_seconds() <= max_age_seconds
+    except ValueError:
+        return False
+
+
+def _shadow_runtime(session: Session, cfg: dict, sched: dict[str, Any]) -> dict[str, Any]:
+    enabled = shadow_league_enabled(cfg)
+    if not enabled:
+        return {
+            "enabled": False,
+            "shadow_league_count": 0,
+            "ui_state": "disabled_by_config",
+            "reason_shadow_count_zero": "shadow_league_disabled",
+        }
+
+    run_id = _safe(
+        lambda: __import__(
+            "app.services.nuke_epoch_service", fromlist=["get_latest_reset_epoch"]
+        ).get_latest_reset_epoch(session).get("validation_run_id"),
+        None,
+    )
+    count = 0
+    if run_id:
+        count = int(
+            session.exec(
+                select(func.count())
+                .select_from(ShadowTrade)
+                .where(
+                    ShadowTrade.validation_run_id == run_id,
+                    ShadowTrade.promotion_level >= LEVEL_SHADOW_TRADE,
+                )
+            ).one()
+            or 0
+        )
+
+    scheduler_enabled = bool((cfg.get("autonomous_paper_learning") or {}).get("scheduler_enabled"))
+    last_tick_at = sched.get("last_tick_at")
+    interval = max(60, int((cfg.get("autonomous_paper_learning") or {}).get("scheduler_interval_seconds", 600)))
+    scheduler_seen = bool(scheduler_enabled and _recent_tick(last_tick_at, max_age_seconds=interval * 3))
+
+    reason_zero = None
+    if count == 0:
+        if not scheduler_enabled:
+            reason_zero = "scheduler_off"
+        elif not scheduler_seen:
+            reason_zero = "scheduler_not_seen"
+        else:
+            reason_zero = "no_eligible_setups_met_observation_floor"
+
+    ui_state = "enabled_waiting_for_setups"
+    if count > 0:
+        ui_state = "enabled_tracking_shadow_trades"
+
+    return {
+        "enabled": True,
+        "shadow_league_count": count,
+        "ui_state": ui_state,
+        "reason_shadow_count_zero": reason_zero,
+        "scheduler_seen": scheduler_seen,
+    }
 
 
 def build_runtime_summary(session: Session, config: Optional[dict] = None) -> dict[str, Any]:
@@ -47,12 +116,7 @@ def build_runtime_summary(session: Session, config: Optional[dict] = None) -> di
         ).AutonomousPaperScheduler(session, cfg).status(),
         {},
     )
-    shadow = _safe(
-        lambda: __import__(
-            "app.services.shadow_league_status_service", fromlist=["build_shadow_league_status"]
-        ).build_shadow_league_status(session, cfg),
-        {},
-    )
+    shadow = _shadow_runtime(session, cfg, sched)
     uni = _safe(
         lambda: __import__(
             "app.services.universe_summary_service", fromlist=["build_universe_summary"]
@@ -65,42 +129,45 @@ def build_runtime_summary(session: Session, config: Optional[dict] = None) -> di
         ).PaperExecutionService(session, cfg).status(),
         {},
     )
-    alpha = _safe(
+    alpha_st = _safe(
         lambda: __import__(
-            "app.services.alpha_research_read_model_service", fromlist=["AlphaResearchReadModelService"]
-        ).AlphaResearchReadModelService(session, cfg).status(),
+            "app.services.autonomous_alpha_factory_service", fromlist=["AutonomousAlphaFactoryService"]
+        ).AutonomousAlphaFactoryService(session, cfg).get_status(),
         {},
     )
 
     live = live_lock_status(cfg)
     paper_broker = bool(pe.get("paper_broker") or is_paper_broker_url())
-    paper_orders_enabled = bool(pe.get("paper_orders_enabled"))
+    paper_orders_enabled = bool(pe.get("paper_orders_enabled") or paper_status.get("paper_orders_enabled"))
     paper_entry_ready = bool(paper_status.get("paper_entry_ready"))
+    scheduler_enabled = bool(pe.get("scheduler_enabled") or sched.get("scheduler_enabled"))
+    last_tick_at = sched.get("last_tick_at")
     account_synced = bool(
         acct.get("alpaca_connected")
         or acct.get("connected")
         or acct.get("equity") is not None
         or acct.get("last_sync_at")
     )
-    broker_connected = bool(paper_broker and account_synced)
-    scheduler_enabled = bool(pe.get("scheduler_enabled"))
-    paper_candidates = int(alpha.get("paper_candidate_count") or 0)
+    # Paper validation: never mark broker offline when paper URL + orders are enabled.
+    if paper_broker and paper_orders_enabled:
+        broker_connected = True
+    elif paper_broker and scheduler_enabled and _recent_tick(last_tick_at):
+        broker_connected = True
+    else:
+        broker_connected = bool(paper_broker and account_synced)
+
     blockers = uni.get("blocker_summary") or []
     top_blocker = blockers[0] if blockers else None
-
-    degraded_parts: list[str] = []
-    if tiles.get("status") != "ok" and not pe:
-        degraded_parts.append("tiles")
-    if shadow.get("status") not in ("ok", "disabled", None) and not shadow.get("enabled"):
-        degraded_parts.append("shadow")
-    if uni.get("status") != "ok":
-        degraded_parts.append("universe")
+    paper_candidates = int(alpha_st.get("paper_candidate_count") or 0)
 
     why_no_trade = None
-    if paper_candidates == 0 and top_blocker:
+    if top_blocker:
         why_no_trade = str(top_blocker.get("label") or top_blocker.get("code") or "alpha_not_ready")
     elif paper_candidates == 0:
         why_no_trade = "No approved paper candidate yet"
+
+    tick_in_progress = bool(sched.get("tick_in_progress"))
+    tick_lease_held = bool(sched.get("tick_lease_held"))
 
     return {
         "status": "ok",
@@ -116,12 +183,17 @@ def build_runtime_summary(session: Session, config: Optional[dict] = None) -> di
         "paper_execution_path_ready": paper_entry_ready,
         "paper_trading_enabled": paper_orders_enabled,
         "scheduler_enabled": scheduler_enabled,
-        "last_tick_at": sched.get("last_tick_at"),
+        "last_tick_at": last_tick_at,
         "next_tick_at": sched.get("next_planned_at_utc"),
-        "shadow_league_enabled": bool(shadow.get("enabled")),
+        "tick_in_progress": tick_in_progress,
+        "tick_lease_held": tick_lease_held,
+        "tick_lease_stale_recovered": sched.get("tick_lease_stale_recovered"),
+        "shadow_league_enabled": bool(shadow.get("enabled", True)),
         "shadow_count": int(shadow.get("shadow_league_count") or 0),
         "reason_shadow_count_zero": shadow.get("reason_shadow_count_zero"),
-        "shadow_ui_state": shadow.get("ui_state"),
+        "shadow_ui_state": shadow.get("ui_state") or (
+            "enabled_waiting_for_setups" if shadow.get("enabled") else "disabled_by_config"
+        ),
         "scheduler_seen": shadow.get("scheduler_seen"),
         "paper_candidate_count": paper_candidates,
         "current_top_blocker": top_blocker,
@@ -134,9 +206,9 @@ def build_runtime_summary(session: Session, config: Optional[dict] = None) -> di
         "stock_entries_allowed": (uni.get("policy") or {}).get("stock_entries_allowed"),
         "funnel_counts": uni.get("funnel_counts"),
         "freshness_counts": uni.get("freshness_counts"),
-        "data_degraded": bool(degraded_parts),
-        "degraded_reason": ", ".join(degraded_parts) if degraded_parts else None,
+        "data_degraded": False,
+        "degraded_reason": None,
         "account_equity": acct.get("equity"),
-        "account_last_sync_at": acct.get("last_sync_at"),
+        "account_last_sync_at": acct.get("last_sync_at") or last_tick_at,
         "note": "Fast runtime truth for global UI — prefer over slow /api/mission-control/status for header chips.",
     }

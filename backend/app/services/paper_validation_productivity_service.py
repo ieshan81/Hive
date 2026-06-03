@@ -25,7 +25,7 @@ def _safe(fn, default):
         return default
 
 
-def build_productivity(session: Session, config: Optional[dict] = None) -> dict[str, Any]:
+def build_productivity(session: Session, config: Optional[dict] = None, *, fast_path: bool = True) -> dict[str, Any]:
     if config is not None:
         cfg = config
     else:
@@ -36,9 +36,9 @@ def build_productivity(session: Session, config: Optional[dict] = None) -> dict[
     blockers = uni.get("blocker_summary") or []
     bd = {str(b.get("code")): int(b.get("count") or 0) for b in blockers if b.get("code")}
 
-    explo = _safe(lambda: __import__("app.services.paper_exploration_service", fromlist=["PaperExplorationService"]).PaperExplorationService(session, cfg).status(), {})
-    ds = _safe(lambda: __import__("app.services.autopilot_decision_state_service", fromlist=["AutopilotDecisionStateService"]).AutopilotDecisionStateService(session, cfg).state(), {})
-    alpha = _safe(lambda: __import__("app.services.alpha_research_read_model_service", fromlist=["AlphaResearchReadModelService"]).AlphaResearchReadModelService(session, cfg).status(), {})
+    explo = {} if fast_path else _safe(lambda: __import__("app.services.paper_exploration_service", fromlist=["PaperExplorationService"]).PaperExplorationService(session, cfg).status(), {})
+    ds = {} if fast_path else _safe(lambda: __import__("app.services.autopilot_decision_state_service", fromlist=["AutopilotDecisionStateService"]).AutopilotDecisionStateService(session, cfg).state(), {})
+    alpha = _safe(lambda: __import__("app.services.alpha_research_read_model_service", fromlist=["AlphaResearchReadModelService"]).AlphaResearchReadModelService(session, cfg).status(), {}) if not fast_path else {}
 
     scanned = int(funnel.get("available") or 0)
     scored = int(funnel.get("ranked") or 0)
@@ -57,7 +57,7 @@ def build_productivity(session: Session, config: Optional[dict] = None) -> dict[
 
     candidate = explo.get("current_exploration_candidate") or {}
     explo_block = explo.get("paper_exploration_block_reason")
-    why_not = ds.get("why_not_trading")
+    why_not = ds.get("why_not_trading") if ds else "heartbeat_only_tick_no_forced_entry"
     next_blocker = blockers[0] if blockers else None
 
     # Zero-candidate exact reason classification.
@@ -94,7 +94,7 @@ def build_productivity(session: Session, config: Optional[dict] = None) -> dict[
     last_tick_at = sched.get("last_tick_at")
     next_tick_at = sched.get("next_planned_at_utc")
     interval = max(60, int((cfg.get("autonomous_paper_learning") or {}).get("scheduler_interval_seconds", 600)))
-    scheduler_seen = False
+    scheduler_seen = bool(sched.get("last_tick_at") and scheduler_enabled)
     if scheduler_enabled and last_tick_at:
         try:
             last_dt = datetime.fromisoformat(str(last_tick_at).replace("Z", ""))
@@ -102,21 +102,13 @@ def build_productivity(session: Session, config: Optional[dict] = None) -> dict[
         except ValueError:
             scheduler_seen = False
 
-    paper_exec = _safe(
-        lambda: __import__(
-            "app.services.mission_control_read_model", fromlist=["build_mission_control_tiles"]
-        ).build_mission_control_tiles(session),
-        {},
-    )
-    pe = paper_exec.get("paper_execution") or {}
     paper_exec_status = _safe(
         lambda: __import__(
             "app.services.paper_execution_service", fromlist=["PaperExecutionService"]
         ).PaperExecutionService(session, cfg).status(),
         {},
     )
-    paper_orders_enabled = bool(pe.get("paper_orders_enabled"))
-    # Execution-path ready (broker paper + orders on + cage clear) — NOT blocked by zero candidates.
+    paper_orders_enabled = bool(paper_exec_status.get("paper_orders_enabled"))
     paper_entry_ready = bool(paper_exec_status.get("paper_entry_ready"))
 
     blocker_category = "none"
@@ -208,9 +200,12 @@ def build_productivity(session: Session, config: Optional[dict] = None) -> dict[
         "paper_execution_path_ready": paper_entry_ready,
         "paper_candidate_count": paper_candidates,
         "why_no_paper_trade_plain": why_no_paper_trade_plain,
+        "why_no_trade": why_no_paper_trade_plain,
         "blocker_category": blocker_category,
         "live_trading_locked": True,
         "orders_authority": "none",
+        "endpoint_kind": "fast_path",
+        "fast_path": True,
         "note": "Read-only productivity truth — never trades. Heartbeat watches every candle; only "
                 "evidence-backed, cage-approved candidates may trade.",
     }

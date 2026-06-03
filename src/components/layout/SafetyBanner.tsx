@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { apiGet } from "@/lib/apiClient";
 import { useRuntimeTruth } from "@/components/layout/RuntimeTruthProvider";
 
 type BannerData = {
@@ -15,46 +14,39 @@ type BannerData = {
 };
 
 export function SafetyBanner() {
-  const { truth, degraded } = useRuntimeTruth();
+  const { truth, degraded, loading } = useRuntimeTruth();
   const [data, setData] = useState<BannerData | null>(null);
 
-  const load = async () => {
-    if (truth) {
-      setData({
-        liveTradingLocked: truth.live_locked !== false,
-        paperLearning: truth.scheduler_enabled ? "Scheduler ON" : "Scheduler OFF",
-        currentMode: truth.paper_candidate_count ? "Evaluating" : "Watching",
-        botCanPlaceOrders: truth.paper_entry_ready ? "Paper path ready" : "Waiting for candidate",
-        brokerTruth: truth.paper_broker ? "Paper broker" : "Check broker",
-        paperBroker: Boolean(truth.paper_broker),
-        plainMessage: truth.why_no_trade || "Paper-only runtime. Live trading stays locked.",
-      });
+  useEffect(() => {
+    if (!truth) {
+      if (!loading) {
+        setData({
+          liveTradingLocked: true,
+          paperLearning: "Loading runtime…",
+          currentMode: "Loading",
+          botCanPlaceOrders: "Loading",
+          brokerTruth: "Loading",
+          paperBroker: undefined,
+          plainMessage: "Fetching runtime summary…",
+        });
+      }
       return;
     }
-    const lock = await apiGet<Record<string, unknown>>("/api/settings/live-lock-tripwire", { timeoutMs: 3000 });
     setData({
-      liveTradingLocked: lock.data?.live_lock_status === "locked" || lock.data?.live_trading_enabled !== true,
-      paperLearning: "See Mission Control",
-      currentMode: "watching",
-      botCanPlaceOrders: "See Mission Control",
-      brokerTruth: lock.data?.paper_broker ? "Paper broker" : "Check broker",
-      paperBroker: Boolean(lock.data?.paper_broker),
-      plainMessage: "Paper-only runtime.",
+      liveTradingLocked: truth.live_locked !== false,
+      paperLearning: truth.scheduler_enabled ? "Scheduler ON" : "Scheduler OFF",
+      currentMode: truth.paper_candidate_count ? "Evaluating" : "Watching",
+      botCanPlaceOrders: truth.paper_entry_ready ? "Paper path ready" : "Waiting for candidate",
+      brokerTruth: truth.paper_broker ? "Paper broker" : "Check broker",
+      paperBroker: Boolean(truth.paper_broker),
+      plainMessage: truth.why_no_trade || "Paper-only runtime. Live trading stays locked.",
     });
-  };
-
-  useEffect(() => {
-    load();
-    const onRefresh = () => load();
-    window.addEventListener("hive:paper-learning-refresh", onRefresh);
-    window.addEventListener("hive:cockpit-refresh", onRefresh);
-    return () => {
-      window.removeEventListener("hive:paper-learning-refresh", onRefresh);
-      window.removeEventListener("hive:cockpit-refresh", onRefresh);
-    };
-  }, [truth]);
+  }, [truth, loading]);
 
   if (!data) return null;
+
+  const paperBrokerLabel =
+    data.paperBroker === undefined ? "…" : data.paperBroker ? "yes" : "no";
 
   return (
     <div className="mb-4 rounded-lg border border-cyan-500/20 bg-slate-900/80 px-4 py-3 text-[11px] text-slate-200">
@@ -64,7 +56,7 @@ export function SafetyBanner() {
         <span>Current Mode: {data.currentMode === "watching" ? "Watching" : data.currentMode}</span>
         <span>Paper path: {data.botCanPlaceOrders ?? "—"}</span>
         <span>Broker Truth: {data.brokerTruth ?? "-"}</span>
-        <span>Paper broker: {data.paperBroker ? "yes" : "no"}</span>
+        <span>Paper broker: {paperBrokerLabel}</span>
       </div>
       <p className="mt-1 text-slate-400">{data.plainMessage}</p>
       {degraded || truth?.data_degraded ? (

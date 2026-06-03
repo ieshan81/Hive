@@ -191,6 +191,7 @@ class AutonomousPaperScheduler:
                 "duplicate_buy_source_of_truth": "broker_truth_first_with_local_fallback",
             }
         tick_lease = self._tick_lease_service().status()
+        tick_in_progress = bool(tick_lease.get("lease_held"))
         return {
             "scheduler_enabled": bool(self.cfg.get("scheduler_enabled")),
             "paused": bool(self._state.get("paused")),
@@ -225,7 +226,8 @@ class AutonomousPaperScheduler:
             "duplicate_buy_source_of_truth": exposure_diag.get("duplicate_buy_source_of_truth"),
             "adaptive_opportunity_budget": self._adaptive_budget_summary(),
             "tick_lease_held": tick_lease.get("lease_held"),
-            "tick_in_progress": bool(tick_lease.get("lease_held")),
+            "tick_lease_stale_recovered": tick_lease.get("lease_stale_cleared"),
+            "tick_in_progress": tick_in_progress,
             **self._spread_research_status(),
             **caps,
         }
