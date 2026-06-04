@@ -1,4 +1,4 @@
-"""Alpha-blocked paper path may still create L0 shadow observation when quality floor passes."""
+"""Alpha-blocked setup must create L0 observation when quality passes observation floor."""
 
 from __future__ import annotations
 
@@ -20,23 +20,20 @@ def main() -> None:
         "trade_quality_score": 42.0,
         "push_score": 0.02,
         "entry_allowed": False,
+        "no_trade_reason": "ALPHA_NOT_READY:no_alpha_scorecard",
         "bar_freshness": "fresh",
         "quote_freshness": "fresh",
-        "no_trade_reason": "ALPHA_NOT_READY:no alpha scorecard",
     }
     out = ShadowTradeService(session, cfg).consider_setup(
         row,
         strategy_id="crypto_push_pull_baseline",
-        paper_blocked_reason="ALPHA_NOT_READY:no alpha scorecard",
+        paper_blocked_reason="ALPHA_NOT_READY:no_alpha_scorecard",
         paper_submitted=False,
     )
-    assert out.get("observation"), f"expected L0 observation: {out}"
-    assert (out.get("shadow_trade") or {}).get("status") in (
-        "skipped",
-        None,
-    ) or out.get("shadow_trade", {}).get("shadow_trade_id"), out
+    assert out.get("observation"), f"expected L0: {out}"
+    assert float(out.get("quality_on_scale") or 0) >= float(out.get("observation_floor") or 0), out
     session.rollback()
-    print("verify_shadow_l0_on_alpha_block: PASS")
+    print("verify_l0_observation_created_before_alpha_gate: PASS")
 
 
 if __name__ == "__main__":

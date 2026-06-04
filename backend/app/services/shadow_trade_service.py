@@ -13,6 +13,7 @@ from sqlmodel import Session, select
 from app.database import ShadowTrade
 from app.services.engine_config import cfg_get
 from app.services.nuke_epoch_service import PAPER_VALIDATION_RUN_ID, get_latest_reset_epoch
+from app.services.shadow_floor_utils import classify_shadow_skip_reason, quality_on_shadow_scale
 from app.services.shadow_league_constants import (
     DATA_DELAYED,
     DATA_EXECUTION_GRADE,
@@ -118,9 +119,8 @@ class ShadowTradeService:
             return {"status": "skipped", "reason": "no_symbol"}
 
         sl = self.config.get("shadow_league") or {}
-        min_obs = float(sl.get("min_quality_for_observation", cfg_get(self.config, "shadow_league.min_quality_for_observation", 0.35)))
-        min_trade = float(sl.get("min_quality_for_shadow_trade", cfg_get(self.config, "shadow_league.min_quality_for_shadow_trade", 0.42)))
-        quality = float(row.get("trade_quality_score") or 0)
+        quality_raw = float(row.get("trade_quality_score") or 0)
+        quality, min_obs, min_trade, _scale = quality_on_shadow_scale(quality_raw, self.config)
         asset = str(row.get("asset_class") or ("crypto" if "/" in sym else "stock")).lower()
 
         if asset == "stock" and not bool(sl.get("allow_stock", cfg_get(self.config, "shadow_league.allow_stock", True))):
@@ -131,7 +131,14 @@ class ShadowTradeService:
         fp = setup_fingerprint(sym, strategy_id, row)
         data_quality, dq_note = classify_shadow_data_quality(row, self.config)
         run_id = _validation_run_id(self.session)
-        out: dict[str, Any] = {"symbol": sym, "fingerprint": fp, "data_quality": data_quality}
+        out: dict[str, Any] = {
+            "symbol": sym,
+            "fingerprint": fp,
+            "data_quality": data_quality,
+            "quality_on_scale": quality,
+            "observation_floor": min_obs,
+            "shadow_floor": min_trade,
+        }
 
         if quality >= min_obs:
             obs = self._upsert_level(
@@ -157,6 +164,9 @@ class ShadowTradeService:
 
         if quality < min_trade:
             out["shadow_trade"] = {"status": "skipped", "reason": "quality_below_shadow_floor"}
+            out["shadow_skip_reason"] = classify_shadow_skip_reason(
+                shadow_res=out, quality=quality, obs_floor=min_obs, row=row
+            )
             return out
 
         if not paper_blocked and bool(row.get("entry_allowed")):
@@ -186,6 +196,7 @@ class ShadowTradeService:
             cycle_run_id=cycle_run_id,
         )
         out["shadow_trade"] = trade
+        out["shadow_skip_reason"] = "shadow_trade_created" if trade.get("shadow_trade_id") else "observation_only"
         return out
 
     def _open_count(self, run_id: str) -> int:

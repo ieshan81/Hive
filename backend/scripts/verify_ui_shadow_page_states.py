@@ -11,8 +11,11 @@ PANEL = ROOT / "src" / "components" / "panels" / "ShadowLeaguePanel.tsx"
 
 def main() -> None:
     text = PANEL.read_text(encoding="utf-8")
-    assert "Shadow learning active — no setups met observation floor yet." in text
-    assert 'data?.enabled === false && data?.ui_state === "disabled_by_config"' in text
+    assert "Shadow learning active — waiting for setups" in text
+    assert "reason_shadow_count_zero" in text
+    assert "Why zero:" in text
+    assert 'effective?.enabled === false && effective?.ui_state === "disabled_by_config"' in text
+    assert "WAITING_STATES" in text
     assert "ui_state" in text
     print("verify_ui_shadow_page_states: PASS")
 

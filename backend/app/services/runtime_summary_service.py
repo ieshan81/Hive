@@ -9,7 +9,7 @@ from sqlmodel import Session, func, select
 
 from app.database import ShadowTrade
 from app.services.broker_safety import is_paper_broker_url, live_lock_status
-from app.services.shadow_league_constants import LEVEL_SHADOW_TRADE
+from app.services.shadow_league_constants import LEVEL_OBSERVED, LEVEL_SHADOW_TRADE
 from app.services.shadow_trade_service import shadow_league_enabled
 
 
@@ -51,6 +51,7 @@ def _shadow_runtime(session: Session, cfg: dict, sched: dict[str, Any]) -> dict[
         None,
     )
     count = 0
+    obs_count = 0
     if run_id:
         count = int(
             session.exec(
@@ -63,28 +64,45 @@ def _shadow_runtime(session: Session, cfg: dict, sched: dict[str, Any]) -> dict[
             ).one()
             or 0
         )
+        obs_count = int(
+            session.exec(
+                select(func.count())
+                .select_from(ShadowTrade)
+                .where(
+                    ShadowTrade.validation_run_id == run_id,
+                    ShadowTrade.promotion_level == LEVEL_OBSERVED,
+                )
+            ).one()
+            or 0
+        )
 
     scheduler_enabled = bool((cfg.get("autonomous_paper_learning") or {}).get("scheduler_enabled"))
     last_tick_at = sched.get("last_tick_at")
     interval = max(60, int((cfg.get("autonomous_paper_learning") or {}).get("scheduler_interval_seconds", 600)))
     scheduler_seen = bool(scheduler_enabled and _recent_tick(last_tick_at, max_age_seconds=interval * 3))
 
+    diag = sched.get("last_shadow_diagnostics") or {}
     reason_zero = None
-    if count == 0:
-        if not scheduler_enabled:
-            reason_zero = "scheduler_off"
-        elif not scheduler_seen:
-            reason_zero = "scheduler_not_seen"
-        else:
-            reason_zero = "no_eligible_setups_met_observation_floor"
+    if count == 0 and obs_count == 0:
+        reason_zero = diag.get("last_tick_zero_shadow_reason")
+        if not reason_zero:
+            if not scheduler_enabled:
+                reason_zero = "scheduler_off"
+            elif not scheduler_seen:
+                reason_zero = "scheduler_not_seen"
+            else:
+                reason_zero = "quality_below_observation_floor"
 
     ui_state = "enabled_waiting_for_setups"
     if count > 0:
         ui_state = "enabled_tracking_shadow_trades"
+    elif obs_count > 0:
+        ui_state = "enabled_collecting_observations"
 
     return {
         "enabled": True,
         "shadow_league_count": count,
+        "total_shadow_observations": obs_count,
         "ui_state": ui_state,
         "reason_shadow_count_zero": reason_zero,
         "scheduler_seen": scheduler_seen,

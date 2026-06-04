@@ -77,9 +77,6 @@ class PushPullScanService:
                 reason_counts["blocked_other"] += 1
 
         scoring = score_active_universe(self.session, self.config, universe=universe)
-        shadow_created = 0
-        shadow_observed = 0
-        shadow_errors = 0
         from app.services.cycle_context import current_cycle_run_id
 
         cycle_run_id = current_cycle_run_id.get()
@@ -124,6 +121,16 @@ class PushPullScanService:
         selected = scoring.get("selected_candidate")
         eligible_rows = [r for r in ranked if r.get("entry_allowed")]
         rows_to_trade = slice_limit(eligible_rows, max_evaluate)
+
+        shadow_pass = self._run_shadow_observer_pass(
+            ranked=ranked,
+            eligible_strats=eligible_strats,
+            cycle_run_id=cycle_run_id,
+        )
+        shadow_created = int(shadow_pass.get("shadow_trades_created") or 0)
+        shadow_observed = int(shadow_pass.get("shadow_setups_observed") or 0)
+        shadow_errors = int(shadow_pass.get("shadow_errors") or 0)
+        shadow_diagnostics = shadow_pass.get("shadow_diagnostics") or {}
 
         evaluated = 0
         for row_score in rows_to_trade:
@@ -210,38 +217,6 @@ class PushPullScanService:
                     }
                 )
 
-            try:
-                from app.services.shadow_outcome_service import ShadowOutcomeService
-                from app.services.shadow_trade_service import ShadowTradeService
-
-                price_map = {}
-                ref = row_score.get("mid_price") or row_score.get("last_price")
-                if ref is not None:
-                    price_map[sym] = float(ref)
-                ShadowOutcomeService(self.session, self.config).update_open_trades(price_by_symbol=price_map)
-                shadow_res = ShadowTradeService(self.session, self.config).consider_setup(
-                    row_score,
-                    strategy_id=strategy_id,
-                    paper_blocked_reason=paper_blocked_reason,
-                    paper_submitted=paper_submitted,
-                    cycle_run_id=cycle_run_id,
-                )
-                if shadow_res.get("observation"):
-                    shadow_observed += 1
-                st = shadow_res.get("shadow_trade") or {}
-                if st.get("shadow_trade_id") and st.get("status") not in ("skipped", "exists"):
-                    shadow_created += 1
-                decisions_out.append({"shadow_league": shadow_res})
-            except Exception as exc:
-                shadow_errors += 1
-                log_activity(
-                    self.session,
-                    "shadow_league_error",
-                    f"Shadow league hook failed for {sym}",
-                    {"symbol": sym, "error": type(exc).__name__, "message": str(exc)[:200]},
-                    commit=False,
-                )
-
         if eligible_strategy_count == 0:
             reason_counts["no_eligible_strategy"] += 1
         if push_signals == 0 and not reason_counts:
@@ -297,6 +272,179 @@ class PushPullScanService:
             "shadow_trades_created": shadow_created,
             "shadow_setups_observed": shadow_observed,
             "shadow_errors": shadow_errors,
+            "shadow_diagnostics": shadow_diagnostics,
+        }
+
+    def _run_shadow_observer_pass(
+        self,
+        *,
+        ranked: list[dict],
+        eligible_strats: list[dict],
+        cycle_run_id: Optional[str],
+    ) -> dict[str, Any]:
+        """Score all ranked setups through shadow observer (not only entry_allowed paper rows)."""
+        from collections import Counter as _Counter
+
+        from app.services.activity_logger import log_activity
+        from app.services.shadow_floor_utils import quality_on_shadow_scale
+        from app.services.shadow_outcome_service import ShadowOutcomeService
+        from app.services.shadow_tick_diagnostics import build_shadow_tick_diagnostics, record_near_miss
+        from app.services.shadow_trade_service import ShadowTradeService, shadow_league_enabled
+
+        shadow_created = 0
+        shadow_observed = 0
+        shadow_errors = 0
+        shadow_attempts = 0
+        rows_scored = 0
+        rows_above_obs = 0
+        rows_above_shadow = 0
+        max_quality = 0.0
+        quality_scale = "0_1"
+        near_misses: list[dict] = []
+        skip_counts: _Counter[str] = _Counter()
+        eligible_by_asset: dict[str, dict] = {}
+        for row in eligible_strats:
+            asset = str(row.get("asset_class") or "").lower()
+            sid = str(row.get("strategy_id") or "")
+            if not asset:
+                asset = "crypto" if sid.startswith("crypto_") else ("stock" if sid.startswith("stock_") else "")
+            if asset in ("crypto", "stock") and asset not in eligible_by_asset:
+                eligible_by_asset[asset] = row
+
+        if not shadow_league_enabled(self.config):
+            diag = build_shadow_tick_diagnostics(
+                self.config,
+                rows_scored=0,
+                rows_above_observation_floor=0,
+                rows_above_shadow_floor=0,
+                max_setup_quality=0.0,
+                quality_scale=quality_scale,
+                shadow_attempts=0,
+                shadow_observations_created=0,
+                shadow_trades_created=0,
+                shadow_errors=0,
+                near_misses=[],
+                skip_reason_counts={"shadow_disabled": 1},
+            )
+            return {
+                "shadow_trades_created": 0,
+                "shadow_setups_observed": 0,
+                "shadow_errors": 0,
+                "shadow_diagnostics": diag,
+            }
+
+        svc = ShadowTradeService(self.session, self.config)
+        for row_score in ranked:
+            sym = row_score.get("symbol")
+            if not sym:
+                continue
+            rows_scored += 1
+            q, obs_floor, shadow_floor, quality_scale = quality_on_shadow_scale(
+                float(row_score.get("trade_quality_score") or 0), self.config
+            )
+            max_quality = max(max_quality, q)
+            if q >= obs_floor:
+                rows_above_obs += 1
+            if q >= shadow_floor:
+                rows_above_shadow += 1
+
+            asset_class = str(row_score.get("asset_class") or ("crypto" if "/" in sym else "stock")).lower()
+            strategy_row = eligible_by_asset.get(asset_class) or (eligible_strats[0] if eligible_strats else None)
+            strategy_id = (strategy_row or {}).get("strategy_id")
+            blocker = (
+                row_score.get("no_trade_reason")
+                or row_score.get("alpha_candidate_gate")
+                or ("entry_allowed" if row_score.get("entry_allowed") else "entry_not_allowed")
+            )
+            if not strategy_id:
+                skip_counts["no_strategy"] += 1
+                record_near_miss(
+                    near_misses,
+                    symbol=sym,
+                    quality=q,
+                    obs_floor=obs_floor,
+                    shadow_floor=shadow_floor,
+                    blocker=str(blocker),
+                    shadow_skip_reason="no_strategy",
+                )
+                continue
+
+            shadow_attempts += 1
+            paper_blocked = (
+                row_score.get("no_trade_reason")
+                or row_score.get("alpha_candidate_gate")
+                or (None if row_score.get("entry_allowed") else "entry_not_allowed")
+            )
+            try:
+                price_map = {}
+                ref = row_score.get("mid_price") or row_score.get("last_price")
+                if ref is not None:
+                    price_map[sym] = float(ref)
+                ShadowOutcomeService(self.session, self.config).update_open_trades(price_by_symbol=price_map)
+                shadow_res = svc.consider_setup(
+                    row_score,
+                    strategy_id=strategy_id,
+                    paper_blocked_reason=str(paper_blocked) if paper_blocked else None,
+                    paper_submitted=False,
+                    cycle_run_id=cycle_run_id,
+                )
+                skip = str(shadow_res.get("shadow_skip_reason") or (shadow_res.get("shadow_trade") or {}).get("reason") or "unknown")
+                skip_counts[skip] += 1
+                if shadow_res.get("observation"):
+                    shadow_observed += 1
+                else:
+                    record_near_miss(
+                        near_misses,
+                        symbol=sym,
+                        quality=q,
+                        obs_floor=obs_floor,
+                        shadow_floor=shadow_floor,
+                        blocker=str(blocker),
+                        shadow_skip_reason=skip,
+                    )
+                st = shadow_res.get("shadow_trade") or {}
+                if st.get("shadow_trade_id") and st.get("status") not in ("skipped", "exists"):
+                    shadow_created += 1
+            except Exception as exc:
+                shadow_errors += 1
+                skip_counts["exception"] += 1
+                log_activity(
+                    self.session,
+                    "shadow_league_error",
+                    f"Shadow league hook failed for {sym}",
+                    {"symbol": sym, "error": type(exc).__name__, "message": str(exc)[:200]},
+                    commit=False,
+                )
+                record_near_miss(
+                    near_misses,
+                    symbol=sym,
+                    quality=q,
+                    obs_floor=obs_floor,
+                    shadow_floor=shadow_floor,
+                    blocker=str(blocker),
+                    shadow_skip_reason="exception",
+                )
+
+        near_misses.sort(key=lambda m: float(m.get("quality") or 0), reverse=True)
+        diag = build_shadow_tick_diagnostics(
+            self.config,
+            rows_scored=rows_scored,
+            rows_above_observation_floor=rows_above_obs,
+            rows_above_shadow_floor=rows_above_shadow,
+            max_setup_quality=max_quality,
+            quality_scale=quality_scale,
+            shadow_attempts=shadow_attempts,
+            shadow_observations_created=shadow_observed,
+            shadow_trades_created=shadow_created,
+            shadow_errors=shadow_errors,
+            near_misses=near_misses,
+            skip_reason_counts=dict(skip_counts),
+        )
+        return {
+            "shadow_trades_created": shadow_created,
+            "shadow_setups_observed": shadow_observed,
+            "shadow_errors": shadow_errors,
+            "shadow_diagnostics": diag,
         }
 
 

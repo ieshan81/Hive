@@ -228,6 +228,8 @@ class AutonomousPaperScheduler:
             "tick_lease_held": tick_lease.get("lease_held"),
             "tick_lease_stale_recovered": tick_lease.get("lease_stale_cleared"),
             "tick_in_progress": tick_in_progress,
+            "last_shadow_diagnostics": self._state.get("last_shadow_diagnostics") or {},
+            **(self._state.get("last_shadow_diagnostics") or {}),
             **self._spread_research_status(),
             **caps,
         }
@@ -389,6 +391,7 @@ class AutonomousPaperScheduler:
             self._state["last_shadow_setups_observed"] = int(tick_summary.get("shadow_setups_observed") or 0)
             self._state["last_shadow_trades_created"] = int(tick_summary.get("shadow_trades_created") or 0)
             self._state["last_shadow_errors"] = int(tick_summary.get("shadow_errors") or 0)
+            self._state["last_shadow_diagnostics"] = tick_summary.get("shadow_diagnostics") or {}
             if self._state["last_shadow_errors"]:
                 self._state["last_shadow_error"] = f"shadow_errors={self._state['last_shadow_errors']}"
             else:

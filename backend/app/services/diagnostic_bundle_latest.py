@@ -375,6 +375,14 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
         "shadow_outcomes.json": shadow_outcomes_export,
         "strategy_promotion_ladder.json": shadow_ladder,
         "why_no_trade.json": why_no_trade_export,
+        "shadow_tick_diagnostics.json": _safe(
+            "shadow_tick_diagnostics",
+            errs,
+            lambda: __import__(
+                "app.services.shadow_tick_diagnostics_export",
+                fromlist=["build_shadow_tick_diagnostics_export"],
+            ).build_shadow_tick_diagnostics_export(session, cfg, scheduler=scheduler),
+        ),
         "endpoint_latency_summary.json": {
             "note": "Self-reported: /api/universe/summary is the fast path; /api/universe/status + "
                     "/api/mission-control/status are the slow heavy builds — prefer the fast paths.",
