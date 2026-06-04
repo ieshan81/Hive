@@ -173,9 +173,20 @@ class ShadowTradeService:
             out["shadow_trade"] = {"status": "skipped", "reason": "paper_path_open_not_shadow_substitute"}
             return out
 
-        if self._open_count(run_id) >= int(sl.get("max_open_shadow_trades", 20)):
-            out["shadow_trade"] = {"status": "skipped", "reason": "max_open_shadow_trades"}
-            return out
+        max_open = int(sl.get("max_open_shadow_trades", 20))
+        if self._open_count(run_id) >= max_open:
+            try:
+                from app.services.shadow_outcome_service import ShadowOutcomeService
+
+                released = ShadowOutcomeService(self.session, self.config).release_oldest_open_if_at_cap(run_id)
+                if released > 0 and self._open_count(run_id) < max_open:
+                    pass
+                elif self._open_count(run_id) >= max_open:
+                    out["shadow_trade"] = {"status": "skipped", "reason": "max_open_shadow_trades"}
+                    return out
+            except Exception:
+                out["shadow_trade"] = {"status": "skipped", "reason": "max_open_shadow_trades"}
+                return out
 
         if self._has_open_fingerprint(fp, run_id):
             out["shadow_trade"] = {"status": "skipped", "reason": "duplicate_open_shadow"}
@@ -253,6 +264,7 @@ class ShadowTradeService:
             "trade_quality_score": row.get("trade_quality_score"),
             "push_score": row.get("push_score"),
             "edge_after_cost_bps": row.get("edge_after_cost_bps"),
+            "reversal_risk_score": row.get("reversal_risk_score"),
             "gate_results": row.get("gate_results"),
             "dynamic_exit_levels": row.get("dynamic_exit_levels"),
             "no_trade_reason": row.get("no_trade_reason"),

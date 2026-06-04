@@ -375,6 +375,11 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
         "shadow_outcomes.json": shadow_outcomes_export,
         "strategy_promotion_ladder.json": shadow_ladder,
         "why_no_trade.json": why_no_trade_export,
+        "shadow_outcome_quality.json": _safe(
+            "shadow_outcome_quality",
+            errs,
+            lambda: _imp("shadow_league_bundle_service", "shadow_outcome_quality")(session, cfg),
+        ),
         "shadow_tick_diagnostics.json": _safe(
             "shadow_tick_diagnostics",
             errs,

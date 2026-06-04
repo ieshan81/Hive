@@ -30,11 +30,22 @@ def _ser(row: ShadowTrade) -> dict[str, Any]:
         "data_quality_note": row.data_quality_note,
         "outcome_verdict": row.outcome_verdict,
         "simulated_pnl_bps": row.simulated_pnl_bps,
+        "entry_reference_price": row.entry_reference_price,
+        "exit_reference_price": row.exit_reference_price,
+        "exit_reason": (row.outcome_json or {}).get("exit_reason"),
         "paper_blocked_reason": row.paper_blocked_reason,
         "counts_as_broker_evidence": bool(row.counts_as_broker_evidence),
         "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
         "closed_at": row.closed_at.isoformat() + "Z" if row.closed_at else None,
     }
+
+
+def shadow_outcome_quality(session: Session, config: Optional[dict] = None) -> dict[str, Any]:
+    from app.services.shadow_outcome_quality_service import build_shadow_outcome_quality
+
+    out = build_shadow_outcome_quality(session, config)
+    out["generated_at"] = _now()
+    return out
 
 
 def shadow_trades_summary(session: Session, config: Optional[dict] = None) -> dict[str, Any]:
