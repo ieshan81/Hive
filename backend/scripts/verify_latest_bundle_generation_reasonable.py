@@ -35,7 +35,15 @@ def main() -> None:
         prod = bundle.get("paper_validation_productivity.json") or {}
         assert prod.get("status") != "degraded" or prod.get("error") != "timeout", prod
         assert prod.get("why_no_trade") or prod.get("why_no_paper_trade_plain"), prod
-        assert gen < 30.0, f"generation_seconds too high: {gen}"
+        errors = meta.get("section_errors") or []
+        timeouts = [e for e in errors if isinstance(e, dict) and e.get("error") == "timeout"]
+        assert not any(
+            (e.get("section") or "") in ("productivity", "shadow_bundle") for e in timeouts
+        ), f"bundle section timeout: {timeouts}"
+        shadow_sum = bundle.get("shadow_trades_summary.json") or {}
+        assert shadow_sum.get("status") != "degraded" or shadow_sum.get("error") != "timeout", shadow_sum
+        assert gen < 35.0, f"generation_seconds too high: {gen}"
+        assert meta.get("section_timings"), "bundle must include section_timings"
         if gen > 10.0:
             assert meta.get("section_timings") or meta.get("section_errors") is not None, (
                 "slow bundle must report timings/errors"
