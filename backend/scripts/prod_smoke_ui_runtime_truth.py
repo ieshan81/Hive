@@ -104,6 +104,16 @@ def main() -> None:
     assert graph_ok
     assert all(v == 200 for v in ui_ok.values())
     assert int((bundle.get("current_run_trade_truth.json") or {}).get("current_run_order_attempts") or 0) == 0
+    timeouts = [
+        e
+        for e in (meta.get("section_errors") or [])
+        if isinstance(e, dict) and e.get("error") == "timeout"
+    ]
+    assert not any((e.get("section") or "") in ("productivity", "shadow_bundle") for e in timeouts), timeouts
+    prod = bundle.get("paper_validation_productivity.json") or {}
+    assert prod.get("status") != "degraded" or prod.get("error") != "timeout", prod
+    shadow = bundle.get("shadow_trades_summary.json") or {}
+    assert shadow.get("status") != "degraded" or shadow.get("error") != "timeout", shadow
     print("prod_smoke_ui_runtime_truth: PASS")
 
 

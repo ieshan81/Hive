@@ -179,7 +179,6 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
         "alpha_coverage_matrix": lambda s: _A("alpha_coverage_matrix").alpha_coverage_matrix(s, cfg),
         "blocker_timeline": lambda s: _A("blocker_timeline").blocker_timeline(s, cfg),
         "paper_order_proof": lambda s: _imp("paper_order_proof_service", "PaperOrderProofService")(s, cfg).summary(),
-        "shadow_bundle": _shadow_bundle_jobs,
     }
     t_jobs = time.time()
     res = _run_fetches(jobs, session, errs)
@@ -191,6 +190,10 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
         lambda: _imp("paper_validation_productivity_service", "build_productivity")(session, cfg, fast_path=True),
     )
     section_timings["productivity_seconds"] = round(time.time() - t_prod, 3)
+    # Shadow bundle is DB-heavy; run sequentially (parallel pool uses 6s/job timeout and times out in prod).
+    t_shadow = time.time()
+    shadow_bundle = _safe("shadow_bundle", errs, lambda: _shadow_bundle_jobs(session))
+    section_timings["shadow_bundle_seconds"] = round(time.time() - t_shadow, 3)
     tiles = res["tiles"]
     engine_map = res["engine_map"]
     mem_gov = res["memory_governance"]
@@ -206,7 +209,6 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
     alpha_matrix = res["alpha_coverage_matrix"]
     timeline = res["blocker_timeline"]
     order_proof = res["paper_order_proof"]
-    shadow_bundle = res.get("shadow_bundle") or {}
     if isinstance(shadow_bundle, dict) and shadow_bundle.get("status") == "degraded":
         shadow_summary = shadow_bundle
         shadow_outcomes_export = shadow_bundle
