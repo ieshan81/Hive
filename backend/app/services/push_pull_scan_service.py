@@ -334,6 +334,19 @@ class PushPullScanService:
             }
 
         svc = ShadowTradeService(self.session, self.config)
+        price_map: dict[str, float] = {}
+        for row_score in ranked:
+            sym = row_score.get("symbol")
+            if not sym:
+                continue
+            ref = row_score.get("mid_price") or row_score.get("last_price")
+            if ref is not None:
+                price_map[sym] = float(ref)
+        try:
+            ShadowOutcomeService(self.session, self.config).update_open_trades(price_by_symbol=price_map)
+        except Exception:
+            pass
+
         for row_score in ranked:
             sym = row_score.get("symbol")
             if not sym:
@@ -376,11 +389,6 @@ class PushPullScanService:
                 or (None if row_score.get("entry_allowed") else "entry_not_allowed")
             )
             try:
-                price_map = {}
-                ref = row_score.get("mid_price") or row_score.get("last_price")
-                if ref is not None:
-                    price_map[sym] = float(ref)
-                ShadowOutcomeService(self.session, self.config).update_open_trades(price_by_symbol=price_map)
                 shadow_res = svc.consider_setup(
                     row_score,
                     strategy_id=strategy_id,

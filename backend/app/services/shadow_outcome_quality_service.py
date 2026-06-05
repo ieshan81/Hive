@@ -40,6 +40,45 @@ def build_shadow_outcome_quality(session: Session, config: Optional[dict] = None
     avg_pnl = round(sum(pnls) / len(pnls), 2) if pnls else None
     med_pnl = round(median(pnls), 2) if pnls else None
 
+    closes_with_exit_price = 0
+    closes_missing_exit_price = 0
+    missing_price_data_symbols: list[str] = []
+    fallback_used_count = 0
+    quote_ages: list[float] = []
+    quote_lookup_source = None
+    bar_lookup_source = None
+
+    for r in closed:
+        oj = r.outcome_json or {}
+        reason = str(oj.get("exit_reason") or "unknown")
+        if reason == "missing_price_data":
+            closes_missing_exit_price += 1
+            if r.symbol and r.symbol not in missing_price_data_symbols:
+                missing_price_data_symbols.append(r.symbol)
+        elif oj.get("price_source") not in (None, "missing", "entry_fallback"):
+            closes_with_exit_price += 1
+        if oj.get("fallback_used"):
+            fallback_used_count += 1
+        age = oj.get("price_age_seconds")
+        if age is not None:
+            try:
+                quote_ages.append(float(age))
+            except (TypeError, ValueError):
+                pass
+        if not quote_lookup_source and oj.get("quote_lookup_source"):
+            quote_lookup_source = oj.get("quote_lookup_source")
+        if not bar_lookup_source and oj.get("bar_lookup_source"):
+            bar_lookup_source = oj.get("bar_lookup_source")
+
+    if not quote_lookup_source:
+        from app.services.shadow_outcome_service import QUOTE_LOOKUP_SOURCE
+
+        quote_lookup_source = QUOTE_LOOKUP_SOURCE
+    if not bar_lookup_source:
+        from app.services.shadow_outcome_service import BAR_LOOKUP_SOURCE
+
+        bar_lookup_source = BAR_LOOKUP_SOURCE
+
     return {
         "validation_run_id": run_id,
         "open_count": len(open_n),
@@ -52,6 +91,14 @@ def build_shadow_outcome_quality(session: Session, config: Optional[dict] = None
         "zero_pnl_closed_count": zero_pnl,
         "instant_close_count": instant,
         "close_reason_counts": reason_counts,
+        "closes_attempted": len(closed),
+        "closes_with_exit_price": closes_with_exit_price,
+        "closes_missing_exit_price": closes_missing_exit_price,
+        "missing_price_data_symbols": missing_price_data_symbols,
+        "quote_lookup_source": quote_lookup_source,
+        "bar_lookup_source": bar_lookup_source,
+        "quote_age_seconds": round(median(quote_ages), 1) if quote_ages else None,
+        "fallback_used": fallback_used_count,
         "counts_as_broker_evidence": False,
         "broker_orders_from_shadow": 0,
     }

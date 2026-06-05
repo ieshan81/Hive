@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 from sqlmodel import Session, select
 
-from app.database import ShadowTrade
+from app.database import HistoricalBar, ShadowTrade
 from app.services.engine_config import cfg_get
 from app.services.shadow_league_constants import (
     LEVEL_SHADOW_TRADE,
@@ -16,6 +16,10 @@ from app.services.shadow_league_constants import (
 )
 from app.services.shadow_promotion_ladder_service import ShadowPromotionLadderService
 from app.services.shadow_trade_service import shadow_league_enabled
+from app.services.symbol_normalize import symbol_variants
+
+QUOTE_LOOKUP_SOURCE = "QuoteFreshnessService.check"
+BAR_LOOKUP_SOURCE = "HistoricalBar.latest_close_5Min"
 
 
 def _level_price(levels: dict[str, Any], key: str) -> Optional[float]:
@@ -64,9 +68,110 @@ class ShadowOutcomeService:
     def __init__(self, session: Session, config: Optional[dict] = None):
         self.session = session
         self.config = config or {}
+        self._quote_svc = None
 
     def _shadow_cfg(self) -> dict[str, Any]:
         return self.config.get("shadow_league") or {}
+
+    def _quote_service(self):
+        if self._quote_svc is None:
+            from app.services.quote_freshness_service import QuoteFreshnessService
+
+            self._quote_svc = QuoteFreshnessService(self.session, self.config)
+        return self._quote_svc
+
+    def _latest_bar_close(self, symbol: str) -> dict[str, Any]:
+        variants = symbol_variants(symbol)
+        row = self.session.exec(
+            select(HistoricalBar)
+            .where(HistoricalBar.symbol.in_(variants), HistoricalBar.timeframe == "5Min")
+            .order_by(HistoricalBar.timestamp.desc())
+            .limit(1)
+        ).first()
+        if not row or row.close is None:
+            return {
+                "price": None,
+                "bar_lookup_source": BAR_LOOKUP_SOURCE,
+                "price_age_seconds": None,
+                "why": "no_bar_stored",
+            }
+        close = float(row.close)
+        if close <= 0:
+            return {
+                "price": None,
+                "bar_lookup_source": BAR_LOOKUP_SOURCE,
+                "price_age_seconds": None,
+                "why": "bar_close_non_positive",
+            }
+        age_s = max(0.0, (datetime.utcnow() - row.timestamp).total_seconds())
+        return {
+            "price": close,
+            "bar_lookup_source": BAR_LOOKUP_SOURCE,
+            "price_age_seconds": age_s,
+            "matched_symbol": row.symbol,
+            "last_bar_at": row.timestamp.isoformat() + "Z",
+        }
+
+    def _resolve_exit_price(
+        self,
+        symbol: str,
+        *,
+        asset_class: str,
+        price_by_symbol: dict[str, float],
+    ) -> dict[str, Any]:
+        """Prefer scan/caller price, then live quote mid, then latest stored bar close."""
+        px = price_by_symbol.get(symbol)
+        if px is not None and px > 0:
+            return {
+                "price": float(px),
+                "price_source": "scan_score",
+                "quote_lookup_source": None,
+                "bar_lookup_source": None,
+                "price_age_seconds": None,
+                "fallback_used": False,
+            }
+
+        ac = asset_class or ("crypto" if "/" in symbol else "stock")
+        chk = self._quote_service().check(symbol, asset_class=ac)
+        mid = chk.get("mid")
+        if mid is None:
+            bid, ask = chk.get("bid"), chk.get("ask")
+            if bid is not None and ask is not None:
+                mid = (float(bid) + float(ask)) / 2.0
+            elif bid is not None:
+                mid = float(bid)
+            elif ask is not None:
+                mid = float(ask)
+        if mid is not None and float(mid) > 0:
+            return {
+                "price": float(mid),
+                "price_source": "quote_mid",
+                "quote_lookup_source": QUOTE_LOOKUP_SOURCE,
+                "bar_lookup_source": None,
+                "price_age_seconds": chk.get("quote_age_seconds"),
+                "fallback_used": False,
+            }
+
+        bar = self._latest_bar_close(symbol)
+        if bar.get("price") is not None and bar["price"] > 0:
+            return {
+                "price": bar["price"],
+                "price_source": "bar_close",
+                "quote_lookup_source": QUOTE_LOOKUP_SOURCE,
+                "bar_lookup_source": bar.get("bar_lookup_source"),
+                "price_age_seconds": bar.get("price_age_seconds"),
+                "fallback_used": True,
+            }
+
+        return {
+            "price": None,
+            "price_source": "missing",
+            "quote_lookup_source": QUOTE_LOOKUP_SOURCE,
+            "bar_lookup_source": bar.get("bar_lookup_source"),
+            "price_age_seconds": None,
+            "fallback_used": True,
+            "missing_why": bar.get("why") or "no_quote_or_bar",
+        }
 
     def update_open_trades(self, *, price_by_symbol: Optional[dict[str, float]] = None) -> dict[str, Any]:
         if not shadow_league_enabled(self.config):
@@ -91,11 +196,27 @@ class ShadowOutcomeService:
         )
         closed = 0
         close_reason_counts: dict[str, int] = {}
+        closes_attempted = 0
+        closes_with_exit_price = 0
+        closes_missing_exit_price = 0
+        missing_price_data_symbols: list[str] = []
+        price_cache: dict[str, dict[str, Any]] = {}
 
         for row in rows:
+            sym = row.symbol
+            if sym not in price_cache:
+                price_cache[sym] = self._resolve_exit_price(
+                    sym,
+                    asset_class=str(row.asset_class or ("crypto" if "/" in sym else "stock")),
+                    price_by_symbol=price_by_symbol,
+                )
+            resolved = price_cache[sym]
+            px = resolved.get("price")
+
             close = self._evaluate_close(
                 row,
-                price_by_symbol=price_by_symbol,
+                px=px,
+                price_meta=resolved,
                 now=now,
                 cutoff=cutoff,
                 min_hold_s=min_hold_s,
@@ -104,8 +225,17 @@ class ShadowOutcomeService:
             )
             if not close:
                 continue
+
+            closes_attempted += 1
             reason = close["exit_reason"]
             close_reason_counts[reason] = close_reason_counts.get(reason, 0) + 1
+            if reason == "missing_price_data":
+                closes_missing_exit_price += 1
+                if sym not in missing_price_data_symbols:
+                    missing_price_data_symbols.append(sym)
+            elif close.get("has_real_exit_price"):
+                closes_with_exit_price += 1
+
             row.status = STATUS_CLOSED
             row.closed_at = now
             row.updated_at = now
@@ -122,6 +252,12 @@ class ShadowOutcomeService:
                 "closed_at": row.closed_at.isoformat() + "Z",
                 "simulated_pnl_bps": row.simulated_pnl_bps,
                 "hold_seconds": round(close.get("hold_seconds") or 0, 1),
+                "price_source": close.get("price_source"),
+                "price_age_seconds": close.get("price_age_seconds"),
+                "quote_lookup_source": close.get("quote_lookup_source"),
+                "bar_lookup_source": close.get("bar_lookup_source"),
+                "fallback_used": bool(close.get("fallback_used")),
+                "missing_price_why": close.get("missing_price_why"),
                 "counts_as_broker_evidence": False,
             }
             row.counts_as_broker_evidence = False
@@ -137,6 +273,12 @@ class ShadowOutcomeService:
             "open_scanned": len(rows),
             "closed": closed,
             "close_reason_counts": close_reason_counts,
+            "closes_attempted": closes_attempted,
+            "closes_with_exit_price": closes_with_exit_price,
+            "closes_missing_exit_price": closes_missing_exit_price,
+            "missing_price_data_symbols": missing_price_data_symbols,
+            "quote_lookup_source": QUOTE_LOOKUP_SOURCE,
+            "bar_lookup_source": BAR_LOOKUP_SOURCE,
         }
 
     def release_oldest_open_if_at_cap(self, run_id: str) -> int:
@@ -157,12 +299,23 @@ class ShadowOutcomeService:
             return 0
         excess = len(open_rows) - cap + 1
         released = 0
+        now = datetime.utcnow()
+        price_cache: dict[str, dict[str, Any]] = {}
         for row in open_rows[:excess]:
+            sym = row.symbol
+            if sym not in price_cache:
+                price_cache[sym] = self._resolve_exit_price(
+                    sym,
+                    asset_class=str(row.asset_class or ("crypto" if "/" in sym else "stock")),
+                    price_by_symbol={},
+                )
+            resolved = price_cache[sym]
             close = self._evaluate_close(
                 row,
-                price_by_symbol={},
-                now=datetime.utcnow(),
-                cutoff=datetime.utcnow(),
+                px=resolved.get("price"),
+                price_meta=resolved,
+                now=now,
+                cutoff=now,
                 min_hold_s=0.0,
                 win_bps=5.0,
                 loss_bps=-5.0,
@@ -175,10 +328,16 @@ class ShadowOutcomeService:
                     "entry_price": row.entry_reference_price,
                     "pnl_bps": 0.0,
                     "verdict": "flat",
-                    "hold_seconds": _hold_seconds(row, datetime.utcnow()),
+                    "hold_seconds": _hold_seconds(row, now),
+                    "price_source": resolved.get("price_source"),
+                    "price_age_seconds": resolved.get("price_age_seconds"),
+                    "quote_lookup_source": resolved.get("quote_lookup_source"),
+                    "bar_lookup_source": resolved.get("bar_lookup_source"),
+                    "fallback_used": resolved.get("fallback_used"),
+                    "has_real_exit_price": bool(resolved.get("price")),
                 }
             row.status = STATUS_CLOSED
-            row.closed_at = datetime.utcnow()
+            row.closed_at = now
             row.exit_reference_price = close["exit_price"]
             row.simulated_pnl_bps = round(close["pnl_bps"], 2)
             row.outcome_verdict = close["verdict"]
@@ -190,6 +349,12 @@ class ShadowOutcomeService:
                 "opened_at": row.created_at.isoformat() + "Z" if row.created_at else None,
                 "closed_at": row.closed_at.isoformat() + "Z",
                 "simulated_pnl_bps": row.simulated_pnl_bps,
+                "hold_seconds": round(close.get("hold_seconds") or 0, 1),
+                "price_source": close.get("price_source"),
+                "price_age_seconds": close.get("price_age_seconds"),
+                "quote_lookup_source": close.get("quote_lookup_source"),
+                "bar_lookup_source": close.get("bar_lookup_source"),
+                "fallback_used": bool(close.get("fallback_used")),
                 "counts_as_broker_evidence": False,
             }
             self.session.add(row)
@@ -202,7 +367,8 @@ class ShadowOutcomeService:
         self,
         row: ShadowTrade,
         *,
-        price_by_symbol: dict[str, float],
+        px: Optional[float],
+        price_meta: dict[str, Any],
         now: datetime,
         cutoff: datetime,
         min_hold_s: float,
@@ -211,7 +377,6 @@ class ShadowOutcomeService:
         force_reason: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
         sym = row.symbol
-        px = price_by_symbol.get(sym)
         entry = row.entry_reference_price
         if entry is None:
             ev = row.evidence_json or {}
@@ -221,15 +386,30 @@ class ShadowOutcomeService:
             row.entry_reference_price = entry
 
         hold_s = _hold_seconds(row, now)
+        meta = {
+            "price_source": price_meta.get("price_source"),
+            "price_age_seconds": price_meta.get("price_age_seconds"),
+            "quote_lookup_source": price_meta.get("quote_lookup_source"),
+            "bar_lookup_source": price_meta.get("bar_lookup_source"),
+            "fallback_used": price_meta.get("fallback_used"),
+            "missing_price_why": price_meta.get("missing_why"),
+            "has_real_exit_price": px is not None and px > 0,
+        }
+
         if force_reason:
             if not entry or not px:
+                exit_px = px or entry or 0.0
                 return {
                     "exit_reason": force_reason,
-                    "exit_price": px or entry or 0.0,
+                    "exit_price": exit_px,
                     "entry_price": entry,
-                    "pnl_bps": 0.0,
-                    "verdict": "flat",
+                    "pnl_bps": _pnl_bps(entry or 0, exit_px, side=row.side or "buy") if entry and px else 0.0,
+                    "verdict": _verdict_from_pnl(
+                        _pnl_bps(entry or 0, exit_px, side=row.side or "buy") if entry and px else 0.0,
+                        has_prices=bool(entry and px),
+                    ),
                     "hold_seconds": hold_s,
+                    **meta,
                 }
             pnl = _pnl_bps(entry, px, side=row.side or "buy")
             return {
@@ -239,6 +419,7 @@ class ShadowOutcomeService:
                 "pnl_bps": pnl,
                 "verdict": _verdict_from_pnl(pnl, has_prices=True),
                 "hold_seconds": hold_s,
+                **meta,
             }
 
         if px is None or px <= 0:
@@ -250,6 +431,7 @@ class ShadowOutcomeService:
                     "pnl_bps": 0.0,
                     "verdict": "unknown",
                     "hold_seconds": hold_s,
+                    **meta,
                 }
             return None
 
@@ -272,6 +454,7 @@ class ShadowOutcomeService:
                 "pnl_bps": 0.0,
                 "verdict": "unknown",
                 "hold_seconds": hold_s,
+                **meta,
             }
 
         side = row.side or "buy"
@@ -319,4 +502,5 @@ class ShadowOutcomeService:
             "pnl_bps": pnl,
             "verdict": verdict,
             "hold_seconds": hold_s,
+            **meta,
         }

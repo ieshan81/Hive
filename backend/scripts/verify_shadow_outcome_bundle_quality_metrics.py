@@ -19,6 +19,14 @@ REQUIRED = (
     "zero_pnl_closed_count",
     "instant_close_count",
     "close_reason_counts",
+    "closes_attempted",
+    "closes_with_exit_price",
+    "closes_missing_exit_price",
+    "missing_price_data_symbols",
+    "quote_lookup_source",
+    "bar_lookup_source",
+    "quote_age_seconds",
+    "fallback_used",
 )
 
 
