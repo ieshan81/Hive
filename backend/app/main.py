@@ -46,6 +46,7 @@ from app.routers import (
     symbol_identity,
     settings_paper,
     shadow_league,
+    paper_candidates,
     social_reddit,
     news,
     research_experiments,
@@ -115,6 +116,7 @@ app.include_router(autonomous_paper_learning.router)
 app.include_router(capital_allocator.router)
 app.include_router(cockpit.router)
 app.include_router(shadow_league.router)
+app.include_router(paper_candidates.router)
 app.include_router(universe.router)
 app.include_router(activity.router)
 app.include_router(performance.router)

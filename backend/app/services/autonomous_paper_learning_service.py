@@ -329,6 +329,14 @@ class AutonomousPaperLearningService:
             except Exception as exc:
                 backtest_summary = {"status": "error", "message": str(exc)[:200]}
 
+        canary_summary: dict[str, Any] = {"status": "skipped"}
+        try:
+            from app.services.paper_canary_gate_service import PaperCanaryGateService
+
+            canary_summary = PaperCanaryGateService(self.session, self.config).run_tick_phase(operator=operator)
+        except Exception as exc:
+            canary_summary = {"status": "error", "message": str(exc)[:200]}
+
         orders_before = self._order_count()
         result = self.ft.run_once(actor=operator)
         orders_after = self._order_count()
@@ -359,6 +367,7 @@ class AutonomousPaperLearningService:
             "trade_state_repair": trade_state_repair,
             "scanner_stack": scanner_summary,
             "backtest_lab": backtest_summary,
+            "paper_canary": canary_summary,
             "action": out.get("action") or entries.get("action"),
             "reason": out.get("reason") or entries.get("reason") or tick_summary.get("result"),
             "plain_summary": tick_summary.get("plain_summary") or out.get("message"),

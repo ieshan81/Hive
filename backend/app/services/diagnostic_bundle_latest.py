@@ -380,6 +380,11 @@ def build_latest_bundle(session: Session, config: Optional[dict] = None) -> dict
             errs,
             lambda: _imp("shadow_league_bundle_service", "shadow_outcome_quality")(session, cfg),
         ),
+        "paper_canary_audit.json": _safe(
+            "paper_canary_audit",
+            errs,
+            lambda: _imp("paper_canary_gate_service", "PaperCanaryGateService")(session, cfg).build_bundle_audit(),
+        ),
         "shadow_tick_diagnostics.json": _safe(
             "shadow_tick_diagnostics",
             errs,

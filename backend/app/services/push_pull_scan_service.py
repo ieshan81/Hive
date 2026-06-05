@@ -311,6 +311,7 @@ class PushPullScanService:
             if asset in ("crypto", "stock") and asset not in eligible_by_asset:
                 eligible_by_asset[asset] = row
 
+        canary_promo: dict[str, Any] = {"status": "skipped"}
         if not shadow_league_enabled(self.config):
             diag = build_shadow_tick_diagnostics(
                 self.config,
@@ -331,6 +332,7 @@ class PushPullScanService:
                 "shadow_setups_observed": 0,
                 "shadow_errors": 0,
                 "shadow_diagnostics": diag,
+                "paper_canary_promotion": canary_promo,
             }
 
         svc = ShadowTradeService(self.session, self.config)
@@ -346,6 +348,12 @@ class PushPullScanService:
             ShadowOutcomeService(self.session, self.config).update_open_trades(price_by_symbol=price_map)
         except Exception:
             pass
+        try:
+            from app.services.paper_canary_gate_service import PaperCanaryGateService
+
+            canary_promo = PaperCanaryGateService(self.session, self.config).evaluate_and_promote(operator="push_pull_scan")
+        except Exception as exc:
+            canary_promo = {"status": "error", "message": str(exc)[:200]}
 
         for row_score in ranked:
             sym = row_score.get("symbol")
@@ -453,6 +461,7 @@ class PushPullScanService:
             "shadow_setups_observed": shadow_observed,
             "shadow_errors": shadow_errors,
             "shadow_diagnostics": diag,
+            "paper_canary_promotion": canary_promo,
         }
 
 

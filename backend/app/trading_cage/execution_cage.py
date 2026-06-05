@@ -78,6 +78,18 @@ def _exploration_max_notional(config: dict) -> float:
         return 5.0
 
 
+def _is_paper_canary_probe(config: dict, cand: ApprovedCandidate) -> bool:
+    from app.services.paper_canary_gate_service import is_paper_canary_probe
+
+    return is_paper_canary_probe(config, cand)
+
+
+def _paper_canary_max_notional(config: dict, equity: float) -> float:
+    from app.services.paper_canary_gate_service import paper_canary_max_notional_usd
+
+    return paper_canary_max_notional_usd(config, equity)
+
+
 @dataclass
 class ExecutionCageResult:
     passed: bool
@@ -258,6 +270,25 @@ class ExecutionCage:
                 return ExecutionCageResult(
                     False, "exploration_notional", "EXPLORATION_NOTIONAL_INVALID",
                     "Exploration probe requires a positive price and tiny capped notional.",
+                    evidence=evidence,
+                )
+
+        # Hard notional cap for shadow paper-canary probes — % of equity, paper-only.
+        if cand.signal_type == "entry" and _is_paper_canary_probe(self.config, cand):
+            eq = float(getattr(account, "equity", 0) or getattr(account, "portfolio_value", 0) or 200)
+            cap = _paper_canary_max_notional(self.config, eq)
+            px = cand.entry_price or quote.get("mid") or quote.get("ask") or 0
+            req_notional = (cand.position_qty or 0) * (px or 0)
+            if px and req_notional > cap:
+                cand.position_qty = cap / px
+            evidence["paper_canary_notional_cap_usd"] = cap
+            evidence["paper_canary_notional_usd"] = round((cand.position_qty or 0) * (px or 0), 6)
+            if not px or (cand.position_qty or 0) <= 0:
+                return ExecutionCageResult(
+                    False,
+                    "paper_canary_notional",
+                    "PAPER_CANARY_NOTIONAL_INVALID",
+                    "Paper canary probe requires a positive price and tiny capped notional.",
                     evidence=evidence,
                 )
 

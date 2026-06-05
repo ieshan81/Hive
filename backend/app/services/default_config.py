@@ -57,6 +57,21 @@ DEFAULT_CONFIG = {
         "stock_requires_execution_grade_for_paper_candidate": True,
         "never_submit_broker_orders": True,
         "never_counts_as_broker_evidence": True,
+        # Shadow → paper candidate → one tiny caged broker paper order (never live).
+        "paper_canary": {
+            "enabled": True,
+            "min_qualified_closes": 30,
+            "min_profit_factor": 1.10,
+            "min_win_rate": 0.45,
+            "min_avg_pnl_bps_after_cost": 0.0,
+            "max_zero_pnl_fraction": 0.50,
+            "max_open_positions": 1,
+            "max_new_orders_per_tick": 1,
+            "max_notional_pct_equity": 5.0,
+            "crypto_only": True,
+            "block_stock_broker_entries": True,
+            "live_forbidden": True,
+        },
     },
     "push_pull": {
         "push_strength_min": 0.004,
